@@ -5,134 +5,146 @@ from datetime import datetime
 
 st.set_page_config(page_title="AP Chatbot (Excel)", page_icon="💼", layout="wide")
 st.title("💬 Accounts Payable Chatbot — Excel-driven")
-st.caption("Examples: 'emails for invoices due before 2024-10-01', 'vendor names for unpaid invoices', 'amounts due after 2025-01-01'")
+st.caption("Examples: 'emails for unpaid', 'vendor names for open', 'due smaller than 2025-10-01', 'oldest invoice'")
 
-# -----------------------------------
-# COLUMN NORMALIZATION
-# -----------------------------------
+# ---------------------------
+# Column normalization
+# ---------------------------
 SYNONYMS = {
-    "invoice_no": ["invoice number", "invoice", "inv", "doc no"],
-    "vendor_name": ["vendor", "vendor name", "supplier", "supplier name"],
+    "invoice_no": ["invoice no", "invoice number", "inv", "document no"],
+    "vendor_name": ["vendor", "vendor name", "supplier"],
     "vendor_email": ["email", "vendor email", "supplier email", "mail"],
     "status": ["status", "state", "payment status"],
-    "amount": ["amount", "total", "invoice amount", "value"],
-    "currency": ["currency", "curr", "moneda"],
-    "due_date": ["due date", "fecha vencimiento"],
-    "payment_date": ["payment date", "fecha pago"],
-    "po_number": ["po", "po number", "purchase order"]
+    "amount": ["amount", "total", "value"],
+    "currency": ["currency", "curr"],
+    "due_date": ["due date", "vencimiento"],
+    "payment_date": ["payment date", "paid date"],
+    "po_number": ["po", "purchase order"]
 }
+STANDARD_COLS = list(SYNONYMS.keys())
 
-def normalize_columns(df):
+def _clean(s: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", str(s).strip().lower()).strip()
+
+def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     colmap = {}
     for c in df.columns:
-        c_clean = re.sub(r"[^a-z0-9]+", " ", c.lower().strip())
+        c_clean = _clean(c)
+        mapped = None
         for std, alts in SYNONYMS.items():
-            if c_clean == std or any(c_clean == a.lower() for a in alts):
-                colmap[c] = std
+            for alt in [std] + alts:
+                if _clean(alt) == c_clean:
+                    mapped = std
+                    break
+            if mapped:
                 break
+        colmap[c] = mapped if mapped else c
     df = df.rename(columns=colmap)
-    for std in SYNONYMS.keys():
-        if std not in df.columns:
-            df[std] = None
+    for sc in STANDARD_COLS:
+        if sc not in df.columns:
+            df[sc] = None
     return df
 
-# -----------------------------------
-# PARSING UTILITIES
-# -----------------------------------
-def extract_date_from_query(q):
-    m = re.search(r"(\d{4}-\d{2}-\d{2})", q)
+# ---------------------------
+# Extract date from text
+# ---------------------------
+def parse_user_date(s: str):
+    try:
+        return pd.to_datetime(s, dayfirst=True, errors="raise")
+    except Exception:
+        try:
+            return pd.to_datetime(s, dayfirst=False, errors="raise")
+        except Exception:
+            return pd.NaT
+
+def extract_date_from_query(ql: str):
+    m = re.search(r"(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4})", ql)
     if not m:
         return None
-    try:
-        return pd.to_datetime(m.group(1))
-    except:
-        return None
+    dt = parse_user_date(m.group(1))
+    return dt if pd.notna(dt) else None
 
-def fmt_money(amount, currency="EUR"):
+# ---------------------------
+# Format amount
+# ---------------------------
+def fmt_money(amount, currency):
     try:
-        a = float(str(amount).replace(",", ""))
-        return f"{a:,.2f} {currency}"
-    except:
+        a = float(str(amount).replace(",", "").strip())
+        cur = currency if isinstance(currency, str) and currency else "EUR"
+        return f"{a:,.2f} {cur}"
+    except Exception:
         return str(amount)
 
-# -----------------------------------
-# CORE LOGIC
-# -----------------------------------
-def run_query(q, df):
+# ---------------------------
+# Main query engine
+# ---------------------------
+def run_query(q: str, df: pd.DataFrame):
     if df is None or df.empty:
-        return "⚠️ Please upload an Excel file first.", None
+        return "Please upload an Excel file first.", None
 
-    ql = q.lower()
+    ql = q.lower().strip()
     df = df.copy()
-
-    # Normalize
-    df["status"] = df["status"].astype(str).str.lower().fillna("")
-    df["vendor_name"] = df["vendor_name"].astype(str)
-    df["vendor_email"] = df["vendor_email"].astype(str)
     df["amount"] = pd.to_numeric(df["amount"], errors="coerce")
     df["due_date_parsed"] = pd.to_datetime(df["due_date"], errors="coerce")
+    df["status_norm"] = df["status"].astype(str).str.lower().str.strip()
 
-    # Filters
+    # Filter by status
+    if "open" in ql or "unpaid" in ql or "pending" in ql:
+        df = df[df["status_norm"].str.contains("open|unpaid|pending", na=False)]
+    elif "paid" in ql and not ("unpaid" in ql or "not paid" in ql):
+        df = df[df["status_norm"].str.contains("paid", na=False)]
+
+    # Filter by amount
+    over = re.search(r"(over|above|greater than|>=|more than)\s*([0-9]+)", ql)
+    under = re.search(r"(under|below|less than|<=|smaller than)\s*([0-9]+)", ql)
+    if over:
+        val = float(over.group(2))
+        df = df[df["amount"] >= val]
+    elif under:
+        val = float(under.group(2))
+        df = df[df["amount"] <= val]
+
+    # Filter by due date
     user_date = extract_date_from_query(ql)
     if user_date is not None:
-        if any(k in ql for k in ["before", "earlier", "<"]):
+        if any(k in ql for k in ["before", "earlier", "<", "smaller than", "less than", "until"]):
             df = df[df["due_date_parsed"] < user_date]
-        elif any(k in ql for k in ["after", "later", "since", ">"]):
+        elif any(k in ql for k in ["after", "later", ">", "greater than", "bigger than", "from", "since"]):
             df = df[df["due_date_parsed"] > user_date]
 
-    if any(k in ql for k in ["open", "unpaid", "pending"]):
-        df = df[df["status"].str.contains("open|unpaid|pending", na=False)]
-    elif "paid" in ql and not "unpaid" in ql:
-        df = df[df["status"].str.contains("paid", na=False)]
-
-    # What user wants
-    wants_email = "email" in ql or "emails" in ql
-    wants_vendor = "vendor" in ql or "supplier" in ql
-    wants_amount = "amount" in ql or "total" in ql or "value" in ql
-    wants_due = "due" in ql
-    wants_status = "status" in ql
-
-    # Handle specific data
-    if wants_email:
-        emails = sorted(set(df["vendor_email"].dropna().astype(str).tolist()))
-        if not emails:
-            return "📭 No vendor emails found for this query.", None
-        return f"📧 Vendor emails matching your criteria:\n\n" + "; ".join(emails), df
-
-    if wants_vendor:
-        vendors = sorted(set(df["vendor_name"].dropna().astype(str).tolist()))
-        if not vendors:
-            return "No vendor names found for this query.", None
-        return f"🏢 Vendors matching your criteria:\n\n" + ", ".join(vendors), df
-
-    if wants_amount:
-        if df.empty:
-            return "No invoices match your filters.", None
-        out = "\n".join([f"{r['invoice_no']}: {fmt_money(r['amount'], r.get('currency', 'EUR'))}" for _, r in df.iterrows()])
-        return f"💰 Amounts for matching invoices:\n\n{out}", df
-
-    if wants_due and not user_date:
-        out = "\n".join([f"{r['invoice_no']} → {r['due_date']}" for _, r in df.iterrows()])
-        return f"📅 Due dates for invoices:\n\n{out}", df
-
-    if wants_status:
-        out = "\n".join([f"{r['invoice_no']} → {r['status'].capitalize()}" for _, r in df.iterrows()])
-        return f"📊 Status overview:\n\n{out}", df
-
-    if "total" in ql or "sum" in ql:
-        total = df["amount"].sum()
-        return f"💰 Total of filtered invoices: **{total:,.2f} EUR**", df
-
     if df.empty:
-        return "No invoices found for your criteria.", None
+        return "No invoices found for this query.", None
+
+    # Handle focused requests
+    if "email" in ql:
+        emails = sorted(set(df["vendor_email"].dropna().astype(str)))
+        if not emails:
+            return "No vendor emails found for this query.", None
+        return f"📧 Found {len(emails)} email(s):\n\n" + "; ".join(emails), df
+
+    if "vendor name" in ql or "vendors" in ql or "supplier" in ql:
+        vendors = sorted(set(df["vendor_name"].dropna().astype(str)))
+        return f"🏢 Found {len(vendors)} vendor(s):\n\n" + ", ".join(vendors), df
+
+    if "amount" in ql or "total" in ql or "value" in ql:
+        total = pd.to_numeric(df["amount"], errors="coerce").sum()
+        return f"💰 Total amount for this query: **{total:,.2f} EUR**", df
+
+    if "due" in ql or "oldest" in ql:
+        df = df.sort_values("due_date_parsed", ascending=True)
+        oldest = df.head(1)
+        if oldest.empty:
+            return "No invoices with valid due date.", None
+        r = oldest.iloc[0]
+        return f"📄 The oldest invoice is **{r['invoice_no']}** from **{r['vendor_name']}**, due on **{r['due_date']}**, amount **{fmt_money(r['amount'], r['currency'])}**.", oldest
 
     return f"Found {len(df)} invoice(s) matching your query.", df
 
-# -----------------------------------
-# STREAMLIT INTERFACE
-# -----------------------------------
-st.sidebar.header("📦 Upload Excel")
-uploaded = st.sidebar.file_uploader("Upload your Excel (.xlsx)", type=["xlsx"])
+# ---------------------------
+# Streamlit UI
+# ---------------------------
+st.sidebar.header("📦 Upload Excel File")
+uploaded = st.file_uploader("Upload Excel (.xlsx)", type=["xlsx"])
 
 if "df" not in st.session_state:
     st.session_state.df = None
@@ -143,7 +155,7 @@ if uploaded:
         df = normalize_columns(df)
         st.session_state.df = df
         st.success("✅ Excel loaded and columns normalized.")
-        st.dataframe(df.head(50), use_container_width=True)
+        st.dataframe(df, use_container_width=True)
     except Exception as e:
         st.error(f"Failed to read Excel: {e}")
 
@@ -158,7 +170,7 @@ if "history" not in st.session_state:
 for role, msg in st.session_state.history:
     st.chat_message(role).write(msg)
 
-prompt = st.chat_input("Ask about invoices...")
+prompt = st.chat_input("Ask about invoices: e.g., 'emails for unpaid', 'vendor names for open', 'due before 2025-05-10'")
 if prompt:
     st.session_state.history.append(("user", prompt))
     st.chat_message("user").write(prompt)
