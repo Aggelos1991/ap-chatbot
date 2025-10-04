@@ -102,6 +102,10 @@ def run_query(q: str, df: pd.DataFrame):
     ql = q.lower()
     inv_ids = detect_invoice_ids(ql)
     working = df.copy()
+    # ✅ Normalize statuses and vendor emails for consistent matching
+    working["status"] = working["status"].astype(str).str.strip().str.lower()
+    working["vendor_name"] = working["vendor_name"].astype(str).str.strip()
+    working["vendor_email"] = working["vendor_email"].astype(str).str.strip()
     working["amount"] = pd.to_numeric(working["amount"], errors="coerce")
     working["due_date_parsed"] = pd.to_datetime(working["due_date"], errors="coerce")
 
@@ -110,10 +114,11 @@ def run_query(q: str, df: pd.DataFrame):
     wants_paid = "paid" in ql and not wants_open
 
     # Status filters
+    # Status filters
     if wants_open:
-        working = working[working["status"].astype(str).str.contains("open|unpaid|pending", case=False, na=False)]
+        working = working[working["status"].str.contains("open|unpaid|pending", case=False, na=False)]
     elif wants_paid:
-        working = working[working["status"].astype(str).str.contains("paid", case=False, na=False)]
+        working = working[working["status"].str.contains("paid", case=False, na=False)]
 
     # Amount filters
     m = re.search(r"(over|above|greater than|>=|more than)\s*([0-9][0-9,\.]*)", ql)
