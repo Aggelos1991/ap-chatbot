@@ -5,7 +5,7 @@ from datetime import datetime
 
 st.set_page_config(page_title="AP Chatbot (Excel)", page_icon="💼", layout="wide")
 st.title("💬 Accounts Payable Chatbot — Excel-driven")
-st.caption("Examples: 'vendor name for INV1003', 'emails for unpaid invoices', 'due before 2025-10-10', 'due between 2024-10-01 and 2025-02-01'")
+st.caption("Examples: 'vendor name for INV1003', 'open amount for Technogym Iberia', 'paid invoices for Sani Resort', 'due between 2024-10-01 and 2025-02-01'")
 
 # ----------------------------------------------------------
 # Column normalization
@@ -49,7 +49,6 @@ def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
 # Helpers
 # ----------------------------------------------------------
 def detect_invoices(text):
-    """Detect invoice numbers like INV1001, ESF1-10002, etc."""
     text = text.replace(";", " ").replace(",", " ").lower()
     found = re.findall(r"\b[a-z]{2,}[0-9]+(?:[-_/]?[0-9a-z]+)*\b", text)
     seen = []
@@ -59,9 +58,7 @@ def detect_invoices(text):
     return seen
 
 def parse_date_token(q):
-    """Extract a date or date range from query"""
     q = q.lower()
-    # Match "between 2024-10-01 and 2025-02-01"
     m_between = re.search(r"between\s+(\d{4}-\d{2}-\d{2})\s+(?:and|to)\s+(\d{4}-\d{2}-\d{2})", q)
     if m_between:
         try:
@@ -71,7 +68,6 @@ def parse_date_token(q):
                 return ("between", d1, d2)
         except Exception:
             pass
-    # before / after
     m_before = re.search(r"(before|smaller than|less than)\s+(\d{4}-\d{2}-\d{2})", q)
     if m_before:
         return ("before", pd.to_datetime(m_before.group(2), errors="coerce"), None)
@@ -99,7 +95,18 @@ def run_query(q: str, df: pd.DataFrame):
     df["due_date_parsed"] = pd.to_datetime(df["due_date"], errors="coerce")
     df["status"] = df["status"].astype(str).str.lower()
 
-    # Handle specific invoices (supports multiple separated by , ;)
+    # -------------------------------------
+    # Detect vendor name from the question
+    # -------------------------------------
+    vendor_match = None
+    for v in df["vendor_name"].dropna().unique():
+        if v.lower() in ql:
+            vendor_match = v
+            break
+    if vendor_match:
+        df = df[df["vendor_name"].astype(str).str.lower() == vendor_match.lower()]
+
+    # Handle specific invoices
     invoices = detect_invoices(ql)
     if invoices:
         rows = []
@@ -158,7 +165,16 @@ def run_query(q: str, df: pd.DataFrame):
         return f"📧 Emails: {emails}", df
     elif "amount" in ql:
         details = [f"{r['invoice_no']}: {fmt_money(r['amount'], r['currency'])}" for _, r in df.iterrows()]
-        return "💰 Open invoice amounts:\n" + "\n".join(details), df
+        header = f"💰 {'Open' if 'open' in ql else 'Paid' if 'paid' in ql else ''} invoice amounts"
+        if vendor_match:
+            header += f" for {vendor_match}"
+        return header + ":\n" + "\n".join(details), df
+    elif "invoice" in ql and "amount" not in ql:
+        invoices_list = "; ".join(df["invoice_no"].dropna().unique())
+        header = "📄 Invoice numbers"
+        if vendor_match:
+            header += f" for {vendor_match}"
+        return f"{header}: {invoices_list}", df
     elif "due" in ql:
         due_dates = "; ".join(df["due_date"].dropna().astype(str).unique())
         return f"📅 Due dates for matching invoices: {due_dates}", df
@@ -198,7 +214,7 @@ if "history" not in st.session_state:
 for role, msg in st.session_state.history:
     st.chat_message(role).write(msg)
 
-prompt = st.chat_input("Ask about invoices: e.g. 'vendor name for INV1003', 'emails for open invoices', 'open amount invoices', 'due between 2024-10-01 and 2025-02-01'")
+prompt = st.chat_input("Ask: e.g. 'open amount for Technogym Iberia', 'paid invoices for Sani Resort', 'vendor name for INV1003'")
 if prompt:
     st.session_state.history.append(("user", prompt))
     st.chat_message("user").write(prompt)
