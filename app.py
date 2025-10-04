@@ -5,7 +5,7 @@ from datetime import datetime
 
 st.set_page_config(page_title="AP Chatbot (Excel)", page_icon="💼", layout="wide")
 st.title("💬 Accounts Payable Chatbot — Excel-driven")
-st.caption("Examples: 'vendor name for INV1003', 'open amount for Technogym Iberia', 'paid invoices for Sani Resort', 'add comment paid manually for INV1001'")
+st.caption("Examples: 'vendor name for INV1003', 'open amount for Technogym Iberia', 'paid invoices for Sani Resort', 'due between 2024-10-01 and 2025-02-01', 'add comment paid manually for INV1001', 'show comments for INV1002'")
 
 # ----------------------------------------------------------
 # Column normalization
@@ -84,6 +84,33 @@ def fmt_money(a, cur="EUR"):
         return str(a)
 
 # ----------------------------------------------------------
+# Comments Memory (Session)
+# ----------------------------------------------------------
+if "comments" not in st.session_state:
+    st.session_state.comments = {}
+
+def add_comment(inv_no, text):
+    inv_no = str(inv_no).upper()
+    if inv_no not in st.session_state.comments:
+        st.session_state.comments[inv_no] = []
+    st.session_state.comments[inv_no].append(text)
+
+def show_comments(inv_no=None):
+    if inv_no:
+        inv_no = str(inv_no).upper()
+        if inv_no in st.session_state.comments:
+            return f"🗒️ Comments for {inv_no}: " + "; ".join(st.session_state.comments[inv_no]), None
+        else:
+            return f"ℹ️ No comments found for {inv_no}.", None
+    else:
+        if not st.session_state.comments:
+            return "ℹ️ No comments available.", None
+        all_comments = []
+        for k, v in st.session_state.comments.items():
+            all_comments.append(f"{k}: {'; '.join(v)}")
+        return "🗒️ All comments:\n" + "\n".join(all_comments), None
+
+# ----------------------------------------------------------
 # Main Query Logic
 # ----------------------------------------------------------
 def run_query(q: str, df: pd.DataFrame):
@@ -95,27 +122,26 @@ def run_query(q: str, df: pd.DataFrame):
     df["due_date_parsed"] = pd.to_datetime(df["due_date"], errors="coerce")
     df["status"] = df["status"].astype(str).str.lower()
 
-    # 🆕 Initialize comments dictionary if not exists
-    if "comments" not in st.session_state:
-        st.session_state.comments = {}
+    # --- handle comments first ---
+    if "show comments" in ql:
+        invs = detect_invoices(ql)
+        if invs:
+            return show_comments(invs[0])
+        return show_comments()
 
-    # 🆕 Detect "add comment"
-    if "comment" in ql or "note" in ql:
-        invoices = detect_invoices(ql)
-        if invoices:
-            comment_text = re.sub(r"add|comment|note|for|invoice|inv|[0-9-]+", "", ql)
-            comment_text = comment_text.strip().capitalize()
-            added = []
-            for inv in invoices:
-                st.session_state.comments[inv.upper()] = comment_text
-                added.append(inv.upper())
-            return f"📝 Comment '{comment_text}' added for invoice(s): {', '.join(added)}", None
-        else:
+    if "add comment" in ql or "add note" in ql:
+        invs = detect_invoices(ql)
+        if not invs:
             return "⚠️ Please specify an invoice number when adding a comment.", None
+        text_match = re.search(r"add (?:a )?(?:comment|note)\s+(.*?)(?:\s+for|$)", ql)
+        if text_match:
+            comment_text = text_match.group(1).strip()
+            for inv in invs:
+                add_comment(inv, comment_text)
+            return f"📝 Comment '{comment_text}' added for invoice(s): {', '.join(invs)}", None
+        return "⚠️ Could not extract comment text.", None
 
-    # -------------------------------------
-    # Detect vendor name from the question
-    # -------------------------------------
+    # --- detect vendor name ---
     vendor_match = None
     for v in df["vendor_name"].dropna().unique():
         if v.lower() in ql:
@@ -124,7 +150,7 @@ def run_query(q: str, df: pd.DataFrame):
     if vendor_match:
         df = df[df["vendor_name"].astype(str).str.lower() == vendor_match.lower()]
 
-    # Handle specific invoices
+    # --- detect invoices ---
     invoices = detect_invoices(ql)
     if invoices:
         rows = []
@@ -154,13 +180,13 @@ def run_query(q: str, df: pd.DataFrame):
         else:
             return f"📄 Invoices found: {', '.join(result['invoice_no'].astype(str).unique())}", result
 
-    # Status filters
+    # --- status filters ---
     if "open" in ql:
         df = df[df["status"].str.contains("open|pending", na=False)]
     elif "paid" in ql:
         df = df[df["status"].str.contains("paid", na=False)]
 
-    # Date filters
+    # --- date filters ---
     date_cond = parse_date_token(ql)
     if date_cond:
         mode, d1, d2 = date_cond
@@ -174,7 +200,7 @@ def run_query(q: str, df: pd.DataFrame):
     if df.empty:
         return "❌ No invoices match your query.", None
 
-    # Column-specific answers
+    # --- answers ---
     if "vendor" in ql:
         vendors = "; ".join(df["vendor_name"].dropna().unique())
         return f"🏢 Vendors: {vendors}", df
@@ -224,6 +250,7 @@ st.subheader("Chat")
 
 if st.button("🔄 Restart Chat"):
     st.session_state.history = []
+    st.session_state.comments = {}
     st.rerun()
 
 if "history" not in st.session_state:
