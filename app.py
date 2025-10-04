@@ -166,18 +166,23 @@ def run_query(q: str, df: pd.DataFrame):
                 amount = fmt_money(row.get("amount"), row.get("currency"))
                 email = row.get("vendor_email", "-")
                 due = row.get("due_date", "-")
-                if "email" in ql:
-                    answers.append(f"Vendor email for **{inv}** ({vend}): **{email}**.")
-                elif "amount" in ql:
-                    answers.append(f"Invoice **{inv}** ({vend}) amount: **{amount}**.")
-                elif "currency" in ql:
-                    answers.append(f"Currency for **{inv}** ({vend}): **{row.get('currency', '-') or '-'}**.")
-                elif "due" in ql:
-                    answers.append(f"Due date for **{inv}** ({vend}): **{due or '-'}**.")
-                else:
-                    answers.append(f"Invoice **{inv}** from **{vend}** — status **{status}**, amount **{amount}**, due **{due}**.")
-                hits = pd.concat([hits, res], axis=0)
-        return "\n\n".join(answers), hits.reset_index(drop=True)
+                # Emails (vendor contact extraction)
+                if "email" in ql or "emails" in ql:
+                    # If user specified 'for unpaid/open/pending/paid', filter accordingly
+                    if "open" in ql or "unpaid" in ql or "pending" in ql:
+                        email_df = df[
+                            df["status"].astype(str).str.contains("open|unpaid|pending", case=False, na=False)]
+                    elif "paid" in ql:
+                        email_df = df[df["status"].astype(str).str.contains("paid", case=False, na=False)]
+                    else:
+                        email_df = df.copy()
+
+                    emails = email_df["vendor_email"].dropna().astype(str).str.strip().tolist()
+                    emails = sorted(set([e for e in emails if e]))
+                    if not emails:
+                        return "📭 No vendor emails found for this query.", None
+                    return f"📧 Found **{len(emails)}** vendor emails:\n\n" + "; ".join(emails), email_df.reset_index(
+                        drop=True)
 
     # 2) Broader filters
     working = df.copy()
