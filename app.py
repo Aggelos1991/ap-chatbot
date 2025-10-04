@@ -5,9 +5,15 @@ from datetime import date
 
 st.set_page_config(page_title="AP Chatbot (Excel)", page_icon="💼", layout="wide")
 st.title("💬 Accounts Payable Chatbot — Excel-driven")
-st.caption("Try: 'open over 560', 'emails for unpaid', "
-           "'due before 2025-05-10', 'due smaller than 2025-05-10', "
-           "'between 2024-10-01 and 2025-02-01', 'oldest unpaid invoice'")
+st.caption(
+    "Examples: "
+    "'vendor name of inv-1003', "
+    "'emails for open', "
+    "'due smaller than 2025-05-10', "
+    "'due between 2024-10-01 and 2025-02-01', "
+    "'open amounts by vendor top 5', "
+    "'oldest unpaid invoice'"
+)
 
 # ---------------------------
 # Column normalization
@@ -48,44 +54,61 @@ def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 # ---------------------------
-# Invoice IDs
+# Invoice IDs (very tolerant)
 # ---------------------------
+STOPWORDS = {
+    "paid","open","pending","invoice","invoices","inv","unpaid","status",
+    "email","emails","mail","for","the","can","you","bring","vendor","vendors","supplier","suppliers",
+    "amount","currency","due","payment","date","show","list","over","under","below","older","oldest","newest",
+    "what","is","tell","give","please","find","greater","than","less","more","sum","total","before","after",
+    "since","on","names","totals","by","top","smaller","bigger","between","and"
+}
+
 def detect_invoice_ids(text: str):
+    """
+    Grab tokens that:
+      - are alnum with -_/ allowed,
+      - contain at least one letter and one digit,
+      - and are not a stopword.
+    Handles: inv1003, INV-1003, inv_1003/22, etc.
+    """
     text = text.lower()
-    candidates = re.findall(r"\b[a-z]{2,}[0-9]+[-/0-9a-z]*\b", text)
-    ignore = {
-        "paid","open","pending","invoice","invoices","inv","unpaid","status",
-        "email","emails","mail","for","the","can","you","bring","vendor","vendors","supplier","suppliers",
-        "amount","currency","due","payment","date","show","list","over","under","below","older","oldest","newest",
-        "what","is","tell","give","please","find","greater","than","less","more","sum","total","before","after",
-        "since","on","names","totals","by","top","smaller","bigger"
-    }
+    # tokens of letters/digits/[-_/]
+    tokens = re.findall(r"[a-z0-9][a-z0-9\-_/]*", text)
     out, seen = [], set()
-    for t in candidates:
-        if t in ignore or t.isalpha():
+    for tok in tokens:
+        if tok in STOPWORDS: 
             continue
-        if t not in seen:
-            seen.add(t)
-            out.append(t)
+        if not re.search(r"[a-z]", tok):  # needs a letter
+            continue
+        if not re.search(r"[0-9]", tok):  # needs a digit
+            continue
+        # avoid capturing pure dates accidentally: require a letter
+        if tok not in seen:
+            seen.add(tok)
+            out.append(tok)
     return out
 
 def find_best_invoice_match(df: pd.DataFrame, inv: str):
     if "invoice_no" not in df.columns:
         return pd.DataFrame()
-    def norm(x): return re.sub(r"[-_\s]", "", str(x).strip().lower())
-    tmp = df.copy()
-    tmp["__inv_norm__"] = tmp["invoice_no"].astype(str).apply(norm)
+    def norm(x): return re.sub(r"[-_/ \t]", "", str(x).strip().lower())
     target = norm(inv)
-    exact = tmp[tmp["__inv_norm__"] == target]
+    tmp = df.copy()
+    tmp["__norm_inv__"] = tmp["invoice_no"].astype(str).apply(norm)
+    exact = tmp[tmp["__norm_inv__"] == target]
     if not exact.empty:
-        return exact.drop(columns="__inv_norm__", errors="ignore")
-    like = tmp[tmp["__inv_norm__"].str.contains(target, na=False)]
-    return like.drop(columns="__inv_norm__", errors="ignore")
+        return exact.drop(columns="__norm_inv__", errors="ignore")
+    like = tmp[tmp["__norm_inv__"].str.contains(target, na=False)]
+    return like.drop(columns="__norm_inv__", errors="ignore")
 
 # ---------------------------
 # Dates
 # ---------------------------
+DATE_RX = r"(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4})"
+
 def parse_user_date(s: str):
+    # try dayfirst and monthfirst
     for dayfirst in (True, False):
         try:
             return pd.to_datetime(s, dayfirst=dayfirst, errors="raise")
@@ -93,17 +116,18 @@ def parse_user_date(s: str):
             pass
     return pd.NaT
 
-DATE_RX = r"(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4})"
+BEFORE_WORDS = ("before","earlier than","smaller than","less than","until","by","on or before","<","<=")
+AFTER_WORDS  = ("after","later than","greater than","bigger than","from","since","on or after",">",">=")
 
 def extract_date_intent(ql: str):
     """
-    Returns dict like:
+    Returns dict:
       {"mode": "before"/"after"/"on"/"between", "d1": Timestamp, "d2": Timestamp|None}
-    or None if no clear intent.
+    or None if no date in query.
     """
-    ql = ql.lower().strip()
+    ql = ql.lower()
 
-    # between X and Y
+    # between A and B
     m_between = re.search(rf"between\s+{DATE_RX}\s+and\s+{DATE_RX}", ql)
     if m_between:
         d1 = parse_user_date(m_between.group(1))
@@ -112,41 +136,24 @@ def extract_date_intent(ql: str):
             if d2 < d1: d1, d2 = d2, d1
             return {"mode":"between","d1":d1,"d2":d2}
 
-    # single date capture
+    # single date
     m = re.search(DATE_RX, ql)
     if not m:
         return None
     d = parse_user_date(m.group(1))
     if pd.isna(d):
-        return None
+        return {"mode":"invalid","d1":None,"d2":None}
 
-    before_words = ("before","earlier than","smaller than","less than","until","by","on or before","<","<=")
-    after_words  = ("after","later than","greater than","bigger than","from","since","on or after",">",">=")
-    on_words     = ("on",)
-
-    if any(w in ql for w in before_words):
-        return {"mode":"before","d1":d,"d2":None}
-    if any(w in ql for w in after_words):
-        return {"mode":"after","d1":d,"d2":None}
-    if any(re.search(rf"\b{w}\b", ql) for w in on_words):
-        return {"mode":"on","d1":d,"d2":None}
-
-    # If they said "due smaller than ..." we may not catch via word boundary; handled by before_words above.
-    # Fallback: if they used "due" with a date, default to "on"
-    if "due" in ql:
-        return {"mode":"on","d1":d,"d2":None}
-    return None
+    if any(w in ql for w in BEFORE_WORDS): return {"mode":"before","d1":d,"d2":None}
+    if any(w in ql for w in AFTER_WORDS):  return {"mode":"after","d1":d,"d2":None}
+    if re.search(r"\bon\b", ql):           return {"mode":"on","d1":d,"d2":None}
+    # if they mention due + date but no qualifier, interpret as "on"
+    if "due" in ql:                         return {"mode":"on","d1":d,"d2":None}
+    return {"mode":"on","d1":d,"d2":None}
 
 # ---------------------------
 # Helpers
 # ---------------------------
-def extract_top_n_old_new(ql: str):
-    m = re.search(r"(?:top\s*)?(\d+)\s*(oldest|newest)", ql)
-    if not m:
-        if "oldest" in ql or "newest" in ql: return 10
-        return None
-    return int(m.group(1))
-
 def extract_top_n_generic(ql: str):
     m = re.search(r"(?:top|first)\s*(\d+)", ql)
     return int(m.group(1)) if m else None
@@ -174,6 +181,26 @@ def unique_nonempty(series: pd.Series):
     )
     return sorted(vals, key=str.lower)
 
+def requested_field(ql: str):
+    """
+    Detect if the user asks for a specific field.
+    Returns one of: vendor_name, vendor_email, amount, due_date, status, currency, None
+    """
+    ql = ql.lower()
+    if "vendor name" in ql or re.search(r"\bvendor\b", ql) and "email" not in ql:
+        return "vendor_name"
+    if "email" in ql or "emails" in ql:
+        return "vendor_email"
+    if "amount" in ql or "amounts" in ql:
+        return "amount"
+    if "due date" in ql or re.search(r"\bdue\b", ql) and re.search(DATE_RX, ql) is None:
+        return "due_date"
+    if "status" in ql:
+        return "status"
+    if "currency" in ql:
+        return "currency"
+    return None
+
 # ---------------------------
 # Core
 # ---------------------------
@@ -183,7 +210,7 @@ def run_query(q: str, df: pd.DataFrame):
 
     ql = q.lower()
 
-    # Working view + normalized helpers
+    # Prepare working view
     working = df.copy()
     working["amount"] = pd.to_numeric(working["amount"], errors="coerce")
     working["due_date_parsed"] = pd.to_datetime(working["due_date"], errors="coerce")
@@ -195,13 +222,13 @@ def run_query(q: str, df: pd.DataFrame):
     if "paid" in ql and not any(k in ql for k in ("unpaid","not paid","open","pending")):
         working = working[working["status_norm"].str.contains("paid", na=False)]
 
-    # Vendor name filter: "for sani" / "for technogym"
+    # Vendor filter: "for sani"
     vm = re.search(r"\bfor\s+([a-z0-9 ._-]+)", ql)
     if vm:
         needle = vm.group(1).strip()
         working = working[working["vendor_name"].astype(str).str.contains(re.escape(needle), case=False, na=False)]
 
-    # Amount filters (numeric)
+    # Amount filters
     m_over = re.search(r"(over|above|greater than|>=|more than|bigger than)\s*([0-9][0-9,\.]*)", ql)
     if m_over:
         val = float(m_over.group(2).replace(",", ""))
@@ -211,10 +238,13 @@ def run_query(q: str, df: pd.DataFrame):
         val2 = float(m_under.group(2).replace(",", ""))
         working = working[working["amount"] <= val2]
 
-    # Date intent on due date
+    # Due date intent
     di = extract_date_intent(ql)
     if di is not None:
-        d1, d2, mode = di["d1"], di["d2"], di["mode"]
+        mode = di["mode"]
+        if mode == "invalid":
+            return "⚠️ I couldn't understand that date. Please use formats like 2025-05-10 or 10/05/2025.", None
+        d1, d2 = di["d1"], di["d2"]
         if mode == "before":
             working = working[working["due_date_parsed"] < d1]
         elif mode == "after":
@@ -226,66 +256,91 @@ def run_query(q: str, df: pd.DataFrame):
 
     # Oldest / newest by due date
     if "due_date_parsed" in working.columns:
-        n_old_new = extract_top_n_old_new(ql)
         if wants_oldest(ql):
             ws = working.sort_values("due_date_parsed", ascending=True)
-            if "oldest invoice" in ql or "the oldest" in ql:
-                if ws.empty: return "No invoices found with a valid due date.", None
-                r = ws.iloc[0]
-                return (f"📄 Oldest invoice: **{r.get('invoice_no','-')}** — **{r.get('vendor_name','-')}**, "
-                        f"due **{r.get('due_date','-')}**, amount **{fmt_money(r.get('amount'), r.get('currency'))}**, "
-                        f"status **{r.get('status','-')}**." , ws.head(1).reset_index(drop=True))
-            if n_old_new: working = ws.head(n_old_new)
-        elif wants_newest(ql):
+            if ws.empty: return "No invoices found with a valid due date.", None
+            r = ws.iloc[0]
+            return (
+                f"📄 Oldest invoice: **{r.get('invoice_no','-')}** — **{r.get('vendor_name','-')}**, "
+                f"due **{r.get('due_date','-')}**, amount **{fmt_money(r.get('amount'), r.get('currency'))}**, "
+                f"status **{r.get('status','-')}**.",
+                ws.head(1)[["invoice_no","vendor_name","due_date","amount","currency","status"]]
+            )
+        if wants_newest(ql):
             ws = working.sort_values("due_date_parsed", ascending=False)
-            if "newest invoice" in ql or "latest invoice" in ql:
-                if ws.empty: return "No invoices found with a valid due date.", None
-                r = ws.iloc[0]
-                return (f"📄 Newest invoice: **{r.get('invoice_no','-')}** — **{r.get('vendor_name','-')}**, "
-                        f"due **{r.get('due_date','-')}**, amount **{fmt_money(r.get('amount'), r.get('currency'))}**, "
-                        f"status **{r.get('status','-')}**." , ws.head(1).reset_index(drop=True))
-            if n_old_new: working = ws.head(n_old_new)
+            if ws.empty: return "No invoices found with a valid due date.", None
+            r = ws.iloc[0]
+            return (
+                f"📄 Newest invoice: **{r.get('invoice_no','-')}** — **{r.get('vendor_name','-')}**, "
+                f"due **{r.get('due_date','-')}**, amount **{fmt_money(r.get('amount'), r.get('currency'))}**, "
+                f"status **{r.get('status','-')}**.",
+                ws.head(1)[["invoice_no","vendor_name","due_date","amount","currency","status"]]
+            )
 
-    # Specific invoice questions (keep after filters if they also restrict)
+    # Specific invoice?
     inv_ids = detect_invoice_ids(ql)
+    field = requested_field(ql)
+
     if inv_ids:
-        rows, msg_parts = [], []
+        # Answer about the specific invoice(s)
+        rows = []
+        texts = []
         for inv in inv_ids:
             found = find_best_invoice_match(working, inv)
             if found.empty:
-                msg_parts.append(f"❓ Could not find invoice **{inv}**.")
+                texts.append(f"❓ Could not find invoice **{inv}**.")
+                continue
+            r = found.iloc[0]
+            rows.append(r)
+            if field == "vendor_name":
+                texts.append(f"Vendor name for **{inv}**: **{r.get('vendor_name','-')}**.")
+            elif field == "vendor_email":
+                texts.append(f"Vendor email for **{inv}**: **{r.get('vendor_email','-')}**.")
+            elif field == "amount":
+                texts.append(f"Amount for **{inv}**: **{fmt_money(r.get('amount'), r.get('currency'))}**.")
+            elif field == "due_date":
+                texts.append(f"Due date for **{inv}**: **{r.get('due_date','-')}**.")
+            elif field == "status":
+                texts.append(f"Status for **{inv}**: **{r.get('status','-')}**.")
+            elif field == "currency":
+                texts.append(f"Currency for **{inv}**: **{r.get('currency','-')}**.")
             else:
-                rows.append(found.iloc[0])
-                r = found.iloc[0]
-                msg_parts.append(
+                texts.append(
                     f"Invoice **{r.get('invoice_no','-')}** — vendor **{r.get('vendor_name','-')}**, "
                     f"status **{r.get('status','-')}**, amount **{fmt_money(r.get('amount'), r.get('currency'))}**, "
                     f"due **{r.get('due_date','-')}**."
                 )
-        if rows:
-            return "\n\n".join(msg_parts), pd.DataFrame(rows)
-        return "\n\n".join(msg_parts), None
+        table = pd.DataFrame(rows) if rows else None
+        return "\n\n".join(texts), table
 
-    # Field-specific outputs
-    wants_emails = "email" in ql or "emails" in ql
-    wants_names  = ("vendor" in ql or "supplier" in ql) and ("name" in ql or "names" in ql) and not wants_emails
-    wants_amounts = "amounts" in ql or "amount list" in ql
-
-    if wants_emails:
+    # Field-only outputs on the filtered working set
+    if field == "vendor_email":
         emails = unique_nonempty(working["vendor_email"])
         if not emails: return "No vendor emails found for this query.", None
         return f"📧 **{len(emails)} vendor email(s):**\n\n" + "; ".join(emails), pd.DataFrame({"vendor_email":emails})
 
-    if wants_names:
+    if field == "vendor_name":
         names = unique_nonempty(working["vendor_name"])
         if not names: return "No vendor names match your filters.", None
         return f"👤 **{len(names)} vendor(s):**\n\n- " + "\n- ".join(names), pd.DataFrame({"vendor_name":names})
 
-    if wants_amounts:
+    if field == "amount":
         if working.empty: return "No invoices match your filters.", None
         out = working[["invoice_no","vendor_name","amount","currency"]].copy()
-        out["amount_fmt"] = out.apply(lambda r: fmt_money(r["amount"], r["currency"]), axis=1)
-        return "💵 Amounts for matching invoices:", out[["invoice_no","vendor_name","amount_fmt"]]
+        out["amount"] = out.apply(lambda r: fmt_money(r["amount"], r["currency"]), axis=1)
+        return "💵 Amounts for matching invoices:", out[["invoice_no","vendor_name","amount"]]
+
+    if field == "due_date":
+        if working.empty: return "No invoices match your filters.", None
+        return "🗓️ Due dates for matching invoices:", working[["invoice_no","vendor_name","due_date"]]
+
+    if field == "status":
+        if working.empty: return "No invoices match your filters.", None
+        return "🏷️ Status for matching invoices:", working[["invoice_no","vendor_name","status"]]
+
+    if field == "currency":
+        if working.empty: return "No invoices match your filters.", None
+        return "💱 Currencies for matching invoices:", working[["invoice_no","vendor_name","currency"]]
 
     # Grouped totals by vendor
     if ("vendor" in ql or "supplier" in ql) and any(k in ql for k in ("amounts","amount by","amount per","totals","total by","open amounts")):
@@ -306,7 +361,7 @@ def run_query(q: str, df: pd.DataFrame):
     if working.empty:
         return "No invoices match your query.", None
 
-    # Default list of matches
+    # Default: show filtered set
     return f"Found **{len(working)}** invoice(s) matching your query.", working.reset_index(drop=True)
 
 # ---------------------------
@@ -340,14 +395,18 @@ if "history" not in st.session_state:
 for role, msg in st.session_state.history:
     st.chat_message(role).write(msg)
 
-prompt = st.chat_input("Ask about invoices: e.g., 'emails for unpaid', 'open over 1000', "
-                       "'vendor names for open', 'due smaller than 2025-05-10', 'between 2024-10-01 and 2025-02-01'")
+prompt = st.chat_input(
+    "Ask: 'vendor name of inv-1003', 'emails for open', "
+    "'due smaller than 2025-05-10', 'due between 2024-10-01 and 2025-02-01', "
+    "'open amounts by vendor top 5'"
+)
 if prompt:
     st.session_state.history.append(("user", prompt))
     st.chat_message("user").write(prompt)
     answer, result_df = run_query(prompt, st.session_state.df)
     st.session_state.history.append(("assistant", answer))
     st.chat_message("assistant").write(answer)
+
     if isinstance(result_df, pd.DataFrame) and not result_df.empty:
         st.dataframe(result_df, use_container_width=True)
         csv = result_df.to_csv(index=False).encode("utf-8")
