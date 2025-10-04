@@ -5,7 +5,7 @@ from datetime import datetime
 
 st.set_page_config(page_title="AP Chatbot (Excel)", page_icon="💼", layout="wide")
 st.title("💬 Accounts Payable Chatbot — Excel-driven")
-st.caption("Examples: 'vendor name for INV1003', 'open amount for Technogym Iberia', 'paid invoices for Sani Resort', 'due between 2024-10-01 and 2025-02-01'")
+st.caption("Examples: 'vendor name for INV1003', 'open amount for Technogym Iberia', 'paid invoices for Sani Resort', 'add comment paid manually for INV1001'")
 
 # ----------------------------------------------------------
 # Column normalization
@@ -94,6 +94,24 @@ def run_query(q: str, df: pd.DataFrame):
     df["amount"] = pd.to_numeric(df["amount"], errors="coerce")
     df["due_date_parsed"] = pd.to_datetime(df["due_date"], errors="coerce")
     df["status"] = df["status"].astype(str).str.lower()
+
+    # 🆕 Initialize comments dictionary if not exists
+    if "comments" not in st.session_state:
+        st.session_state.comments = {}
+
+    # 🆕 Detect "add comment"
+    if "comment" in ql or "note" in ql:
+        invoices = detect_invoices(ql)
+        if invoices:
+            comment_text = re.sub(r"add|comment|note|for|invoice|inv|[0-9-]+", "", ql)
+            comment_text = comment_text.strip().capitalize()
+            added = []
+            for inv in invoices:
+                st.session_state.comments[inv.upper()] = comment_text
+                added.append(inv.upper())
+            return f"📝 Comment '{comment_text}' added for invoice(s): {', '.join(added)}", None
+        else:
+            return "⚠️ Please specify an invoice number when adding a comment.", None
 
     # -------------------------------------
     # Detect vendor name from the question
@@ -214,7 +232,7 @@ if "history" not in st.session_state:
 for role, msg in st.session_state.history:
     st.chat_message(role).write(msg)
 
-prompt = st.chat_input("Ask: e.g. 'open amount for Technogym Iberia', 'paid invoices for Sani Resort', 'vendor name for INV1003'")
+prompt = st.chat_input("Ask or add a comment: e.g. 'add comment paid manually for INV1001', 'open amount for Technogym Iberia', 'paid invoices for Sani Resort'")
 if prompt:
     st.session_state.history.append(("user", prompt))
     st.chat_message("user").write(prompt)
