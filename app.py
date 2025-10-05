@@ -5,12 +5,18 @@ import streamlit as st
 from datetime import datetime
 from openpyxl import load_workbook
 
-st.set_page_config(page_title="AP Chatbot", page_icon="💼", layout="wide")
+# ------------------------------------------------------------
+# PAGE CONFIG
+# ------------------------------------------------------------
+st.set_page_config(page_title="Accounts Payable Chatbot", page_icon="💼", layout="wide")
 st.title("💬 Accounts Payable Chatbot — Excel-driven")
-st.caption("Examples: 'open invoices', 'emails for paid invoices', 'due date < today', 'group by vendor', 'comment for Technogym Iberia: waiting payment'")
+st.caption("Try: 'open amounts', 'emails for paid invoices', 'due date < today', 'group by vendor', 'comment for Technogym Iberia: awaiting payment'")
 
-# ---------- HELPERS ----------
+# ------------------------------------------------------------
+# HELPERS
+# ------------------------------------------------------------
 def clean_headers(df):
+    """Normalize column names: lowercase, underscores, no spaces."""
     df.columns = (
         df.columns.astype(str)
         .str.strip()
@@ -22,6 +28,7 @@ def clean_headers(df):
     return df
 
 def normalize_columns(df):
+    """Map alternative header names to standardized ones."""
     mapping = {
         "supp_name": "vendor_name",
         "supplier": "vendor_name",
@@ -40,6 +47,7 @@ def normalize_columns(df):
     return df
 
 def parse_date_filter(q):
+    """Extract date filters from user text."""
     today = datetime.today()
     q = q.lower()
     between = re.search(r"between\s+(\d{4}-\d{2}-\d{2})\s+(?:and|to)\s+(\d{4}-\d{2}-\d{2})", q)
@@ -55,24 +63,32 @@ def parse_date_filter(q):
         return "after", d, None
     return None
 
-# ---------- QUERY ----------
+# ------------------------------------------------------------
+# QUERY ENGINE
+# ------------------------------------------------------------
 def run_query(q, df):
     if df is None or df.empty:
         return "⚠️ Please upload an Excel first.", None
 
     ql = q.lower()
+
+    # Prepare columns safely
     if "amount" in df.columns:
         df["amount"] = pd.to_numeric(df["amount"], errors="coerce")
     if "due_date" in df.columns:
         df["due_date_parsed"] = pd.to_datetime(df["due_date"], errors="coerce")
+
+    # Ensure 'agreed' exists
     if "agreed" in df.columns:
         df["agreed"] = pd.to_numeric(df["agreed"], errors="coerce").fillna(0).astype(int)
+    else:
+        df["agreed"] = 0
 
-    # Filters
+    # -------------------- FILTERS --------------------
     if "open" in ql:
-        df = df[df.get("agreed", 0) == 0]
+        df = df[df["agreed"] == 0]
     elif "paid" in ql:
-        df = df[df.get("agreed", 0) == 1]
+        df = df[df["agreed"] == 1]
 
     # Vendor filter
     vendor_match = None
@@ -97,14 +113,14 @@ def run_query(q, df):
     if df.empty:
         return "❌ No invoices found.", None
 
-    # Emails
+    # -------------------- EMAILS --------------------
     if "email" in ql:
         if "vendor_email" not in df.columns:
             return "⚠️ No 'vendor_email' column found.", None
         emails = "; ".join(sorted(df["vendor_email"].dropna().unique()))
         return f"📧 Vendor emails: {emails if emails else 'none found'}", None
 
-    # Grouping
+    # -------------------- GROUP BY VENDOR --------------------
     if "group" in ql or "amount per vendor" in ql:
         if "vendor_name" not in df.columns or "amount" not in df.columns:
             return "⚠️ Missing vendor_name or amount columns.", None
@@ -116,22 +132,31 @@ def run_query(q, df):
         grouped["total_amount"] = grouped["total_amount"].map(lambda x: f"{x:,.2f}")
         return "📊 Totals by vendor:", grouped
 
-    # Vendor summary
+    # -------------------- VENDOR SUMMARY --------------------
     if vendor_match and "summary" in ql:
-        open_df = df[df.get("agreed", 0) == 0]
-        paid_df = df[df.get("agreed", 0) == 1]
+        open_df = df[df["agreed"] == 0]
+        paid_df = df[df["agreed"] == 1]
         msg = f"📊 Vendor **{vendor_match}** summary:\n"
         msg += f"- Open invoices: {len(open_df)} (Total {open_df['amount'].sum():,.2f})\n"
         msg += f"- Paid invoices: {len(paid_df)} (Total {paid_df['amount'].sum():,.2f})"
         return msg, df
 
+    # -------------------- OPEN AMOUNTS TOTAL --------------------
+    if "open amount" in ql or "open amounts" in ql:
+        total = df["amount"].sum()
+        return f"💶 Total open amount: {total:,.2f}", df
+
     return f"Found **{len(df)}** matching invoices.", df
 
-# ---------- UPLOAD ----------
+# ------------------------------------------------------------
+# FILE UPLOAD
+# ------------------------------------------------------------
 st.sidebar.header("📦 Upload Excel")
 uploaded = st.file_uploader("Upload your Excel (.xlsx)", type=["xlsx"])
+
 if "df" not in st.session_state:
     st.session_state.df = None
+
 if uploaded:
     try:
         file_bytes = uploaded.getvalue()
@@ -139,7 +164,8 @@ if uploaded:
         ws = wb.active
         data = list(ws.values)
         headers = [str(h).strip() if h else f"Unnamed_{i}" for i, h in enumerate(data[0])]
-        # dedupe
+
+        # Deduplicate headers before DataFrame creation
         seen = {}
         final_headers = []
         for h in headers:
@@ -149,16 +175,20 @@ if uploaded:
             else:
                 seen[h] = 1
                 final_headers.append(h)
+
         df = pd.DataFrame(data[1:], columns=final_headers)
         df = clean_headers(df)
         df = normalize_columns(df)
         st.session_state.df = df
-        st.success(f"✅ Excel loaded: {len(df)} rows, {len(df.columns)} cols.")
+
+        st.success(f"✅ Excel loaded: {len(df)} rows, {len(df.columns)} columns.")
         st.dataframe(df.head(30), use_container_width=True)
     except Exception as e:
         st.error(f"❌ Error reading file: {e}")
 
-# ---------- CHAT ----------
+# ------------------------------------------------------------
+# CHAT
+# ------------------------------------------------------------
 st.subheader("Chat")
 
 if "history" not in st.session_state:
@@ -175,29 +205,31 @@ for role, msg in st.session_state.history:
     st.chat_message(role).write(msg)
 
 prompt = st.chat_input("Ask or add comment...")
+
 if prompt:
     st.session_state.history.append(("user", prompt))
     st.chat_message("user").write(prompt)
     lower = prompt.lower()
 
-    # ---- Comments ----
+    # -------------------- COMMENTS --------------------
     if lower.startswith("comment"):
         m = re.search(r"comment\s+for\s+(.+?):\s*(.+)", lower, re.IGNORECASE)
         if m:
             vendor, comment = m.group(1).strip(), m.group(2).strip()
-            st.session_state.comments[vendor] = comment
+            st.session_state.comments[vendor.lower()] = comment
             response = f"💬 Saved comment for {vendor}."
         else:
             m = re.search(r"comment\s+for\s+(.+)", lower, re.IGNORECASE)
             if m:
-                vendor = m.group(1).strip()
+                vendor = m.group(1).strip().lower()
                 note = st.session_state.comments.get(vendor)
                 response = f"💬 Comment for {vendor}: {note}" if note else "⚠️ No comment found."
             else:
-                response = "ℹ️ Use format: `comment for VendorName: your note`"
+                response = "ℹ️ Use: `comment for VendorName: your note`"
         st.session_state.history.append(("assistant", response))
         st.chat_message("assistant").write(response)
 
+    # -------------------- NORMAL QUERY --------------------
     else:
         ans, df_out = run_query(prompt, st.session_state.df)
         st.session_state.history.append(("assistant", ans))
