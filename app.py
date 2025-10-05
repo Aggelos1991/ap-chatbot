@@ -230,17 +230,28 @@ if "df" not in st.session_state:
 
 if uploaded:
     try:
-        # --- Read Excel safely (bypass duplicate header check) ---
-        file_bytes = uploaded.getvalue()
-        raw_df = pd.read_excel(io.BytesIO(file_bytes), dtype=str, header=0, engine="openpyxl")
+        import openpyxl
+        from openpyxl import load_workbook
 
-        # --- Clean and deduplicate headers ---
+        # --- Read Excel with openpyxl (no duplicate restriction) ---
+        file_bytes = uploaded.getvalue()
+        wb = load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=True)
+        ws = wb.active
+
+        # --- Extract rows manually ---
+        data = list(ws.values)
+        header = [str(h) if h is not None else f"Unnamed_{i}" for i, h in enumerate(data[0])]
+        rows = data[1:]
+
+        # --- Create dataframe manually ---
+        raw_df = pd.DataFrame(rows, columns=header)
+
+        # --- Clean headers & normalize ---
         raw_df = clean_excel_headers(raw_df)
         df = normalize_columns(raw_df)
         st.session_state.df = df
 
-        # --- Display confirmation ---
-        st.success("✅ Excel loaded and cleaned successfully.")
+        st.success("✅ Excel loaded successfully (duplicates fixed).")
         st.dataframe(df.head(25), use_container_width=True)
 
     except Exception as e:
