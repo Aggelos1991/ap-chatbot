@@ -1,14 +1,14 @@
 import re
 import pandas as pd
 import streamlit as st
-from datetime import datetime, date
+from datetime import datetime
 
 # ----------------------------------------------------------
-# UI setup
+# Streamlit setup
 # ----------------------------------------------------------
 st.set_page_config(page_title="AP Chatbot (Excel)", page_icon="💼", layout="wide")
 st.title("💬 Accounts Payable Chatbot — Excel-driven")
-st.caption("Try: 'open amount for vendor test', 'emails for open invoices', 'due date invoices < today', 'due date invoices between 2025-01-01 and 2025-03-01'")
+st.caption("Try: 'open amount for vendor test', 'emails for paid invoices', 'due date invoices < today', 'vendor Technogym Iberia summary'")
 
 # ----------------------------------------------------------
 # Column normalization
@@ -59,33 +59,27 @@ def fmt_money(amount, currency):
         return str(amount)
 
 def parse_date(s):
-    """Parse string into datetime safely."""
     try:
         return pd.to_datetime(s, errors="coerce")
     except Exception:
         return pd.NaT
 
 def extract_date_query(q):
-    """Detect <, >, between, today logic."""
     q = q.lower().strip()
     today = pd.Timestamp.today().normalize()
 
-    # Between
     m_between = re.search(r"between\s+(\d{4}-\d{2}-\d{2})\s+(?:and|to)\s+(\d{4}-\d{2}-\d{2})", q)
     if m_between:
-        d1 = parse_date(m_between.group(1))
-        d2 = parse_date(m_between.group(2))
+        d1, d2 = parse_date(m_between.group(1)), parse_date(m_between.group(2))
         if pd.notna(d1) and pd.notna(d2):
             return ("between", d1, d2)
 
-    # Less than
     if "< today" in q:
         return ("before", today, None)
     m_before = re.search(r"<\s*(\d{4}-\d{2}-\d{2})", q)
     if m_before:
         return ("before", parse_date(m_before.group(1)), None)
 
-    # Greater than
     if "> today" in q:
         return ("after", today, None)
     m_after = re.search(r">\s*(\d{4}-\d{2}-\d{2})", q)
@@ -116,13 +110,13 @@ def run_query(q: str, df: pd.DataFrame):
     if vendor_match:
         working = working[working["vendor_name"].astype(str).str.lower() == vendor_match.lower()]
 
-    # Agreed logic (1=paid, 0=open)
+    # Agreed logic (1 = paid, 0 = open)
     if "open" in ql or "unpaid" in ql:
         working = working[working["agreed"] == 0]
     elif "paid" in ql or "approved" in ql:
         working = working[working["agreed"] == 1]
 
-    # Due date filtering
+    # Due date filters
     if "due date" in ql:
         cond = extract_date_query(ql)
         if cond:
@@ -134,19 +128,37 @@ def run_query(q: str, df: pd.DataFrame):
             elif mode == "between" and pd.notna(d1) and pd.notna(d2):
                 working = working[(working["due_date_parsed"] >= d1) & (working["due_date_parsed"] <= d2)]
 
-    # Email requests
+    # Email queries
     if "email" in ql or "emails" in ql:
         emails = working["vendor_email"].dropna().astype(str).str.strip().unique()
         if len(emails) == 0:
             return "❌ No vendor emails found for this query.", None
         return f"📧 Vendor emails: {'; '.join(emails)}", None
 
-    # Amount requests
+    # Vendor summary (open & paid)
+    if vendor_match:
+        cur = working["currency"].dropna().iloc[0] if working["currency"].notna().any() else "EUR"
+        open_df = working[working["agreed"] == 0]
+        paid_df = working[working["agreed"] == 1]
+
+        msg = f"📊 **Vendor {vendor_match} summary:**\n"
+        if len(open_df) > 0:
+            msg += f"- Open invoices: {len(open_df)}, total {fmt_money(open_df['amount'].sum(), cur)}\n"
+        else:
+            msg += "- No open invoices.\n"
+        if len(paid_df) > 0:
+            msg += f"- Paid invoices: {len(paid_df)}, total {fmt_money(paid_df['amount'].sum(), cur)}"
+        else:
+            msg += "- No paid invoices."
+
+        return msg, working[["alternative_document", "due_date", "amount", "currency", "agreed"]]
+
+    # Amount summary
     if "amount" in ql or "total" in ql:
         if working.empty:
             return "❌ No matching invoices found.", None
         total = working["amount"].sum()
-        cur = working["currency"].dropna().iloc[0] if "currency" in working and working["currency"].notna().any() else "EUR"
+        cur = working["currency"].dropna().iloc[0] if working["currency"].notna().any() else "EUR"
         header = "💰 "
         if "open" in ql:
             header += "Total open amount"
@@ -158,7 +170,6 @@ def run_query(q: str, df: pd.DataFrame):
             header += f" for {vendor_match}"
         return f"{header}: **{fmt_money(total, cur)}**", working
 
-    # Default result
     if working.empty:
         return "❌ No invoices match your query.", None
 
@@ -177,13 +188,15 @@ if "df" not in st.session_state:
 
 if uploaded:
     try:
-        df = pd.read_excel(uploaded, dtype=str)
+        # Read file from bytes (avoids duplicate header error)
+        file_bytes = uploaded.getvalue()
+        df = pd.read_excel(file_bytes, dtype=str)
         df = normalize_columns(df)
         st.session_state.df = df
         st.success("✅ Excel loaded successfully.")
         st.dataframe(df.head(25), use_container_width=True)
     except Exception as e:
-        st.error(f"Failed to read Excel: {e}")
+        st.error(f"Failed to read Excel file: {e}")
 
 st.subheader("Chat")
 
@@ -197,7 +210,7 @@ if "history" not in st.session_state:
 for role, msg in st.session_state.history:
     st.chat_message(role).write(msg)
 
-prompt = st.chat_input("Ask e.g. 'open amount for vendor test', 'emails for paid invoices', 'due date invoices < today'")
+prompt = st.chat_input("Ask: e.g. 'vendor Technogym Iberia summary', 'open amount for vendor test', 'due date invoices < today'")
 if prompt:
     st.session_state.history.append(("user", prompt))
     st.chat_message("user").write(prompt)
