@@ -7,9 +7,9 @@ st.set_page_config(page_title="AP Chatbot (Excel)", page_icon="💼", layout="wi
 st.title("💬 Accounts Payable Chatbot — Excel-driven")
 st.caption("Try: 'open amount for vendor test', 'workflow step for vendor test', 'payment method for vendor test'")
 
-# ---------------------------
+# ----------------------------------------------------------
 # Column normalization
-# ---------------------------
+# ----------------------------------------------------------
 SYNONYMS = {
     "alternative_document": ["alternative document", "alt doc", "alt document", "alternative", "alt"],
     "vendor_name": ["vendor", "vendor name", "supplier", "supplier name"],
@@ -47,9 +47,9 @@ def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
             df[sc] = None
     return df
 
-# ---------------------------
+# ----------------------------------------------------------
 # Helpers
-# ---------------------------
+# ----------------------------------------------------------
 def fmt_money(amount, currency):
     try:
         a = float(str(amount).replace(",", "").strip())
@@ -59,14 +59,12 @@ def fmt_money(amount, currency):
         return str(amount)
 
 def detect_invoice_ids(text: str):
-    """Detect invoice numbers (only from AlternativeDocument)."""
     text = text.lower()
     found = re.findall(r"\b[a-z]{2,}[0-9]+(?:[-_/]?[0-9a-z]+)*\b", text)
     cleaned = [re.sub(r"[-_/]", "", f).strip() for f in found]
     return list(dict.fromkeys(cleaned))
 
 def match_invoice(df: pd.DataFrame, inv: str):
-    """Match only against AlternativeDocument."""
     def norm(x): return re.sub(r"[-_/]", "", str(x).lower())
     target = norm(inv)
     if "alternative_document" not in df.columns:
@@ -87,21 +85,19 @@ def unique_nonempty(series: pd.Series):
     )
     return sorted(vals, key=str.lower)
 
-# ---------------------------
-# Main Query Logic
-# ---------------------------
+# ----------------------------------------------------------
+# Query Logic
+# ----------------------------------------------------------
 def run_query(q: str, df: pd.DataFrame):
     if df is None or df.empty:
         return "⚠️ Please upload an Excel file first.", None
 
     ql = q.lower()
     working = df.copy()
-
-    # Normalize core columns
     working["amount"] = pd.to_numeric(working["amount"], errors="coerce")
     working["agreed"] = pd.to_numeric(working["agreed"], errors="coerce")
 
-    # Vendor filter
+    # Vendor detection
     vendor_match = None
     for v in working["vendor_name"].dropna().unique():
         if v.lower() in ql:
@@ -110,7 +106,7 @@ def run_query(q: str, df: pd.DataFrame):
     if vendor_match:
         working = working[working["vendor_name"].astype(str).str.lower() == vendor_match.lower()]
 
-    # Invoice filter (AlternativeDocument only)
+    # Invoice detection
     invs = detect_invoice_ids(ql)
     if invs:
         rows = []
@@ -123,27 +119,27 @@ def run_query(q: str, df: pd.DataFrame):
         else:
             return f"❌ No invoices found for: {', '.join(invs)}", None
 
-    # --- Workflow Step ---
+    # WorkflowStep
     if "workflow" in ql or "block" in ql:
         steps = unique_nonempty(working["workflow_step"])
         if not steps:
             return "❌ No workflow step found for this query.", None
         return f"🔄 Workflow step(s): {', '.join(steps)}", working
 
-    # --- Payment Method ---
+    # PaymentMethod
     if "payment method" in ql or "doc" in ql:
         pm = unique_nonempty(working["payment_method"])
         if not pm:
             return "❌ No payment method found for this query.", None
         return f"💳 Payment method(s): {', '.join(pm)}", working
 
-    # --- Agreed logic (1 = paid, 0 = open) ---
+    # Agreed logic (1=paid, 0=open)
     if "open" in ql or "unpaid" in ql:
         working = working[working["agreed"] == 0]
     elif "paid" in ql or "approved" in ql:
         working = working[working["agreed"] == 1]
 
-    # --- Amount queries ---
+    # Amount queries
     if "amount" in ql or "total" in ql:
         if working.empty:
             return "❌ No matching invoices found.", None
@@ -159,7 +155,7 @@ def run_query(q: str, df: pd.DataFrame):
             header += f" for {vendor_match}"
         return f"{header}: **{fmt_money(total, working['currency'].iloc[0] if 'currency' in working else 'EUR')}**", working
 
-    # --- Vendor totals (grouped) ---
+    # Group totals by vendor
     if "amount by vendor" in ql or "vendor totals" in ql or "total by vendor" in ql:
         g = (
             working.groupby("vendor_name", dropna=True)["amount"].sum()
@@ -172,15 +168,14 @@ def run_query(q: str, df: pd.DataFrame):
         g["total_amount"] = g["total_amount"].map(lambda x: f"{x:,.2f}")
         return "📊 Totals by vendor:", g
 
-    # Default fallback (preserves old logic)
     if working.empty:
         return "No invoices match your query.", None
 
     return f"Found **{len(working)}** matching invoice(s).", working.reset_index(drop=True)
 
-# ---------------------------
+# ----------------------------------------------------------
 # UI
-# ---------------------------
+# ----------------------------------------------------------
 st.sidebar.header("📦 Upload Excel")
 st.sidebar.write("Columns: Alternative Document, Vendor Name, Amount, Agreed, Workflow Step, Payment Method (DOC).")
 
@@ -191,8 +186,11 @@ if "df" not in st.session_state:
 
 if uploaded:
     try:
-        df = pd.read_excel(uploaded, dtype=str)
-        df = normalize_columns(df)
+        # --- SAFE EXCEL LOAD: auto-deduplicate column names ---
+        excel_data = pd.read_excel(uploaded, dtype=str, header=0)
+        excel_data.columns = pd.io.parsers.ParserBase({'names': excel_data.columns})._maybe_dedup_names(excel_data.columns)
+        df = normalize_columns(excel_data)
+
         st.session_state.df = df
         st.success("✅ Excel loaded successfully.")
         st.dataframe(df.head(30), use_container_width=True)
