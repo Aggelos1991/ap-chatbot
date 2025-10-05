@@ -106,7 +106,7 @@ def run_query(q: str, df: pd.DataFrame):
     if vendor_match:
         working = working[working["vendor_name"].astype(str).str.lower() == vendor_match.lower()]
 
-    # Invoice detection
+    # Invoice detection (AlternativeDocument only)
     invs = detect_invoice_ids(ql)
     if invs:
         rows = []
@@ -186,12 +186,22 @@ if "df" not in st.session_state:
 
 if uploaded:
     try:
-        # --- SAFE EXCEL LOAD: auto-deduplicate column names ---
+        # --- SAFE EXCEL LOAD (handles duplicate column names) ---
         excel_data = pd.read_excel(uploaded, dtype=str, header=0)
-        excel_data.columns = pd.io.parsers.ParserBase({'names': excel_data.columns})._maybe_dedup_names(excel_data.columns)
-        df = normalize_columns(excel_data)
+        seen = {}
+        new_columns = []
+        for c in excel_data.columns:
+            if c in seen:
+                seen[c] += 1
+                new_columns.append(f"{c}_{seen[c]}")
+            else:
+                seen[c] = 0
+                new_columns.append(c)
+        excel_data.columns = new_columns
 
+        df = normalize_columns(excel_data)
         st.session_state.df = df
+
         st.success("✅ Excel loaded successfully.")
         st.dataframe(df.head(30), use_container_width=True)
     except Exception as e:
