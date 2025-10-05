@@ -5,6 +5,7 @@ import streamlit as st
 from datetime import datetime
 from openpyxl import load_workbook
 import warnings
+
 warnings.filterwarnings("ignore", message="Duplicate column names found", category=UserWarning)
 
 # ------------------------------------------------------------
@@ -27,21 +28,6 @@ def clean_excel_headers(df):
         .str.replace(r"_+", "_", regex=True)
         .str.strip("_")
     )
-    return df
-
-def dedupe_columns(df):
-    """Ensure unique column names after cleaning/normalization."""
-    seen = {}
-    new_cols = []
-    for c in df.columns:
-        c = c.strip()
-        if c in seen:
-            seen[c] += 1
-            new_cols.append(f"{c}_{seen[c]}")  # e.g. amount_2
-        else:
-            seen[c] = 1
-            new_cols.append(c)
-    df.columns = new_cols
     return df
 
 def fmt_money(x, cur="EUR"):
@@ -111,7 +97,7 @@ def run_query(q, df):
     df["due_date_parsed"] = pd.to_datetime(df.get("due_date"), errors="coerce")
     df["agreed"] = pd.to_numeric(df.get("agreed"), errors="coerce").fillna(0).astype(int)
 
-    # Open or paid filter
+    # Filters
     if "open" in ql or "unpaid" in ql:
         df = df[df["agreed"] == 0]
     elif "paid" in ql:
@@ -153,12 +139,12 @@ def run_query(q, df):
         emails = "; ".join(df["vendor_email"].dropna().unique())
         return f"📧 Vendor emails: {emails if emails else 'none found'}", df
 
-    # Workflow step
+    # Workflow
     if "workflow" in ql or "block" in ql:
         steps = df["workflow_step"].dropna().unique()
         return f"🔧 Workflow steps: {', '.join(steps)}", df
 
-    # Group totals by vendor
+    # Totals by vendor
     if "amount" in ql and "vendor" in ql:
         grouped = df.groupby("vendor_name", dropna=True)["amount"].sum().reset_index()
         grouped["amount"] = grouped["amount"].map(lambda x: f"{x:,.2f}")
@@ -181,21 +167,45 @@ if uploaded:
         # --- Read Excel safely with openpyxl ---
         file_bytes = uploaded.getvalue()
         wb = load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=True)
-        ws = wb.active
+
+        # If multiple sheets exist, pick the first with content
+        sheet_name = None
+        for name in wb.sheetnames:
+            ws = wb[name]
+            if ws.max_row > 1 and ws.max_column > 1:
+                sheet_name = name
+                break
+        ws = wb[sheet_name or wb.active.title]
+
         data = list(ws.values)
         if not data:
             st.error("❌ Excel file is empty.")
         else:
+            # --- Prepare headers safely ---
             headers = [str(h).strip() if h else f"Unnamed_{i}" for i, h in enumerate(data[0])]
+            
+            # ✅ Deduplicate headers BEFORE DataFrame creation
+            seen = {}
+            new_headers = []
+            for h in headers:
+                if h in seen:
+                    seen[h] += 1
+                    new_headers.append(f"{h}_{seen[h]}")  # e.g. amount_2
+                else:
+                    seen[h] = 1
+                    new_headers.append(h)
+
             rows = data[1:]
-            raw_df = pd.DataFrame(rows, columns=headers)
+            raw_df = pd.DataFrame(rows, columns=new_headers)
+
+            # --- Clean & normalize ---
             raw_df = clean_excel_headers(raw_df)
-            raw_df = dedupe_columns(raw_df)        # ✅ ensure unique headers
-            df = normalize_columns(raw_df)
-            st.session_state.df = df
-            st.success("✅ Excel loaded successfully (duplicates ignored).")
-            st.caption(f"Loaded {len(df)} rows and {len(df.columns)} columns.")
-            st.dataframe(df.head(50), use_container_width=True)
+            raw_df = normalize_columns(raw_df)
+            
+            st.session_state.df = raw_df
+            st.success("✅ Excel loaded successfully (duplicates handled).")
+            st.caption(f"Loaded {len(raw_df)} rows and {len(raw_df.columns)} columns.")
+            st.dataframe(raw_df.head(50), use_container_width=True)
     except Exception as e:
         st.error(f"❌ Failed to read Excel file: {e}")
 
