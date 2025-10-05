@@ -46,6 +46,10 @@ def strip_accents(s: str) -> str:
     return "".join(ch for ch in unicodedata.normalize("NFD", s) if unicodedata.category(ch) != "Mn")
 
 def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Map all possible variants of your columns to canonical names,
+    and auto-detect email column names (including Greek ones).
+    """
     base_map = {
         "supp_name": "vendor_name",
         "supplier": "vendor_name",
@@ -64,13 +68,24 @@ def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
         "workflow_step": "workflow_step",
         "agreeded": "agreed",
         "agreed": "agreed",
-        "email": "vendor_email",
-        "ηλεκτρονική_διεύθυνση": "vendor_email",
-        "διευθυνση": "vendor_email",
-        "correo": "vendor_email",
         "alternative_document": "alternative_document",
     }
+
+    # First pass direct rename
     df = df.rename(columns=lambda c: base_map.get(c, c))
+
+    # Try to detect vendor_email automatically
+    if "vendor_email" not in df.columns:
+        for col in df.columns:
+            c = col.lower().strip()
+            if any(word in c for word in ["email", "e_mail", "mail", "correo"]):
+                df = df.rename(columns={col: "vendor_email"})
+                break
+            # Greek detection
+            if any(word in c for word in ["ηλεκτρον", "διευθυν", "διευθυνση"]):
+                df = df.rename(columns={col: "vendor_email"})
+                break
+
     return df
 
 def parse_date_filter(q: str):
