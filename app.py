@@ -2,6 +2,7 @@ import re
 import pandas as pd
 import streamlit as st
 from datetime import datetime
+import io
 
 # ----------------------------------------------------------
 # Streamlit setup
@@ -28,8 +29,10 @@ SYNONYMS = {
 }
 STANDARD_COLS = list(SYNONYMS.keys())
 
+
 def _clean(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", str(s).strip().lower()).strip()
+
 
 def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     colmap = {}
@@ -50,6 +53,7 @@ def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
             df[sc] = None
     return df
 
+
 # ----------------------------------------------------------
 # Helpers
 # ----------------------------------------------------------
@@ -61,11 +65,13 @@ def fmt_money(amount, currency):
     except Exception:
         return str(amount)
 
+
 def parse_date(s):
     try:
         return pd.to_datetime(s, errors="coerce")
     except Exception:
         return pd.NaT
+
 
 def extract_date_query(q):
     q = q.lower().strip()
@@ -90,6 +96,7 @@ def extract_date_query(q):
         return ("after", parse_date(m_after.group(1)), None)
 
     return None
+
 
 # ----------------------------------------------------------
 # Query Logic
@@ -129,7 +136,9 @@ def run_query(q: str, df: pd.DataFrame):
             elif mode == "after" and pd.notna(d1):
                 working = working[working["due_date_parsed"] > d1]
             elif mode == "between" and pd.notna(d1) and pd.notna(d2):
-                working = working[(working["due_date_parsed"] >= d1) & (working["due_date_parsed"] <= d2)]
+                working = working[
+                    (working["due_date_parsed"] >= d1) & (working["due_date_parsed"] <= d2)
+                ]
 
     # Email queries
     if "email" in ql or "emails" in ql:
@@ -154,7 +163,9 @@ def run_query(q: str, df: pd.DataFrame):
         else:
             msg += "- No paid invoices."
 
-        details = working[["alternative_document", "due_date", "amount", "currency", "agreed"]]
+        details = working[
+            ["alternative_document", "due_date", "amount", "currency", "agreed"]
+        ].reset_index(drop=True)
         return msg, details
 
     # Amount summary
@@ -179,6 +190,7 @@ def run_query(q: str, df: pd.DataFrame):
 
     return f"Found **{len(working)}** matching invoices.**", working
 
+
 # ----------------------------------------------------------
 # UI
 # ----------------------------------------------------------
@@ -194,24 +206,24 @@ if "df" not in st.session_state:
 
 if uploaded:
     try:
-        # Read Excel safely from bytes and handle duplicate headers manually
+        # Read Excel safely & deduplicate headers manually
         file_bytes = uploaded.getvalue()
-        df = pd.read_excel(file_bytes, dtype=str, header=0)
+        excel = pd.ExcelFile(io.BytesIO(file_bytes))
+        raw_df = pd.read_excel(excel, dtype=str, header=0)
 
-        # Manually handle duplicate column names (safe for all Pandas versions)
         seen = {}
         new_cols = []
-        for c in df.columns:
-            if c in seen:
-                seen[c] += 1
-                new_cols.append(f"{c}_{seen[c]}")
+        for c in raw_df.columns:
+            c_clean = str(c).strip()
+            if c_clean in seen:
+                seen[c_clean] += 1
+                new_cols.append(f"{c_clean}_{seen[c_clean]}")
             else:
-                seen[c] = 0
-                new_cols.append(c)
-        df.columns = new_cols
+                seen[c_clean] = 0
+                new_cols.append(c_clean)
+        raw_df.columns = new_cols
 
-        # Normalize & store
-        df = normalize_columns(df)
+        df = normalize_columns(raw_df)
         st.session_state.df = df
 
         st.success("✅ Excel loaded successfully.")
