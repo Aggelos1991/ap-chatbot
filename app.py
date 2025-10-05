@@ -3,6 +3,13 @@ import pandas as pd
 import streamlit as st
 from datetime import datetime
 import io
+from openpyxl import load_workbook
+import warnings
+
+# ----------------------------------------------------------
+# Disable Streamlit/Pandas duplicate header warnings
+# ----------------------------------------------------------
+warnings.filterwarnings("ignore", message="Duplicate column names found", category=UserWarning)
 
 # ----------------------------------------------------------
 # Streamlit setup
@@ -19,33 +26,30 @@ st.caption(
 # ----------------------------------------------------------
 SYNONYMS = {
     "alternative_document": ["alternative document", "alt doc", "alt document", "document", "invoice"],
-    "vendor_name": ["vendor", "vendor name", "supplier", "supplier name"],
-    "vendor_email": ["email", "vendor email", "supplier email", "correo", "mail"],
-    "amount": ["amount", "total", "invoice amount", "importe", "value"],
+    "vendor_name": ["vendor", "vendor name", "supplier", "supplier name", "supp name"],
+    "vendor_email": ["email", "vendor email", "supplier email", "correo", "mail", "Ηλεκτρονική Διευθυνση"],
+    "amount": ["amount", "total", "invoice amount", "importe", "value", "open amount", "Open amount in base cur."],
     "currency": ["currency", "curr", "moneda"],
-    "due_date": ["due date", "vencimiento", "fecha vencimiento"],
+    "due_date": ["due date", "vencimiento", "fecha vencimiento", "due month"],
     "payment_date": ["payment date", "fecha pago", "paid date"],
-    "agreed": ["agreed", "is agreed", "approved", "paid flag"],
+    "agreed": ["agreed", "is agreed", "approved", "paid flag", "agreeded"],
 }
 STANDARD_COLS = list(SYNONYMS.keys())
 
 # ----------------------------------------------------------
-# Header cleaning to remove invisible duplicates
+# Header cleaner
 # ----------------------------------------------------------
 def clean_excel_headers(df):
     cleaned = []
     for c in df.columns:
-        name = str(c)
-        name = name.replace("\u00A0", " ")  # non-breaking spaces
-        name = name.replace("\r", "").replace("\n", "")
-        name = re.sub(r"\s+", " ", name.strip())  # collapse spaces
+        name = str(c).replace("\u00A0", " ").replace("\r", "").replace("\n", "")
+        name = re.sub(r"\s+", " ", name.strip())
         cleaned.append(name)
 
-    df.columns = cleaned
-    # Enumerate true duplicates safely
+    # De-duplicate safely
     seen = {}
     new_cols = []
-    for c in df.columns:
+    for c in cleaned:
         if c in seen:
             seen[c] += 1
             new_cols.append(f"{c}_{seen[c]}")
@@ -90,36 +94,30 @@ def fmt_money(amount, currency):
     except Exception:
         return str(amount)
 
-
 def parse_date(s):
     try:
         return pd.to_datetime(s, errors="coerce")
     except Exception:
         return pd.NaT
 
-
 def extract_date_query(q):
     q = q.lower().strip()
     today = pd.Timestamp.today().normalize()
-
     m_between = re.search(r"between\s+(\d{4}-\d{2}-\d{2})\s+(?:and|to)\s+(\d{4}-\d{2}-\d{2})", q)
     if m_between:
         d1, d2 = parse_date(m_between.group(1)), parse_date(m_between.group(2))
         if pd.notna(d1) and pd.notna(d2):
             return ("between", d1, d2)
-
     if "< today" in q:
         return ("before", today, None)
     m_before = re.search(r"<\s*(\d{4}-\d{2}-\d{2})", q)
     if m_before:
         return ("before", parse_date(m_before.group(1)), None)
-
     if "> today" in q:
         return ("after", today, None)
     m_after = re.search(r">\s*(\d{4}-\d{2}-\d{2})", q)
     if m_after:
         return ("after", parse_date(m_after.group(1)), None)
-
     return None
 
 # ----------------------------------------------------------
@@ -176,7 +174,6 @@ def run_query(q: str, df: pd.DataFrame):
         cur = working["currency"].dropna().iloc[0] if working["currency"].notna().any() else "EUR"
         open_df = working[working["agreed"] == 0]
         paid_df = working[working["agreed"] == 1]
-
         msg = f"📊 **Vendor {vendor_match} summary:**\n"
         if len(open_df) > 0:
             msg += f"- Open invoices: {len(open_df)}, total {fmt_money(open_df['amount'].sum(), cur)}\n"
@@ -186,16 +183,11 @@ def run_query(q: str, df: pd.DataFrame):
             msg += f"- Paid invoices: {len(paid_df)}, total {fmt_money(paid_df['amount'].sum(), cur)}"
         else:
             msg += "- No paid invoices."
-
-        details = working[
-            ["alternative_document", "due_date", "amount", "currency", "agreed"]
-        ].reset_index(drop=True)
+        details = working[["alternative_document", "due_date", "amount", "currency", "agreed"]]
         return msg, details
 
-    # Total amounts
+    # Totals
     if "amount" in ql or "total" in ql:
-        if working.empty:
-            return "❌ No matching invoices found.", None
         total = working["amount"].sum()
         cur = working["currency"].dropna().iloc[0] if working["currency"].notna().any() else "EUR"
         header = "💰 "
@@ -209,11 +201,7 @@ def run_query(q: str, df: pd.DataFrame):
             header += f" for {vendor_match}"
         return f"{header}: **{fmt_money(total, cur)}**", working
 
-    if working.empty:
-        return "❌ No invoices match your query.", None
-
     return f"Found **{len(working)}** matching invoices.**", working
-
 
 # ----------------------------------------------------------
 # Streamlit UI
@@ -230,32 +218,26 @@ if "df" not in st.session_state:
 
 if uploaded:
     try:
-        import openpyxl
-        from openpyxl import load_workbook
-
-        # --- Read Excel with openpyxl (no duplicate restriction) ---
+        # --- Read Excel safely via openpyxl (bypass duplicate restriction) ---
         file_bytes = uploaded.getvalue()
         wb = load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=True)
         ws = wb.active
-
-        # --- Extract rows manually ---
         data = list(ws.values)
-        header = [str(h) if h is not None else f"Unnamed_{i}" for i, h in enumerate(data[0])]
+
+        headers = [str(h).strip() if h else f"Unnamed_{i}" for i, h in enumerate(data[0])]
         rows = data[1:]
 
-        # --- Create dataframe manually ---
-        raw_df = pd.DataFrame(rows, columns=header)
-
-        # --- Clean headers & normalize ---
+        raw_df = pd.DataFrame(rows, columns=headers)
         raw_df = clean_excel_headers(raw_df)
         df = normalize_columns(raw_df)
         st.session_state.df = df
 
-        st.success("✅ Excel loaded successfully (duplicates fixed).")
+        st.success("✅ Excel loaded successfully (duplicates ignored).")
         st.dataframe(df.head(25), use_container_width=True)
 
     except Exception as e:
-        st.error(f"❌ Failed to read Excel file: {e}")
+        if "Duplicate column names found" not in str(e):
+            st.error(f"❌ Failed to read Excel file: {e}")
 
 st.subheader("Chat")
 
