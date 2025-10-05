@@ -1,216 +1,156 @@
 import re
+import io
 import pandas as pd
 import streamlit as st
 from datetime import datetime
-import io
 from openpyxl import load_workbook
 import warnings
-
-# ----------------------------------------------------------
-# Disable Streamlit/Pandas duplicate header warnings
-# ----------------------------------------------------------
 warnings.filterwarnings("ignore", message="Duplicate column names found", category=UserWarning)
 
-# ----------------------------------------------------------
-# Streamlit setup
-# ----------------------------------------------------------
-st.set_page_config(page_title="AP Chatbot (Excel)", page_icon="💼", layout="wide")
+st.set_page_config(page_title="Accounts Payable Chatbot — Excel-driven", page_icon="💼", layout="wide")
 st.title("💬 Accounts Payable Chatbot — Excel-driven")
-st.caption(
-    "Try: 'open amount for vendor test', 'emails for paid invoices', "
-    "'due date invoices < today', 'vendor Technogym Iberia summary'"
-)
+st.caption("Try: 'open amount for vendor test', 'emails for paid invoices', "
+           "'due date invoices < today', 'vendor Technogym Iberia summary'")
 
-# ----------------------------------------------------------
-# Column normalization
-# ----------------------------------------------------------
-SYNONYMS = {
-    "alternative_document": ["alternative document", "alt doc", "alt document", "document", "invoice"],
-    "vendor_name": ["vendor", "vendor name", "supplier", "supplier name", "supp name"],
-    "vendor_email": ["email", "vendor email", "supplier email", "correo", "mail", "Ηλεκτρονική Διευθυνση"],
-    "amount": ["amount", "total", "invoice amount", "importe", "value", "open amount", "Open amount in base cur."],
-    "currency": ["currency", "curr", "moneda"],
-    "due_date": ["due date", "vencimiento", "fecha vencimiento", "due month"],
-    "payment_date": ["payment date", "fecha pago", "paid date"],
-    "agreed": ["agreed", "is agreed", "approved", "paid flag", "agreeded"],
-}
-STANDARD_COLS = list(SYNONYMS.keys())
-
-# ----------------------------------------------------------
-# Header cleaner
-# ----------------------------------------------------------
+# ------------------------------------------------------------
+# Helper functions
+# ------------------------------------------------------------
 def clean_excel_headers(df):
-    cleaned = []
-    for c in df.columns:
-        name = str(c).replace("\u00A0", " ").replace("\r", "").replace("\n", "")
-        name = re.sub(r"\s+", " ", name.strip())
-        cleaned.append(name)
-
-    # De-duplicate safely
-    seen = {}
-    new_cols = []
-    for c in cleaned:
-        if c in seen:
-            seen[c] += 1
-            new_cols.append(f"{c}_{seen[c]}")
-        else:
-            seen[c] = 0
-            new_cols.append(c)
-    df.columns = new_cols
+    """Normalize headers: lowercase, underscores, trim spaces."""
+    df.columns = (
+        df.columns.astype(str)
+        .str.strip()
+        .str.lower()
+        .str.replace(r"[^a-z0-9]+", "_", regex=True)
+        .str.replace(r"_+", "_", regex=True)
+        .str.strip("_")
+    )
     return df
 
-
-def _clean(s: str) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", str(s).strip().lower()).strip()
-
-
-def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
-    colmap = {}
-    for c in df.columns:
-        c_clean = _clean(c)
-        mapped = None
-        for std, alts in SYNONYMS.items():
-            for alt in [std] + alts:
-                if _clean(alt) == c_clean:
-                    mapped = std
-                    break
-            if mapped:
-                break
-        colmap[c] = mapped if mapped else c
-    df = df.rename(columns=colmap)
-    for sc in STANDARD_COLS:
-        if sc not in df.columns:
-            df[sc] = None
-    return df
-
-# ----------------------------------------------------------
-# Helpers
-# ----------------------------------------------------------
-def fmt_money(amount, currency):
+def fmt_money(x, cur="EUR"):
     try:
-        a = float(str(amount).replace(",", "").strip())
-        cur = currency if isinstance(currency, str) and currency else "EUR"
-        return f"{a:,.2f} {cur}"
-    except Exception:
-        return str(amount)
+        val = float(str(x).replace(",", "").strip())
+        return f"{val:,.2f} {cur}"
+    except:
+        return str(x)
 
-def parse_date(s):
-    try:
-        return pd.to_datetime(s, errors="coerce")
-    except Exception:
-        return pd.NaT
+def parse_date_token(q):
+    """Detects <, >, or between date conditions."""
+    q = q.lower()
+    today = datetime.today()
+    between = re.search(r"between\s+(\d{4}-\d{2}-\d{2})\s+(?:and|to)\s+(\d{4}-\d{2}-\d{2})", q)
+    less = re.search(r"<\s*(today|\d{4}-\d{2}-\d{2})", q)
+    greater = re.search(r">\s*(today|\d{4}-\d{2}-\d{2})", q)
 
-def extract_date_query(q):
-    q = q.lower().strip()
-    today = pd.Timestamp.today().normalize()
-    m_between = re.search(r"between\s+(\d{4}-\d{2}-\d{2})\s+(?:and|to)\s+(\d{4}-\d{2}-\d{2})", q)
-    if m_between:
-        d1, d2 = parse_date(m_between.group(1)), parse_date(m_between.group(2))
-        if pd.notna(d1) and pd.notna(d2):
-            return ("between", d1, d2)
-    if "< today" in q:
-        return ("before", today, None)
-    m_before = re.search(r"<\s*(\d{4}-\d{2}-\d{2})", q)
-    if m_before:
-        return ("before", parse_date(m_before.group(1)), None)
-    if "> today" in q:
-        return ("after", today, None)
-    m_after = re.search(r">\s*(\d{4}-\d{2}-\d{2})", q)
-    if m_after:
-        return ("after", parse_date(m_after.group(1)), None)
+    if between:
+        return ("between",
+                pd.to_datetime(between.group(1), errors="coerce"),
+                pd.to_datetime(between.group(2), errors="coerce"))
+    elif less:
+        d = today if "today" in less.group(1) else pd.to_datetime(less.group(1), errors="coerce")
+        return ("before", d, None)
+    elif greater:
+        d = today if "today" in greater.group(1) else pd.to_datetime(greater.group(1), errors="coerce")
+        return ("after", d, None)
     return None
 
-# ----------------------------------------------------------
-# Core Query Logic
-# ----------------------------------------------------------
-def run_query(q: str, df: pd.DataFrame):
+def normalize_columns(df):
+    """Map synonyms to consistent names."""
+    colmap = {
+        "trade_account": "trade_account",
+        "issue_date": "issue_date",
+        "due_date": "due_date",
+        "document": "invoice_no",
+        "alternative_document": "alternative_document",
+        "open_amount": "amount",
+        "open_amount_in_base_cur": "amount",
+        "currency": "currency",
+        "due_month": "due_month",
+        "payment_method_doc": "payment_method",
+        "payment_method_supplier": "payment_method",
+        "workflow_step": "workflow_step",
+        "agreed": "agreed",
+        "agreeded": "agreed",
+        "supp_name": "vendor_name",
+        "vendor_name": "vendor_name",
+        "vendor_email": "vendor_email",
+        "ηλεκτρονική_διευθυνση": "vendor_email",
+        "payment_date": "payment_date"
+    }
+    df = df.rename(columns=lambda c: colmap.get(c, c))
+    return df
+
+def run_query(q, df):
     if df is None or df.empty:
         return "⚠️ Please upload an Excel file first.", None
 
     ql = q.lower()
-    working = df.copy()
-    working["amount"] = pd.to_numeric(working["amount"], errors="coerce")
-    working["agreed"] = pd.to_numeric(working["agreed"], errors="coerce")
-    working["due_date_parsed"] = pd.to_datetime(working["due_date"], errors="coerce")
+    df["amount"] = pd.to_numeric(df.get("amount"), errors="coerce")
+    df["due_date_parsed"] = pd.to_datetime(df.get("due_date"), errors="coerce")
+    df["agreed"] = pd.to_numeric(df.get("agreed"), errors="coerce").fillna(0).astype(int)
 
-    # Vendor detection
+    # Open or paid filter
+    if "open" in ql or "unpaid" in ql:
+        df = df[df["agreed"] == 0]
+    elif "paid" in ql:
+        df = df[df["agreed"] == 1]
+
+    # Vendor filter
     vendor_match = None
-    for v in working["vendor_name"].dropna().unique():
+    for v in df["vendor_name"].dropna().unique():
         if v.lower() in ql:
             vendor_match = v
+            df = df[df["vendor_name"].str.lower() == v.lower()]
             break
-    if vendor_match:
-        working = working[working["vendor_name"].astype(str).str.lower() == vendor_match.lower()]
-
-    # Open/Paid filters
-    if "open" in ql or "unpaid" in ql:
-        working = working[working["agreed"] == 0]
-    elif "paid" in ql or "approved" in ql:
-        working = working[working["agreed"] == 1]
 
     # Date filters
-    if "due date" in ql:
-        cond = extract_date_query(ql)
-        if cond:
-            mode, d1, d2 = cond
-            if mode == "before" and pd.notna(d1):
-                working = working[working["due_date_parsed"] < d1]
-            elif mode == "after" and pd.notna(d1):
-                working = working[working["due_date_parsed"] > d1]
-            elif mode == "between" and pd.notna(d1) and pd.notna(d2):
-                working = working[
-                    (working["due_date_parsed"] >= d1) & (working["due_date_parsed"] <= d2)
-                ]
+    date_cond = parse_date_token(ql)
+    if date_cond:
+        mode, d1, d2 = date_cond
+        if mode == "before":
+            df = df[df["due_date_parsed"] < d1]
+        elif mode == "after":
+            df = df[df["due_date_parsed"] > d1]
+        elif mode == "between":
+            df = df[(df["due_date_parsed"] >= d1) & (df["due_date_parsed"] <= d2)]
 
-    # Email queries
-    if "email" in ql or "emails" in ql:
-        emails = working["vendor_email"].dropna().astype(str).str.strip().unique()
-        if len(emails) == 0:
-            return "❌ No vendor emails found for this query.", None
-        return f"📧 Vendor emails: {'; '.join(emails)}", None
+    if df.empty:
+        return "❌ No invoices match your query.", None
 
     # Vendor summary
-    if vendor_match:
-        cur = working["currency"].dropna().iloc[0] if working["currency"].notna().any() else "EUR"
-        open_df = working[working["agreed"] == 0]
-        paid_df = working[working["agreed"] == 1]
-        msg = f"📊 **Vendor {vendor_match} summary:**\n"
-        if len(open_df) > 0:
-            msg += f"- Open invoices: {len(open_df)}, total {fmt_money(open_df['amount'].sum(), cur)}\n"
-        else:
-            msg += "- No open invoices.\n"
-        if len(paid_df) > 0:
-            msg += f"- Paid invoices: {len(paid_df)}, total {fmt_money(paid_df['amount'].sum(), cur)}"
-        else:
-            msg += "- No paid invoices."
-        details = working[["alternative_document", "due_date", "amount", "currency", "agreed"]]
-        return msg, details
+    if vendor_match and "summary" in ql:
+        open_df = df[df["agreed"] == 0]
+        paid_df = df[df["agreed"] == 1]
+        msg = f"📊 Vendor **{vendor_match}** summary:\n"
+        msg += f"- Open invoices: {len(open_df)}, total {fmt_money(open_df['amount'].sum(), open_df.get('currency', 'EUR').iloc[0] if not open_df.empty else 'EUR')}\n"
+        msg += f"- Paid invoices: {len(paid_df)}, total {fmt_money(paid_df['amount'].sum(), paid_df.get('currency', 'EUR').iloc[0] if not paid_df.empty else 'EUR')}"
+        return msg, df
 
-    # Totals
-    if "amount" in ql or "total" in ql:
-        total = working["amount"].sum()
-        cur = working["currency"].dropna().iloc[0] if working["currency"].notna().any() else "EUR"
-        header = "💰 "
-        if "open" in ql:
-            header += "Total open amount"
-        elif "paid" in ql:
-            header += "Total paid amount"
-        else:
-            header += "Total amount"
-        if vendor_match:
-            header += f" for {vendor_match}"
-        return f"{header}: **{fmt_money(total, cur)}**", working
+    # Emails
+    if "email" in ql:
+        emails = "; ".join(df["vendor_email"].dropna().unique())
+        return f"📧 Vendor emails: {emails if emails else 'none found'}", df
 
-    return f"Found **{len(working)}** matching invoices.**", working
+    # Workflow step
+    if "workflow" in ql or "block" in ql:
+        steps = df["workflow_step"].dropna().unique()
+        return f"🔧 Workflow steps: {', '.join(steps)}", df
 
-# ----------------------------------------------------------
-# Streamlit UI
-# ----------------------------------------------------------
+    # Group totals by vendor
+    if "amount" in ql and "vendor" in ql:
+        grouped = df.groupby("vendor_name", dropna=True)["amount"].sum().reset_index()
+        grouped["amount"] = grouped["amount"].map(lambda x: f"{x:,.2f}")
+        return "📊 Totals by vendor:", grouped
+
+    # Default return
+    return f"Found **{len(df)}** invoice(s) matching your query.", df
+
+
+# ------------------------------------------------------------
+# File Upload
+# ------------------------------------------------------------
 st.sidebar.header("📦 Upload Excel")
-st.sidebar.write(
-    "Columns: Alternative Document, Vendor Name, Vendor Email, Amount, Currency, Due Date, Agreed."
-)
-
+st.sidebar.write("Columns: Trade account, Issue date, Due date, Document, Alternative Document, Payment method, Workflow step, Agreed, Supp name, Email, Amount, Currency, etc.")
 uploaded = st.file_uploader("Upload your Excel (.xlsx)", type=["xlsx"])
 
 if "df" not in st.session_state:
@@ -218,29 +158,30 @@ if "df" not in st.session_state:
 
 if uploaded:
     try:
-        # --- Read Excel safely via openpyxl (bypass duplicate restriction) ---
+        # --- Read Excel safely with openpyxl ---
         file_bytes = uploaded.getvalue()
         wb = load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=True)
         ws = wb.active
         data = list(ws.values)
-
-        headers = [str(h).strip() if h else f"Unnamed_{i}" for i, h in enumerate(data[0])]
-        rows = data[1:]
-
-        raw_df = pd.DataFrame(rows, columns=headers)
-        raw_df = clean_excel_headers(raw_df)
-        df = normalize_columns(raw_df)
-        st.session_state.df = df
-
-        st.success("✅ Excel loaded successfully (duplicates ignored).")
-        st.dataframe(df.head(25), use_container_width=True)
-
+        if not data:
+            st.error("❌ Excel file is empty.")
+        else:
+            headers = [str(h).strip() if h else f"Unnamed_{i}" for i, h in enumerate(data[0])]
+            rows = data[1:]
+            raw_df = pd.DataFrame(rows, columns=headers)
+            raw_df = clean_excel_headers(raw_df)
+            df = normalize_columns(raw_df)
+            st.session_state.df = df
+            st.success("✅ Excel loaded successfully (duplicates ignored).")
+            st.caption(f"Loaded {len(df)} rows and {len(df.columns)} columns.")
+            st.dataframe(df.head(50), use_container_width=True)
     except Exception as e:
-        if "Duplicate column names found" not in str(e):
-            st.error(f"❌ Failed to read Excel file: {e}")
+        st.error(f"❌ Failed to read Excel file: {e}")
 
+# ------------------------------------------------------------
+# Chat
+# ------------------------------------------------------------
 st.subheader("Chat")
-
 if st.button("🔄 Restart Chat"):
     st.session_state.history = []
     st.rerun()
@@ -251,18 +192,12 @@ if "history" not in st.session_state:
 for role, msg in st.session_state.history:
     st.chat_message(role).write(msg)
 
-prompt = st.chat_input(
-    "Ask: e.g. 'vendor Technogym Iberia summary', 'open amount for vendor test', 'due date invoices < today'"
-)
+prompt = st.chat_input("Ask about invoices...")
 if prompt:
     st.session_state.history.append(("user", prompt))
     st.chat_message("user").write(prompt)
-    answer, result_df = run_query(prompt, st.session_state.df)
+    answer, df_out = run_query(prompt, st.session_state.df)
     st.session_state.history.append(("assistant", answer))
     st.chat_message("assistant").write(answer)
-    if isinstance(result_df, pd.DataFrame) and not result_df.empty:
-        st.dataframe(result_df, use_container_width=True)
-        csv = result_df.to_csv(index=False).encode("utf-8")
-        st.download_button(
-            "⬇️ Download results as CSV", csv, file_name="results.csv", mime="text/csv"
-        )
+    if df_out is not None and not df_out.empty:
+        st.dataframe(df_out, use_container_width=True)
