@@ -7,13 +7,15 @@ from openpyxl import load_workbook
 import warnings
 warnings.filterwarnings("ignore", message="Duplicate column names found", category=UserWarning)
 
+# ------------------------------------------------------------
+# PAGE CONFIG
+# ------------------------------------------------------------
 st.set_page_config(page_title="Accounts Payable Chatbot — Excel-driven", page_icon="💼", layout="wide")
 st.title("💬 Accounts Payable Chatbot — Excel-driven")
-st.caption("Try: 'open amount for vendor test', 'emails for paid invoices', "
-           "'due date invoices < today', 'vendor Technogym Iberia summary'")
+st.caption("Try: 'open amount for vendor test', 'emails for paid invoices', 'due date invoices < today', 'vendor Technogym Iberia summary'")
 
 # ------------------------------------------------------------
-# Helper functions
+# CLEANING HELPERS
 # ------------------------------------------------------------
 def clean_excel_headers(df):
     """Normalize headers: lowercase, underscores, trim spaces."""
@@ -25,6 +27,21 @@ def clean_excel_headers(df):
         .str.replace(r"_+", "_", regex=True)
         .str.strip("_")
     )
+    return df
+
+def dedupe_columns(df):
+    """Ensure unique column names after cleaning/normalization."""
+    seen = {}
+    new_cols = []
+    for c in df.columns:
+        c = c.strip()
+        if c in seen:
+            seen[c] += 1
+            new_cols.append(f"{c}_{seen[c]}")  # e.g. amount_2
+        else:
+            seen[c] = 1
+            new_cols.append(c)
+    df.columns = new_cols
     return df
 
 def fmt_money(x, cur="EUR"):
@@ -61,9 +78,11 @@ def normalize_columns(df):
         "issue_date": "issue_date",
         "due_date": "due_date",
         "document": "invoice_no",
+        "invoice_no": "invoice_no",
         "alternative_document": "alternative_document",
         "open_amount": "amount",
         "open_amount_in_base_cur": "amount",
+        "amount": "amount",
         "currency": "currency",
         "due_month": "due_month",
         "payment_method_doc": "payment_method",
@@ -75,11 +94,14 @@ def normalize_columns(df):
         "vendor_name": "vendor_name",
         "vendor_email": "vendor_email",
         "ηλεκτρονική_διευθυνση": "vendor_email",
-        "payment_date": "payment_date"
+        "payment_date": "payment_date",
     }
     df = df.rename(columns=lambda c: colmap.get(c, c))
     return df
 
+# ------------------------------------------------------------
+# QUERY ENGINE
+# ------------------------------------------------------------
 def run_query(q, df):
     if df is None or df.empty:
         return "⚠️ Please upload an Excel file first.", None
@@ -142,12 +164,10 @@ def run_query(q, df):
         grouped["amount"] = grouped["amount"].map(lambda x: f"{x:,.2f}")
         return "📊 Totals by vendor:", grouped
 
-    # Default return
     return f"Found **{len(df)}** invoice(s) matching your query.", df
 
-
 # ------------------------------------------------------------
-# File Upload
+# FILE UPLOAD
 # ------------------------------------------------------------
 st.sidebar.header("📦 Upload Excel")
 st.sidebar.write("Columns: Trade account, Issue date, Due date, Document, Alternative Document, Payment method, Workflow step, Agreed, Supp name, Email, Amount, Currency, etc.")
@@ -170,6 +190,7 @@ if uploaded:
             rows = data[1:]
             raw_df = pd.DataFrame(rows, columns=headers)
             raw_df = clean_excel_headers(raw_df)
+            raw_df = dedupe_columns(raw_df)        # ✅ ensure unique headers
             df = normalize_columns(raw_df)
             st.session_state.df = df
             st.success("✅ Excel loaded successfully (duplicates ignored).")
@@ -179,7 +200,7 @@ if uploaded:
         st.error(f"❌ Failed to read Excel file: {e}")
 
 # ------------------------------------------------------------
-# Chat
+# CHAT
 # ------------------------------------------------------------
 st.subheader("Chat")
 if st.button("🔄 Restart Chat"):
