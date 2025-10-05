@@ -11,7 +11,10 @@ from openpyxl import load_workbook
 # =========================
 st.set_page_config(page_title="Accounts Payable Chatbot", page_icon="💼", layout="wide")
 st.title("💬 Accounts Payable Chatbot — Excel-driven")
-st.caption("Examples: 'open invoices', 'emails for paid invoices', 'group by vendor', 'due date between 2025-01-01 and 2025-03-31', 'comment for Technogym Iberia: waiting payment', 'blocked for payment'")
+st.caption("Examples: 'open invoices', 'emails for paid invoices', 'group by vendor', "
+           "'due date between 2025-01-01 and 2025-03-31', "
+           "'comment for Technogym Iberia: waiting bank confirmation', "
+           "'blocked for payment'")
 
 # =========================
 # HELPERS
@@ -65,6 +68,7 @@ def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
         "ηλεκτρονική_διεύθυνση": "vendor_email",
         "διευθυνση": "vendor_email",
         "correo": "vendor_email",
+        "alternative_document": "alternative_document",
     }
     df = df.rename(columns=lambda c: base_map.get(c, c))
     return df
@@ -95,17 +99,25 @@ def run_query(q: str, df: pd.DataFrame):
     ql = q.lower()
     df = df.copy()
 
-    # prepare columns
+    # Prepare main columns
     if "amount" in df.columns:
         df["amount"] = pd.to_numeric(df["amount"], errors="coerce")
     if "due_date" in df.columns:
         df["due_date_parsed"] = pd.to_datetime(df["due_date"], errors="coerce")
+
+    # Define invoice column fallback
+    invoice_col = "invoice_no"
+    if invoice_col not in df.columns:
+        if "alternative_document" in df.columns:
+            invoice_col = "alternative_document"
+
+    # Ensure 'agreed' column
     if "agreed" in df.columns:
         df["agreed"] = pd.to_numeric(df["agreed"], errors="coerce").fillna(0).astype(int)
     else:
         df["agreed"] = 0
 
-    # ---------------- Filters ----------------
+    # ---------------- FILTERS ----------------
     is_open = any(k in ql for k in ["open", "unpaid", "pending"])
     is_paid = any(k in ql for k in ["paid", "settled", "agreed", "aggreed", "approved", "posted", "reconciled"])
 
@@ -148,36 +160,45 @@ def run_query(q: str, df: pd.DataFrame):
     if df.empty:
         return "❌ No invoices found.", None
 
-    # ---------------- Emails ----------------
+    # ---------------- EMAILS ----------------
     if "email" in ql:
         if "vendor_email" not in df.columns:
             return "⚠️ No 'vendor_email' column found.", None
-        emails = "; ".join(sorted({str(x).strip() for x in df["vendor_email"].dropna() if str(x).strip()}))
+
+        # Split by open / paid context
+        if "open" in ql:
+            emails_df = df[df["agreed"] == 0]
+        elif "paid" in ql:
+            emails_df = df[df["agreed"] == 1]
+        else:
+            emails_df = df
+
+        emails = "; ".join(sorted({str(x).strip() for x in emails_df["vendor_email"].dropna() if str(x).strip()}))
         return f"📧 Vendor emails: {emails if emails else 'none found'}", None
 
-    # ---------------- Group by vendor (open invoices only) ----------------
-    if "group" in ql or "amount per vendor" in ql or "vendor by amount" in ql:
+    # ---------------- GROUP BY VENDOR ----------------
+    if "group" in ql or "vendor by amount" in ql or "amount per vendor" in ql:
         if "vendor_name" not in df.columns or "amount" not in df.columns:
             return "⚠️ Missing 'vendor_name' or 'amount' columns.", None
         grouped = (
             df.groupby("vendor_name", dropna=True)
-              .agg(total_amount=("amount", "sum"), invoices=("invoice_no", "count"))
+              .agg(total_amount=("amount", "sum"), invoices=(invoice_col, "count"))
               .reset_index()
         )
         grouped["total_amount"] = grouped["total_amount"].map(lambda x: f"{x:,.2f}")
         return "📊 Totals by vendor:", grouped
 
-    # ---------------- Vendor summary ----------------
+    # ---------------- VENDOR SUMMARY ----------------
     if vendor_match and "summary" in ql:
         vendor_all = df.copy()
         open_df = vendor_all[vendor_all["agreed"] == 0]
         paid_df = vendor_all[vendor_all["agreed"] == 1]
         msg = (f"📊 Vendor **{vendor_match}** summary:\n"
                f"- Open invoices: {len(open_df)} (Total {open_df['amount'].sum():,.2f})\n"
-               f"- Paid/Agreed invoices: {len(paid_df)} (Total {paid_df['amount'].sum():,.2f})")
+               f"- Paid invoices: {len(paid_df)} (Total {paid_df['amount'].sum():,.2f})")
         return msg, df
 
-    # ---------------- Totals ----------------
+    # ---------------- TOTALS ----------------
     if "open amount" in ql or "open amounts" in ql:
         total = df["amount"].sum(skipna=True)
         return f"💶 Total open amount: {total:,.2f}", df
@@ -186,7 +207,7 @@ def run_query(q: str, df: pd.DataFrame):
         total = df["amount"].sum(skipna=True)
         return f"✅ Total paid amount: {total:,.2f}", df
 
-    # ---------------- Default ----------------
+    # ---------------- DEFAULT ----------------
     return f"Found **{len(df)}** matching invoices.", df
 
 # =========================
