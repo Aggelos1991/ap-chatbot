@@ -3,6 +3,9 @@ import pandas as pd
 import streamlit as st
 from datetime import date
 
+# ----------------------------------------------------------
+# Streamlit UI setup
+# ----------------------------------------------------------
 st.set_page_config(page_title="AP Chatbot (Excel)", page_icon="💼", layout="wide")
 st.title("💬 Accounts Payable Chatbot — Excel-driven")
 st.caption("Try: 'open amount for vendor test', 'workflow step for vendor test', 'payment method for vendor test'")
@@ -29,6 +32,7 @@ def _clean(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", str(s).strip().lower()).strip()
 
 def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize headers to internal standard names."""
     colmap = {}
     for c in df.columns:
         c_clean = _clean(c)
@@ -65,6 +69,7 @@ def detect_invoice_ids(text: str):
     return list(dict.fromkeys(cleaned))
 
 def match_invoice(df: pd.DataFrame, inv: str):
+    """Match invoice only using AlternativeDocument."""
     def norm(x): return re.sub(r"[-_/]", "", str(x).lower())
     target = norm(inv)
     if "alternative_document" not in df.columns:
@@ -86,7 +91,7 @@ def unique_nonempty(series: pd.Series):
     return sorted(vals, key=str.lower)
 
 # ----------------------------------------------------------
-# Query Logic
+# Core Query Logic
 # ----------------------------------------------------------
 def run_query(q: str, df: pd.DataFrame):
     if df is None or df.empty:
@@ -94,10 +99,12 @@ def run_query(q: str, df: pd.DataFrame):
 
     ql = q.lower()
     working = df.copy()
+
+    # Normalize
     working["amount"] = pd.to_numeric(working["amount"], errors="coerce")
     working["agreed"] = pd.to_numeric(working["agreed"], errors="coerce")
 
-    # Vendor detection
+    # Vendor filter
     vendor_match = None
     for v in working["vendor_name"].dropna().unique():
         if v.lower() in ql:
@@ -106,7 +113,7 @@ def run_query(q: str, df: pd.DataFrame):
     if vendor_match:
         working = working[working["vendor_name"].astype(str).str.lower() == vendor_match.lower()]
 
-    # Invoice detection (AlternativeDocument only)
+    # Invoice filter (AlternativeDocument only)
     invs = detect_invoice_ids(ql)
     if invs:
         rows = []
@@ -119,21 +126,21 @@ def run_query(q: str, df: pd.DataFrame):
         else:
             return f"❌ No invoices found for: {', '.join(invs)}", None
 
-    # WorkflowStep
+    # Workflow step
     if "workflow" in ql or "block" in ql:
         steps = unique_nonempty(working["workflow_step"])
         if not steps:
             return "❌ No workflow step found for this query.", None
         return f"🔄 Workflow step(s): {', '.join(steps)}", working
 
-    # PaymentMethod
+    # Payment method (DOC)
     if "payment method" in ql or "doc" in ql:
         pm = unique_nonempty(working["payment_method"])
         if not pm:
             return "❌ No payment method found for this query.", None
         return f"💳 Payment method(s): {', '.join(pm)}", working
 
-    # Agreed logic (1=paid, 0=open)
+    # Agreed logic: 1 = paid / 0 = open
     if "open" in ql or "unpaid" in ql:
         working = working[working["agreed"] == 0]
     elif "paid" in ql or "approved" in ql:
@@ -155,7 +162,7 @@ def run_query(q: str, df: pd.DataFrame):
             header += f" for {vendor_match}"
         return f"{header}: **{fmt_money(total, working['currency'].iloc[0] if 'currency' in working else 'EUR')}**", working
 
-    # Group totals by vendor
+    # Grouped totals by vendor
     if "amount by vendor" in ql or "vendor totals" in ql or "total by vendor" in ql:
         g = (
             working.groupby("vendor_name", dropna=True)["amount"].sum()
@@ -174,7 +181,7 @@ def run_query(q: str, df: pd.DataFrame):
     return f"Found **{len(working)}** matching invoice(s).", working.reset_index(drop=True)
 
 # ----------------------------------------------------------
-# UI
+# UI / File Upload
 # ----------------------------------------------------------
 st.sidebar.header("📦 Upload Excel")
 st.sidebar.write("Columns: Alternative Document, Vendor Name, Amount, Agreed, Workflow Step, Payment Method (DOC).")
@@ -190,23 +197,37 @@ if uploaded:
         excel_data = pd.read_excel(uploaded, dtype=str, header=0)
         seen = {}
         new_columns = []
+        renamed = {}
         for c in excel_data.columns:
             if c in seen:
                 seen[c] += 1
-                new_columns.append(f"{c}_{seen[c]}")
+                new_name = f"{c}_{seen[c]}"
+                new_columns.append(new_name)
+                renamed[c] = renamed.get(c, []) + [new_name]
             else:
                 seen[c] = 0
                 new_columns.append(c)
         excel_data.columns = new_columns
 
+        # Normalize
         df = normalize_columns(excel_data)
         st.session_state.df = df
 
         st.success("✅ Excel loaded successfully.")
         st.dataframe(df.head(30), use_container_width=True)
-    except Exception as e:
-        st.error(f"Failed to read Excel: {e}")
 
+        # Sidebar info for duplicates
+        if renamed:
+            st.sidebar.warning("⚠️ Duplicate headers were found and renamed automatically:")
+            for base, dups in renamed.items():
+                st.sidebar.write(f"- **{base}** → {', '.join(dups)}")
+
+    except Exception as e:
+        st.error(f"Failed to read Excel file: {e}")
+
+# ----------------------------------------------------------
+# Chat section
+# ----------------------------------------------------------
 st.subheader("Chat")
 
 if st.button("🔄 Restart Chat"):
