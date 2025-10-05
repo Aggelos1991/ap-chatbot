@@ -8,7 +8,10 @@ from datetime import datetime
 # ----------------------------------------------------------
 st.set_page_config(page_title="AP Chatbot (Excel)", page_icon="💼", layout="wide")
 st.title("💬 Accounts Payable Chatbot — Excel-driven")
-st.caption("Try: 'open amount for vendor test', 'emails for paid invoices', 'due date invoices < today', 'vendor Technogym Iberia summary'")
+st.caption(
+    "Try: 'open amount for vendor test', 'emails for paid invoices', "
+    "'due date invoices < today', 'vendor Technogym Iberia summary'"
+)
 
 # ----------------------------------------------------------
 # Column normalization
@@ -151,7 +154,8 @@ def run_query(q: str, df: pd.DataFrame):
         else:
             msg += "- No paid invoices."
 
-        return msg, working[["alternative_document", "due_date", "amount", "currency", "agreed"]]
+        details = working[["alternative_document", "due_date", "amount", "currency", "agreed"]]
+        return msg, details
 
     # Amount summary
     if "amount" in ql or "total" in ql:
@@ -188,15 +192,19 @@ if "df" not in st.session_state:
 
 if uploaded:
     try:
-        # Read file from bytes (avoids duplicate header error)
+        # Read Excel safely from bytes (bypass Streamlit internal check)
         file_bytes = uploaded.getvalue()
-        df = pd.read_excel(file_bytes, dtype=str)
+        df = pd.read_excel(file_bytes, dtype=str, header=0, mangle_dupe_cols=True)
+
+        # Normalize and store
         df = normalize_columns(df)
         st.session_state.df = df
+
         st.success("✅ Excel loaded successfully.")
         st.dataframe(df.head(25), use_container_width=True)
+
     except Exception as e:
-        st.error(f"Failed to read Excel file: {e}")
+        st.error(f"❌ Failed to read Excel: {e}")
 
 st.subheader("Chat")
 
