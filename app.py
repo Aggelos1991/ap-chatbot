@@ -183,7 +183,9 @@ def run_query(q: str, df: pd.DataFrame):
 # UI
 # ----------------------------------------------------------
 st.sidebar.header("📦 Upload Excel")
-st.sidebar.write("Columns: Alternative Document, Vendor Name, Vendor Email, Amount, Currency, Due Date, Agreed.")
+st.sidebar.write(
+    "Columns: Alternative Document, Vendor Name, Vendor Email, Amount, Currency, Due Date, Agreed."
+)
 
 uploaded = st.file_uploader("Upload your Excel (.xlsx)", type=["xlsx"])
 
@@ -192,11 +194,23 @@ if "df" not in st.session_state:
 
 if uploaded:
     try:
-        # Read Excel safely from bytes (bypass Streamlit internal check)
+        # Read Excel safely from bytes and handle duplicate headers manually
         file_bytes = uploaded.getvalue()
-        df = pd.read_excel(file_bytes, dtype=str, header=0, mangle_dupe_cols=True)
+        df = pd.read_excel(file_bytes, dtype=str, header=0)
 
-        # Normalize and store
+        # Manually handle duplicate column names (safe for all Pandas versions)
+        seen = {}
+        new_cols = []
+        for c in df.columns:
+            if c in seen:
+                seen[c] += 1
+                new_cols.append(f"{c}_{seen[c]}")
+            else:
+                seen[c] = 0
+                new_cols.append(c)
+        df.columns = new_cols
+
+        # Normalize & store
         df = normalize_columns(df)
         st.session_state.df = df
 
@@ -204,7 +218,7 @@ if uploaded:
         st.dataframe(df.head(25), use_container_width=True)
 
     except Exception as e:
-        st.error(f"❌ Failed to read Excel: {e}")
+        st.error(f"❌ Failed to read Excel file: {e}")
 
 st.subheader("Chat")
 
@@ -218,7 +232,9 @@ if "history" not in st.session_state:
 for role, msg in st.session_state.history:
     st.chat_message(role).write(msg)
 
-prompt = st.chat_input("Ask: e.g. 'vendor Technogym Iberia summary', 'open amount for vendor test', 'due date invoices < today'")
+prompt = st.chat_input(
+    "Ask: e.g. 'vendor Technogym Iberia summary', 'open amount for vendor test', 'due date invoices < today'"
+)
 if prompt:
     st.session_state.history.append(("user", prompt))
     st.chat_message("user").write(prompt)
@@ -228,4 +244,6 @@ if prompt:
     if isinstance(result_df, pd.DataFrame) and not result_df.empty:
         st.dataframe(result_df, use_container_width=True)
         csv = result_df.to_csv(index=False).encode("utf-8")
-        st.download_button("⬇️ Download results as CSV", csv, file_name="results.csv", mime="text/csv")
+        st.download_button(
+            "⬇️ Download results as CSV", csv, file_name="results.csv", mime="text/csv"
+        )
