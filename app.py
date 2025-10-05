@@ -4,21 +4,13 @@ import pandas as pd
 import streamlit as st
 from datetime import datetime
 from openpyxl import load_workbook
-import warnings
 
-warnings.filterwarnings("ignore", message="Duplicate column names found", category=UserWarning)
-
-# ------------------------------------------------------------
-# PAGE CONFIG
-# ------------------------------------------------------------
-st.set_page_config(page_title="Accounts Payable Chatbot — Excel-driven", page_icon="💼", layout="wide")
+st.set_page_config(page_title="AP Chatbot", page_icon="💼", layout="wide")
 st.title("💬 Accounts Payable Chatbot — Excel-driven")
-st.caption("Try: 'open amount for vendor test', 'emails for paid invoices', 'due date invoices < today', 'vendor Technogym Iberia summary'")
+st.caption("Examples: 'open invoices', 'emails for paid invoices', 'due date < today', 'group by vendor', 'comment for Technogym Iberia: waiting payment'")
 
-# ------------------------------------------------------------
-# CLEANING HELPERS
-# ------------------------------------------------------------
-def clean_excel_headers(df):
+# ---------- HELPERS ----------
+def clean_headers(df):
     df.columns = (
         df.columns.astype(str)
         .str.strip()
@@ -29,86 +21,72 @@ def clean_excel_headers(df):
     )
     return df
 
-def fmt_money(x, cur="EUR"):
-    try:
-        val = float(str(x).replace(",", "").strip())
-        return f"{val:,.2f} {cur}"
-    except:
-        return str(x)
+def normalize_columns(df):
+    mapping = {
+        "supp_name": "vendor_name",
+        "supplier": "vendor_name",
+        "vendor": "vendor_name",
+        "document": "invoice_no",
+        "invoice_number": "invoice_no",
+        "open_amount_in_base_cur": "amount",
+        "open_amount": "amount",
+        "amount_in_eur": "amount",
+        "ηλεκτρονική_διευθυνση": "vendor_email",
+        "email": "vendor_email",
+        "payment_method_doc": "payment_method",
+        "payment_method_supplier": "payment_method",
+    }
+    df = df.rename(columns=lambda c: mapping.get(c, c))
+    return df
 
-def parse_date_token(q):
-    q = q.lower()
+def parse_date_filter(q):
     today = datetime.today()
+    q = q.lower()
     between = re.search(r"between\s+(\d{4}-\d{2}-\d{2})\s+(?:and|to)\s+(\d{4}-\d{2}-\d{2})", q)
     less = re.search(r"<\s*(today|\d{4}-\d{2}-\d{2})", q)
     greater = re.search(r">\s*(today|\d{4}-\d{2}-\d{2})", q)
     if between:
-        return ("between", pd.to_datetime(between.group(1)), pd.to_datetime(between.group(2)))
+        return "between", pd.to_datetime(between.group(1)), pd.to_datetime(between.group(2))
     elif less:
         d = today if "today" in less.group(1) else pd.to_datetime(less.group(1))
-        return ("before", d, None)
+        return "before", d, None
     elif greater:
         d = today if "today" in greater.group(1) else pd.to_datetime(greater.group(1))
-        return ("after", d, None)
+        return "after", d, None
     return None
 
-def normalize_columns(df):
-    colmap = {
-        "trade_account": "trade_account",
-        "issue_date": "issue_date",
-        "due_date": "due_date",
-        "document": "invoice_no",
-        "invoice_no": "invoice_no",
-        "alternative_document": "alternative_document",
-        "open_amount": "amount",
-        "open_amount_in_base_cur": "amount",
-        "amount": "amount",
-        "currency": "currency",
-        "due_month": "due_month",
-        "payment_method_doc": "payment_method",
-        "payment_method_supplier": "payment_method",
-        "workflow_step": "workflow_step",
-        "agreed": "agreed",
-        "agreeded": "agreed",
-        "supp_name": "vendor_name",
-        "vendor_name": "vendor_name",
-        "vendor_email": "vendor_email",
-        "ηλεκτρονική_διευθυνση": "vendor_email",
-        "payment_date": "payment_date",
-    }
-    df = df.rename(columns=lambda c: colmap.get(c, c))
-    return df
-
-# ------------------------------------------------------------
-# QUERY ENGINE
-# ------------------------------------------------------------
+# ---------- QUERY ----------
 def run_query(q, df):
     if df is None or df.empty:
-        return "⚠️ Please upload an Excel file first.", None
+        return "⚠️ Please upload an Excel first.", None
 
     ql = q.lower()
-    df["amount"] = pd.to_numeric(df.get("amount"), errors="coerce")
-    df["due_date_parsed"] = pd.to_datetime(df.get("due_date"), errors="coerce")
-    df["agreed"] = pd.to_numeric(df.get("agreed"), errors="coerce").fillna(0).astype(int)
+    if "amount" in df.columns:
+        df["amount"] = pd.to_numeric(df["amount"], errors="coerce")
+    if "due_date" in df.columns:
+        df["due_date_parsed"] = pd.to_datetime(df["due_date"], errors="coerce")
+    if "agreed" in df.columns:
+        df["agreed"] = pd.to_numeric(df["agreed"], errors="coerce").fillna(0).astype(int)
 
-    # open/paid filter
-    if "open" in ql or "unpaid" in ql:
-        df = df[df["agreed"] == 0]
+    # Filters
+    if "open" in ql:
+        df = df[df.get("agreed", 0) == 0]
     elif "paid" in ql:
-        df = df[df["agreed"] == 1]
+        df = df[df.get("agreed", 0) == 1]
 
-    # vendor filter
+    # Vendor filter
     vendor_match = None
-    for v in df["vendor_name"].dropna().unique():
-        if v.lower() in ql:
-            vendor_match = v
-            df = df[df["vendor_name"].str.lower() == v.lower()]
-            break
+    if "vendor_name" in df.columns:
+        for v in df["vendor_name"].dropna().unique():
+            if v.lower() in ql:
+                vendor_match = v
+                df = df[df["vendor_name"].str.lower() == v.lower()]
+                break
 
-    # date filters
-    date_cond = parse_date_token(ql)
-    if date_cond:
-        mode, d1, d2 = date_cond
+    # Date filters
+    cond = parse_date_filter(ql)
+    if cond and "due_date_parsed" in df.columns:
+        mode, d1, d2 = cond
         if mode == "before":
             df = df[df["due_date_parsed"] < d1]
         elif mode == "after":
@@ -117,52 +95,43 @@ def run_query(q, df):
             df = df[(df["due_date_parsed"] >= d1) & (df["due_date_parsed"] <= d2)]
 
     if df.empty:
-        return "❌ No invoices match your query.", None
+        return "❌ No invoices found.", None
 
-    # --- new: group by vendor amount and invoices ---
-    if "group" in ql or ("amount" in ql and "vendor" in ql):
+    # Emails
+    if "email" in ql:
+        if "vendor_email" not in df.columns:
+            return "⚠️ No 'vendor_email' column found.", None
+        emails = "; ".join(sorted(df["vendor_email"].dropna().unique()))
+        return f"📧 Vendor emails: {emails if emails else 'none found'}", None
+
+    # Grouping
+    if "group" in ql or "amount per vendor" in ql:
+        if "vendor_name" not in df.columns or "amount" not in df.columns:
+            return "⚠️ Missing vendor_name or amount columns.", None
         grouped = (
-            df.groupby("vendor_name", dropna=True)
-            .agg(total_amount=("amount", "sum"), invoice_count=("invoice_no", "count"))
+            df.groupby("vendor_name")
+            .agg(total_amount=("amount", "sum"), invoices=("invoice_no", "count"))
             .reset_index()
         )
         grouped["total_amount"] = grouped["total_amount"].map(lambda x: f"{x:,.2f}")
-        return "📊 Totals by vendor (amounts & invoice count):", grouped
+        return "📊 Totals by vendor:", grouped
 
-    # --- new: email extraction safe ---
-    if "email" in ql:
-        if "vendor_email" in df.columns:
-            emails = "; ".join(df["vendor_email"].dropna().unique())
-            return f"📧 Vendor emails: {emails if emails else 'none found'}", df
-        else:
-            return "⚠️ No 'vendor_email' column found in dataset.", None
-
-    # --- new: vendor summary (open + paid always included) ---
+    # Vendor summary
     if vendor_match and "summary" in ql:
-        open_df = df[df["agreed"] == 0]
-        paid_df = df[df["agreed"] == 1]
+        open_df = df[df.get("agreed", 0) == 0]
+        paid_df = df[df.get("agreed", 0) == 1]
         msg = f"📊 Vendor **{vendor_match}** summary:\n"
-        msg += f"- Open invoices: {len(open_df)}, total {fmt_money(open_df['amount'].sum())}\n"
-        msg += f"- Paid invoices: {len(paid_df)}, total {fmt_money(paid_df['amount'].sum())}"
+        msg += f"- Open invoices: {len(open_df)} (Total {open_df['amount'].sum():,.2f})\n"
+        msg += f"- Paid invoices: {len(paid_df)} (Total {paid_df['amount'].sum():,.2f})"
         return msg, df
 
-    # --- workflow ---
-    if "workflow" in ql or "block" in ql:
-        steps = df["workflow_step"].dropna().unique()
-        return f"🔧 Workflow steps: {', '.join(steps)}", df
+    return f"Found **{len(df)}** matching invoices.", df
 
-    return f"Found **{len(df)}** invoice(s) matching your query.", df
-
-
-# ------------------------------------------------------------
-# FILE UPLOAD
-# ------------------------------------------------------------
+# ---------- UPLOAD ----------
 st.sidebar.header("📦 Upload Excel")
 uploaded = st.file_uploader("Upload your Excel (.xlsx)", type=["xlsx"])
-
 if "df" not in st.session_state:
     st.session_state.df = None
-
 if uploaded:
     try:
         file_bytes = uploaded.getvalue()
@@ -170,76 +139,68 @@ if uploaded:
         ws = wb.active
         data = list(ws.values)
         headers = [str(h).strip() if h else f"Unnamed_{i}" for i, h in enumerate(data[0])]
-
-        # Deduplicate before DataFrame creation
+        # dedupe
         seen = {}
-        new_headers = []
+        final_headers = []
         for h in headers:
             if h in seen:
                 seen[h] += 1
-                new_headers.append(f"{h}_{seen[h]}")
+                final_headers.append(f"{h}_{seen[h]}")
             else:
                 seen[h] = 1
-                new_headers.append(h)
-
-        rows = data[1:]
-        raw_df = pd.DataFrame(rows, columns=new_headers)
-        raw_df = clean_excel_headers(raw_df)
-        raw_df = normalize_columns(raw_df)
-
-        st.session_state.df = raw_df
-        st.success("✅ Excel loaded successfully (duplicates handled).")
-        st.caption(f"Loaded {len(raw_df)} rows and {len(raw_df.columns)} columns.")
-        st.dataframe(raw_df.head(50), use_container_width=True)
+                final_headers.append(h)
+        df = pd.DataFrame(data[1:], columns=final_headers)
+        df = clean_headers(df)
+        df = normalize_columns(df)
+        st.session_state.df = df
+        st.success(f"✅ Excel loaded: {len(df)} rows, {len(df.columns)} cols.")
+        st.dataframe(df.head(30), use_container_width=True)
     except Exception as e:
-        st.error(f"❌ Failed to read Excel file: {e}")
+        st.error(f"❌ Error reading file: {e}")
 
-# ------------------------------------------------------------
-# CHAT + COMMENTS
-# ------------------------------------------------------------
+# ---------- CHAT ----------
 st.subheader("Chat")
 
 if "history" not in st.session_state:
     st.session_state.history = []
-
 if "comments" not in st.session_state:
-    st.session_state.comments = {}  # {vendor_name: comment}
+    st.session_state.comments = {}
 
 if st.button("🔄 Restart Chat"):
     st.session_state.history = []
     st.session_state.comments = {}
     st.rerun()
 
-# Display chat history
 for role, msg in st.session_state.history:
     st.chat_message(role).write(msg)
 
-prompt = st.chat_input("Ask about invoices or add a comment...")
+prompt = st.chat_input("Ask or add comment...")
 if prompt:
     st.session_state.history.append(("user", prompt))
     st.chat_message("user").write(prompt)
+    lower = prompt.lower()
 
-    # --- Handle comment add/view ---
-    if prompt.lower().startswith("comment"):
-        match = re.search(r"comment\s+for\s+(.+?):\s*(.+)", prompt, re.IGNORECASE)
-        if match:
-            vendor, text = match.group(1).strip(), match.group(2).strip()
-            st.session_state.comments[vendor.lower()] = text
-            response = f"💬 Comment saved for vendor **{vendor}**."
+    # ---- Comments ----
+    if lower.startswith("comment"):
+        m = re.search(r"comment\s+for\s+(.+?):\s*(.+)", lower, re.IGNORECASE)
+        if m:
+            vendor, comment = m.group(1).strip(), m.group(2).strip()
+            st.session_state.comments[vendor] = comment
+            response = f"💬 Saved comment for {vendor}."
         else:
-            match = re.search(r"comment\s+for\s+(.+)", prompt, re.IGNORECASE)
-            if match:
-                vendor = match.group(1).strip().lower()
-                text = st.session_state.comments.get(vendor)
-                response = f"💬 Comment for **{vendor}**: {text}" if text else "⚠️ No comment found."
+            m = re.search(r"comment\s+for\s+(.+)", lower, re.IGNORECASE)
+            if m:
+                vendor = m.group(1).strip()
+                note = st.session_state.comments.get(vendor)
+                response = f"💬 Comment for {vendor}: {note}" if note else "⚠️ No comment found."
             else:
                 response = "ℹ️ Use format: `comment for VendorName: your note`"
         st.session_state.history.append(("assistant", response))
         st.chat_message("assistant").write(response)
+
     else:
-        # Normal query
-        answer, df_out = run_query(prompt, st.session_state.df)
-        st.session_state.history.append(("assistant", answer))
-        st.chat_message("assistant").write(answer)
+        ans, df_out = run_query(prompt, st.session_state.df)
+        st.session_state.history.append(("assistant", ans))
+        st.chat_message("assistant").write(ans)
         if df_out is not None and not df_out.empty:
             st.dataframe(df_out, use_container_width=True)
