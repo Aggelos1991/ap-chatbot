@@ -29,6 +29,32 @@ SYNONYMS = {
 }
 STANDARD_COLS = list(SYNONYMS.keys())
 
+# ----------------------------------------------------------
+# Header cleaning to remove invisible duplicates
+# ----------------------------------------------------------
+def clean_excel_headers(df):
+    cleaned = []
+    for c in df.columns:
+        name = str(c)
+        name = name.replace("\u00A0", " ")  # non-breaking spaces
+        name = name.replace("\r", "").replace("\n", "")
+        name = re.sub(r"\s+", " ", name.strip())  # collapse spaces
+        cleaned.append(name)
+
+    df.columns = cleaned
+    # Enumerate true duplicates safely
+    seen = {}
+    new_cols = []
+    for c in df.columns:
+        if c in seen:
+            seen[c] += 1
+            new_cols.append(f"{c}_{seen[c]}")
+        else:
+            seen[c] = 0
+            new_cols.append(c)
+    df.columns = new_cols
+    return df
+
 
 def _clean(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", str(s).strip().lower()).strip()
@@ -52,7 +78,6 @@ def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
         if sc not in df.columns:
             df[sc] = None
     return df
-
 
 # ----------------------------------------------------------
 # Helpers
@@ -97,9 +122,8 @@ def extract_date_query(q):
 
     return None
 
-
 # ----------------------------------------------------------
-# Query Logic
+# Core Query Logic
 # ----------------------------------------------------------
 def run_query(q: str, df: pd.DataFrame):
     if df is None or df.empty:
@@ -111,7 +135,7 @@ def run_query(q: str, df: pd.DataFrame):
     working["agreed"] = pd.to_numeric(working["agreed"], errors="coerce")
     working["due_date_parsed"] = pd.to_datetime(working["due_date"], errors="coerce")
 
-    # Vendor filter
+    # Vendor detection
     vendor_match = None
     for v in working["vendor_name"].dropna().unique():
         if v.lower() in ql:
@@ -120,13 +144,13 @@ def run_query(q: str, df: pd.DataFrame):
     if vendor_match:
         working = working[working["vendor_name"].astype(str).str.lower() == vendor_match.lower()]
 
-    # Agreed logic (1 = paid, 0 = open)
+    # Open/Paid filters
     if "open" in ql or "unpaid" in ql:
         working = working[working["agreed"] == 0]
     elif "paid" in ql or "approved" in ql:
         working = working[working["agreed"] == 1]
 
-    # Due date filters
+    # Date filters
     if "due date" in ql:
         cond = extract_date_query(ql)
         if cond:
@@ -147,7 +171,7 @@ def run_query(q: str, df: pd.DataFrame):
             return "❌ No vendor emails found for this query.", None
         return f"📧 Vendor emails: {'; '.join(emails)}", None
 
-    # Vendor summary (open & paid)
+    # Vendor summary
     if vendor_match:
         cur = working["currency"].dropna().iloc[0] if working["currency"].notna().any() else "EUR"
         open_df = working[working["agreed"] == 0]
@@ -168,7 +192,7 @@ def run_query(q: str, df: pd.DataFrame):
         ].reset_index(drop=True)
         return msg, details
 
-    # Amount summary
+    # Total amounts
     if "amount" in ql or "total" in ql:
         if working.empty:
             return "❌ No matching invoices found.", None
@@ -192,7 +216,7 @@ def run_query(q: str, df: pd.DataFrame):
 
 
 # ----------------------------------------------------------
-# UI
+# Streamlit UI
 # ----------------------------------------------------------
 st.sidebar.header("📦 Upload Excel")
 st.sidebar.write(
@@ -206,22 +230,11 @@ if "df" not in st.session_state:
 
 if uploaded:
     try:
-        # Read Excel safely & deduplicate headers manually
+        # Read Excel safely & clean headers
         file_bytes = uploaded.getvalue()
         excel = pd.ExcelFile(io.BytesIO(file_bytes))
         raw_df = pd.read_excel(excel, dtype=str, header=0)
-
-        seen = {}
-        new_cols = []
-        for c in raw_df.columns:
-            c_clean = str(c).strip()
-            if c_clean in seen:
-                seen[c_clean] += 1
-                new_cols.append(f"{c_clean}_{seen[c_clean]}")
-            else:
-                seen[c_clean] = 0
-                new_cols.append(c_clean)
-        raw_df.columns = new_cols
+        raw_df = clean_excel_headers(raw_df)
 
         df = normalize_columns(raw_df)
         st.session_state.df = df
