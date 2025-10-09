@@ -51,6 +51,7 @@ def safe_excel_to_df(uploaded_file):
     df = pd.DataFrame(data[1:], columns=unique_headers)
     return df
 
+
 # ========== MAIN ==========
 uploaded = st.file_uploader("📦 Upload Excel (.xlsx)", type=["xlsx"])
 
@@ -65,7 +66,7 @@ if uploaded:
         if "type" in df.columns:
             df = df[df["type"].str.upper() == "XPI"]
 
-        # detect payment_method_descri even if name slightly differs
+        # detect payment_method columns even if name slightly differs
         pay_cols = [c for c in df.columns if "payment_method" in c]
         for c in pay_cols:
             df = df[~df[c].str.lower().isin(
@@ -88,8 +89,8 @@ if uploaded:
         # ========== PROMPT ==========
         prompt = st.text_input("Type your request:")
 
+        # --------- Prompt 1: table output ---------
         if prompt and "open amounts emails" in prompt.lower():
-            # detect vendor and email columns dynamically
             vendor_col = None
             email_col = None
 
@@ -123,32 +124,33 @@ if uploaded:
 
                 st.write("🇬🇧 **English Vendors (Other Countries)**")
                 st.dataframe(en_df, use_container_width=True)
-                # -------- New prompt: combined emails for Outlook --------
-elif prompt and "all spanish" in prompt.lower() and "english" in prompt.lower():
-    if "country" not in df.columns:
-        df["country"] = "other"
 
-    df["lang"] = df["country"].str.lower().apply(
-        lambda x: "ES" if "spain" in x or x.strip() in ["es", "esp", "españa"] else "EN"
-    )
+        # --------- Prompt 2: combined list output ---------
+        elif prompt and "all spanish" in prompt.lower() and "english" in prompt.lower():
+            if "country" not in df.columns:
+                df["country"] = "other"
 
-    email_col = None
-    for c in df.columns:
-        if any(k in c for k in ["email", "correo", "διεύθυνση"]):
-            email_col = c
-            break
+            df["lang"] = df["country"].str.lower().apply(
+                lambda x: "ES" if "spain" in x or x.strip() in ["es", "esp", "españa"] else "EN"
+            )
 
-    if not email_col:
-        st.error("⚠️ Email column not found.")
-    else:
-        es_emails = "; ".join(sorted({e.strip() for e in df.loc[df["lang"] == "ES", email_col] if e.strip()}))
-        en_emails = "; ".join(sorted({e.strip() for e in df.loc[df["lang"] == "EN", email_col] if e.strip()}))
+            email_col = None
+            for c in df.columns:
+                if any(k in c for k in ["email", "correo", "διεύθυνση"]):
+                    email_col = c
+                    break
 
-        st.write("🇪🇸 **Spanish emails (copy for Outlook)**")
-        st.code(es_emails or "No Spanish emails found", language="text")
+            if not email_col:
+                st.error("⚠️ Email column not found.")
+            else:
+                es_emails = "; ".join(sorted({e.strip() for e in df.loc[df["lang"] == "ES", email_col] if e.strip()}))
+                en_emails = "; ".join(sorted({e.strip() for e in df.loc[df["lang"] == "EN", email_col] if e.strip()}))
 
-        st.write("🇬🇧 **English emails (copy for Outlook)**")
-        st.code(en_emails or "No English emails found", language="text")
+                st.write("🇪🇸 **Spanish emails (copy for Outlook)**")
+                st.code(es_emails or "No Spanish emails found", language="text")
+
+                st.write("🇬🇧 **English emails (copy for Outlook)**")
+                st.code(en_emails or "No English emails found", language="text")
 
     except Exception as e:
         st.error(f"❌ Error reading file: {e}")
