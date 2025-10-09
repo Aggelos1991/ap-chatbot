@@ -7,20 +7,17 @@ from openpyxl import load_workbook
 st.set_page_config(page_title="AP Email Extractor", page_icon="💼", layout="wide")
 st.title("💬 Accounts Payable — Vendor Email Manager")
 
-# ================= FUNCTIONS =================
+# ========== FUNCTIONS ==========
 def safe_excel_to_df(uploaded_file):
     file_bytes = uploaded_file.getvalue()
     wb = load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=True)
     ws = next((wb[name] for name in wb.sheetnames if wb[name].max_row > 1 and wb[name].max_column > 1), wb.active)
-
     data = []
     for row in ws.values:
         safe_row = ["" if cell is None else str(cell) for cell in row]
         data.append(safe_row)
-
     if not data:
-        raise ValueError("Excel file is empty")
-
+        raise ValueError("Excel file is empty.")
     headers = [str(h).strip().lower().replace(" ", "_") if h else f"col_{i}" for i, h in enumerate(data[0])]
     seen = {}
     unique_headers = []
@@ -31,7 +28,6 @@ def safe_excel_to_df(uploaded_file):
         else:
             seen[h] = 0
             unique_headers.append(h)
-
     return pd.DataFrame(data[1:], columns=unique_headers)
 
 
@@ -59,14 +55,14 @@ def detect_invalid(df):
     return invalid
 
 
-# ================= MAIN =================
+# ========== MAIN ==========
 uploaded = st.file_uploader("📦 Upload Excel (.xlsx)", type=["xlsx"])
 
 if uploaded:
     try:
         df = safe_excel_to_df(uploaded)
 
-        # clean base
+        # base cleanup
         if "document" in df.columns:
             df = df[~df["document"].str.contains("F&B", case=False, na=False)]
         if "type" in df.columns:
@@ -79,16 +75,15 @@ if uploaded:
             df[agreed_col] = pd.to_numeric(df[agreed_col], errors="coerce").fillna(0)
             df = df[df[agreed_col] == 0]
 
-        # save to session
         st.session_state.df_session = df
-        st.success(f"✅ Excel loaded: {len(df)} rows")
+        st.success(f"✅ Excel loaded and filtered: {len(df)} rows")
         st.dataframe(df.head(20), use_container_width=True)
 
-        prompt = st.text_input("Type your request:")
+        prompt = st.text_area("Type your request (supports multi-line):")
 
         df = st.session_state.df_session.copy()
 
-        # ----------- Prompt 1 -----------
+        # -------- Prompt 1 -----------
         if prompt and "open amounts emails" in prompt.lower():
             vendor_col = next((c for c in df.columns if "vendor" in c or "supp_name" in c), None)
             df = combine_emails(df)
@@ -107,7 +102,7 @@ if uploaded:
             st.write("🇬🇧 **English Vendors**")
             st.dataframe(grouped[grouped["lang"] == "EN"].drop(columns=["lang"]), use_container_width=True)
 
-        # ----------- Prompt 2 -----------
+        # -------- Prompt 2 -----------
         elif prompt and any(k in prompt.lower() for k in ["invalid", "missing", "empty emails"]):
             invalid_df = detect_invalid(df)
             if invalid_df.empty:
@@ -117,45 +112,39 @@ if uploaded:
                 st.dataframe(invalid_df, use_container_width=True)
                 st.session_state.invalid_df = invalid_df
 
-        # ----------- Prompt 3 -----------
-        elif prompt and prompt.lower().startswith("add email for"):
-            m = re.match(r"add email for\s+(.+?):\s*(.+)", prompt, re.IGNORECASE)
-            if not m:
-                st.info("Use: `add email for SUPP_NAME: vendor@email.com; accounting@email.com`")
-            else:
-                supp = m.group(1).strip()
-                emails = [e.strip() for e in m.group(2).split(";") if e.strip()]
-                if not emails:
-                    st.error("❌ No valid email detected after ':'.")
-                else:
-                    vendor_col = next((c for c in df.columns if "vendor" in c or "supp_name" in c), None)
-                    if vendor_col is None:
-                        st.error("Vendor column not found.")
-                    else:
+        # -------- Prompt 3: multiple additions -----------
+        elif prompt and prompt.lower().startswith("add multiple emails"):
+            # Example input:
+            # add multiple emails:
+            # Supplier A: email1; accounting1
+            # Supplier B: email2; accounting2
+            lines = prompt.splitlines()[1:]  # skip first line
+            vendor_col = next((c for c in df.columns if "vendor" in c or "supp_name" in c), None)
+            updates = []
+            for line in lines:
+                m = re.match(r"(.+?):\s*(.+)", line.strip())
+                if m:
+                    supp = m.group(1).strip()
+                    emails = [e.strip() for e in m.group(2).split(";") if e.strip()]
+                    if emails:
                         idx = df[vendor_col].astype(str).str.lower() == supp.lower()
-                        if not idx.any():
-                            st.error(f"Vendor '{supp}' not found in data.")
-                        else:
-                            # Update email + accounting_email columns
+                        if idx.any():
                             email_main = emails[0]
                             email_acc = emails[1] if len(emails) > 1 else emails[0]
-
-                            if "email" in df.columns:
-                                df.loc[idx, "email"] = email_main
-                            else:
+                            if "email" not in df.columns:
                                 df["email"] = ""
-                                df.loc[idx, "email"] = email_main
-
-                            if "accounting_email" in df.columns:
-                                df.loc[idx, "accounting_email"] = email_acc
-                            else:
+                            if "accounting_email" not in df.columns:
                                 df["accounting_email"] = ""
-                                df.loc[idx, "accounting_email"] = email_acc
+                            df.loc[idx, "email"] = email_main
+                            df.loc[idx, "accounting_email"] = email_acc
+                            updates.append(f"✅ {supp}: {email_main}; {email_acc}")
+                        else:
+                            updates.append(f"⚠️ Supplier '{supp}' not found.")
+            st.session_state.df_session = df
+            if updates:
+                st.write("\n".join(updates))
 
-                            st.session_state.df_session = df
-                            st.success(f"✅ Updated {supp}: {email_main}; {email_acc}")
-
-        # ----------- Prompt 4 -----------
+        # -------- Prompt 4 -----------
         elif prompt and "all spanish" in prompt.lower() and "english" in prompt.lower():
             df = combine_emails(df)
             if "country" not in df.columns:
