@@ -32,11 +32,21 @@ def safe_excel_to_df(uploaded_file):
     return pd.DataFrame(data[1:], columns=unique_headers)
 
 def combine_emails(df):
-    email_cols = [c for c in df.columns if "email" in c]
+    """Auto-detect and combine all email-like columns into one unified column."""
+    email_cols = []
+    for c in df.columns:
+        c_low = c.lower()
+        if any(k in c_low for k in ["email", "e-mail", "correo", "ηλεκτρον", "διευθυν"]):
+            email_cols.append(c)
     if not email_cols:
-        return None
+        st.warning("⚠️ No email columns found in file.")
+        return df
+
     df["combined_emails"] = df[email_cols].apply(
-        lambda r: "; ".join(sorted({str(x).strip() for x in r if str(x).strip()})), axis=1
+        lambda r: "; ".join(
+            sorted({str(x).strip() for x in r if isinstance(x, str) and "@" in x and len(x.strip()) > 5})
+        ),
+        axis=1
     )
     return df
 
@@ -73,7 +83,7 @@ if uploaded:
             ref_date = pd.to_datetime(m.group(1)) if m else datetime.today()
 
             if "due_date" not in df.columns:
-                st.error("⚠️ No due_date column found.")
+                st.error("⚠️ No due_date column found in Excel.")
             else:
                 df["due_date_parsed"] = pd.to_datetime(df["due_date"], errors="coerce")
                 overdue_df = df[df["due_date_parsed"] < ref_date].copy()
@@ -103,7 +113,7 @@ if uploaded:
                 if "country" not in df.columns:
                     df["country"] = "other"
                 df["lang"] = df["country"].str.lower().apply(
-                    lambda x: "ES" if "spain" in x or x.strip() in ["es", "esp", "españa"] else "EN"
+                    lambda x: "ES" if any(k in x for k in ["spain", "es", "esp", "españa"]) else "EN"
                 )
 
                 es_emails = "; ".join(sorted({
@@ -114,20 +124,14 @@ if uploaded:
                 }))
 
                 st.write(f"📅 Filtered overdue invoices: {len(df)} rows")
-                st.write("🇪🇸 Spanish vendor emails:")
+                st.write("🇪🇸 **Spanish vendor emails (copy for Outlook)**")
                 st.code(es_emails or "No Spanish emails found", language="text")
-                st.write("🇬🇧 English vendor emails:")
+                st.write("🇬🇧 **English vendor emails (copy for Outlook)**")
                 st.code(en_emails or "No English emails found", language="text")
-
-        # ========== SHOW TOTAL OPEN AMOUNTS ==========
-        elif "show total open amounts" in prompt.lower():
-            amount_col = "open_amount" if "open_amount" in df.columns else "open_amount_in_base_cur"
-            total = pd.to_numeric(df[amount_col], errors="coerce").sum()
-            st.write(f"💰 Total open amount: {total:,.2f} EUR")
 
         # ========== FIND INVALID OR MISSING EMAILS ==========
         elif "find invalid or missing emails" in prompt.lower():
-            email_cols = [c for c in df.columns if "email" in c]
+            email_cols = [c for c in df.columns if any(k in c.lower() for k in ["email", "e-mail", "correo", "ηλεκτρον", "διευθυν"])]
             if not email_cols:
                 st.error("⚠️ No email columns found.")
             else:
@@ -149,10 +153,22 @@ if uploaded:
                         name, emails = line.split(":", 1)
                         name, emails = name.strip(), emails.strip()
                         mask = df[vendor_col].str.lower().eq(name.lower())
-                        df.loc[mask, [c for c in df.columns if "email" in c]] = emails
-                        updates.append(name)
+                        if mask.any():
+                            for c in [c for c in df.columns if "email" in c.lower()]:
+                                df.loc[mask, c] = emails
+                            updates.append(name)
                 st.session_state.df_session = df
                 st.success(f"✅ Updated emails for: {', '.join(updates)}")
+
+        # ========== TOTAL OPEN AMOUNTS ==========
+        elif "show total open amounts" in prompt.lower():
+            amount_col = "open_amount" if "open_amount" in df.columns else "open_amount_in_base_cur"
+            total = pd.to_numeric(df[amount_col], errors="coerce").sum()
+            st.write(f"💰 Total open amount: {total:,.2f} EUR")
+
+        else:
+            if prompt.strip():
+                st.warning("⚠️ Unknown command. Try 'show overdue invoices' or 'get emails for current filter'.")
 
     except Exception as e:
         st.error(f"❌ Error: {e}")
