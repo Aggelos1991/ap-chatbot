@@ -60,7 +60,6 @@ if uploaded:
             df[agreed_col] = pd.to_numeric(df[agreed_col], errors="coerce").fillna(0)
             df = df[df[agreed_col] == 0]
 
-        # store filtered version in session
         st.session_state.df_session = df
         st.success(f"✅ Excel loaded and filtered: {len(df)} rows")
         st.dataframe(df.head(20), use_container_width=True)
@@ -68,7 +67,7 @@ if uploaded:
         prompt = st.text_area("Type your request (supports multi-line):")
         df = st.session_state.df_session.copy()
 
-        # ----------- PROMPT: Show Overdue Invoices -----------
+        # ========== PROMPT: SHOW OVERDUE INVOICES ==========
         if prompt.lower().startswith("show overdue invoices"):
             m = re.search(r"as of\s+(\d{4}-\d{2}-\d{2})", prompt)
             if m:
@@ -82,21 +81,32 @@ if uploaded:
                 df["due_date_parsed"] = pd.to_datetime(df["due_date"], errors="coerce")
                 overdue_df = df[df["due_date_parsed"] < ref_date].copy()
 
+                # Detect correct vendor column
+                vendor_col = next(
+                    (c for c in ["vendor_name", "supp_name", "supplier", "vendor"] if c in overdue_df.columns),
+                    None
+                )
+
+                # Determine open amount column
                 if "open_amount" in overdue_df.columns:
                     overdue_df["open_amount"] = pd.to_numeric(overdue_df["open_amount"], errors="coerce").fillna(0)
                 elif "open_amount_in_base_cur" in overdue_df.columns:
-                    overdue_df["open_amount"] = pd.to_numeric(overdue_df["open_amount_in_base_cur"], errors="coerce").fillna(0)
+                    overdue_df["open_amount"] = pd.to_numeric(
+                        overdue_df["open_amount_in_base_cur"], errors="coerce"
+                    ).fillna(0)
                 else:
                     overdue_df["open_amount"] = 0
 
                 total_overdue = overdue_df["open_amount"].sum()
-
                 st.session_state.filtered_df = overdue_df
+
                 st.warning(f"⚠️ Found {len(overdue_df)} overdue invoices as of {ref_date.date()}")
                 st.write(f"💰 **Total overdue amount:** {total_overdue:,.2f} EUR")
-                st.dataframe(overdue_df[["vendor_name", "document", "due_date", "open_amount"]], use_container_width=True)
 
-        # ----------- PROMPT: Get Emails for Current Filter -----------
+                display_cols = [c for c in [vendor_col, "document", "due_date", "open_amount"] if c]
+                st.dataframe(overdue_df[display_cols], use_container_width=True)
+
+        # ========== PROMPT: GET EMAILS FOR FILTER ==========
         elif "get emails for current filter" in prompt.lower():
             if "filtered_df" not in st.session_state or st.session_state.filtered_df.empty:
                 st.error("⚠️ No active filter. Run 'show overdue invoices ...' first.")
@@ -116,7 +126,7 @@ if uploaded:
                     e.strip() for e in df.loc[df["lang"] == "EN", "combined_emails"].str.split(";").sum() if e.strip()
                 }))
 
-                st.write(f"📅 Filtered overdue invoices as of current filter: {len(df)} rows")
+                st.write(f"📅 Filtered overdue invoices: {len(df)} rows")
                 st.write("🇪🇸 **Spanish vendor emails (copy for Outlook)**")
                 st.code(es_emails or "No Spanish emails found", language="text")
                 st.write("🇬🇧 **English vendor emails (copy for Outlook)**")
