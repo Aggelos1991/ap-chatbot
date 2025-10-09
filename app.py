@@ -3,9 +3,10 @@ import re
 import pandas as pd
 import streamlit as st
 from openpyxl import load_workbook
+from datetime import datetime, timedelta
 
 st.set_page_config(page_title="AP Email Extractor", page_icon="💼", layout="wide")
-st.title("💬 Accounts Payable — Vendor Email Manager")
+st.title("💬 Accounts Payable — Vendor Email Manager & Aging Dashboard")
 
 # ========== FUNCTIONS ==========
 def safe_excel_to_df(uploaded_file):
@@ -55,6 +56,21 @@ def detect_invalid(df):
     return invalid
 
 
+def calc_aging(df):
+    """Compute aging categories based on due_date."""
+    df = df.copy()
+    if "due_date" not in df.columns:
+        return None
+    today = datetime.today()
+    df["due_date_parsed"] = pd.to_datetime(df["due_date"], errors="coerce")
+    df["aging_status"] = df["due_date_parsed"].apply(
+        lambda d: "Overdue" if d and d < today
+        else "Due Soon" if d and today <= d <= today + timedelta(days=7)
+        else "Future Due"
+    )
+    return df
+
+
 # ========== MAIN ==========
 uploaded = st.file_uploader("📦 Upload Excel (.xlsx)", type=["xlsx"])
 
@@ -75,15 +91,15 @@ if uploaded:
             df[agreed_col] = pd.to_numeric(df[agreed_col], errors="coerce").fillna(0)
             df = df[df[agreed_col] == 0]
 
+        # store in session
         st.session_state.df_session = df
         st.success(f"✅ Excel loaded and filtered: {len(df)} rows")
         st.dataframe(df.head(20), use_container_width=True)
 
         prompt = st.text_area("Type your request (supports multi-line):")
-
         df = st.session_state.df_session.copy()
 
-        # -------- Prompt 1 -----------
+        # -------- Prompt 1: open amounts per language ----------
         if prompt and "open amounts emails" in prompt.lower():
             vendor_col = next((c for c in df.columns if "vendor" in c or "supp_name" in c), None)
             df = combine_emails(df)
@@ -102,7 +118,7 @@ if uploaded:
             st.write("🇬🇧 **English Vendors**")
             st.dataframe(grouped[grouped["lang"] == "EN"].drop(columns=["lang"]), use_container_width=True)
 
-        # -------- Prompt 2 -----------
+        # -------- Prompt 2: invalid / missing ----------
         elif prompt and any(k in prompt.lower() for k in ["invalid", "missing", "empty emails"]):
             invalid_df = detect_invalid(df)
             if invalid_df.empty:
@@ -112,13 +128,9 @@ if uploaded:
                 st.dataframe(invalid_df, use_container_width=True)
                 st.session_state.invalid_df = invalid_df
 
-        # -------- Prompt 3: multiple additions -----------
+        # -------- Prompt 3: multiple additions ----------
         elif prompt and prompt.lower().startswith("add multiple emails"):
-            # Example input:
-            # add multiple emails:
-            # Supplier A: email1; accounting1
-            # Supplier B: email2; accounting2
-            lines = prompt.splitlines()[1:]  # skip first line
+            lines = prompt.splitlines()[1:]  # skip header line
             vendor_col = next((c for c in df.columns if "vendor" in c or "supp_name" in c), None)
             updates = []
             for line in lines:
@@ -144,7 +156,7 @@ if uploaded:
             if updates:
                 st.write("\n".join(updates))
 
-        # -------- Prompt 4 -----------
+        # -------- Prompt 4: spanish + english list ----------
         elif prompt and "all spanish" in prompt.lower() and "english" in prompt.lower():
             df = combine_emails(df)
             if "country" not in df.columns:
@@ -162,6 +174,26 @@ if uploaded:
             st.code(es_emails or "No Spanish emails found", language="text")
             st.write("🇬🇧 **English emails (copy for Outlook)**")
             st.code(en_emails or "No English emails found", language="text")
+
+        # -------- Prompt 5: totals + aging ----------
+        elif prompt and any(k in prompt.lower() for k in ["total", "aging", "summary", "open amount"]):
+            df = calc_aging(df)
+            if df is None:
+                st.error("⚠️ No due_date column found in Excel.")
+            else:
+                amount_col = "open_amount"
+                if "open_amount_in_base_cur" in df.columns:
+                    amount_col = "open_amount_in_base_cur"
+                df[amount_col] = pd.to_numeric(df[amount_col], errors="coerce").fillna(0)
+                total_open = df[amount_col].sum()
+
+                aging_summary = df.groupby("aging_status")[amount_col].sum().reset_index()
+                aging_summary[amount_col] = aging_summary[amount_col].map(lambda x: f"{x:,.2f}")
+
+                st.write(f"💰 **Total Open Amount:** {total_open:,.2f} EUR")
+                st.write("📊 **Aging Breakdown (based on due_date):**")
+                st.dataframe(aging_summary, use_container_width=True)
+                st.session_state.df_session = df
 
     except Exception as e:
         st.error(f"❌ Error: {e}")
