@@ -77,7 +77,7 @@ if uploaded:
         prompt = st.text_area("Type your request (supports multi-line):")
         df = st.session_state.df_session.copy()
 
-        # ========== SHOW OVERDUE INVOICES ==========
+        # ========== 1️⃣ SHOW OVERDUE INVOICES ==========
         if prompt.lower().startswith("show overdue invoices"):
             m = re.search(r"as of\s+(\d{4}-\d{2}-\d{2})", prompt)
             ref_date = pd.to_datetime(m.group(1)) if m else datetime.today()
@@ -104,7 +104,7 @@ if uploaded:
                 display_cols = [c for c in [vendor_col, "document", "due_date", "open_amount"] if c]
                 st.dataframe(overdue_df[display_cols], use_container_width=True)
 
-        # ========== GET EMAILS FOR CURRENT FILTER ==========
+        # ========== 2️⃣ GET EMAILS FOR CURRENT FILTER ==========
         elif "get emails for current filter" in prompt.lower():
             if "filtered_df" not in st.session_state or st.session_state.filtered_df.empty:
                 st.error("⚠️ No active filter. Run 'show overdue invoices ...' first.")
@@ -129,7 +129,51 @@ if uploaded:
                 st.write("🇬🇧 **English vendor emails (copy for Outlook)**")
                 st.code(en_emails or "No English emails found", language="text")
 
-        # ========== FIND INVALID OR MISSING EMAILS ==========
+        # ========== 3️⃣ GET ALL EMAILS (GLOBAL) ==========
+        elif "give me all spanish and english emails" in prompt.lower():
+            df = combine_emails(st.session_state.df_session.copy())
+            if "country" not in df.columns:
+                df["country"] = "other"
+
+            df["lang"] = df["country"].str.lower().apply(
+                lambda x: "ES" if any(k in x for k in ["spain", "es", "esp", "españa"]) else "EN"
+            )
+
+            es_emails = "; ".join(sorted({
+                e.strip() for e in df.loc[df["lang"] == "ES", "combined_emails"].str.split(";").sum() if e.strip()
+            }))
+            en_emails = "; ".join(sorted({
+                e.strip() for e in df.loc[df["lang"] == "EN", "combined_emails"].str.split(";").sum() if e.strip()
+            }))
+
+            st.write("🇪🇸 **All Spanish vendor emails (copy for Outlook)**")
+            st.code(es_emails or "No Spanish emails found", language="text")
+            st.write("🇬🇧 **All English vendor emails (copy for Outlook)**")
+            st.code(en_emails or "No English emails found", language="text")
+
+        # ========== 4️⃣ GET OPEN AMOUNTS EMAILS BY LANGUAGE ==========
+        elif "give me the open amounts emails" in prompt.lower():
+            df = combine_emails(st.session_state.df_session.copy())
+            if "country" not in df.columns:
+                df["country"] = "other"
+
+            df["lang"] = df["country"].str.lower().apply(
+                lambda x: "ES" if any(k in x for k in ["spain", "es", "esp", "españa"]) else "EN"
+            )
+
+            es_emails = "; ".join(sorted({
+                e.strip() for e in df.loc[df["lang"] == "ES", "combined_emails"].str.split(";").sum() if e.strip()
+            }))
+            en_emails = "; ".join(sorted({
+                e.strip() for e in df.loc[df["lang"] == "EN", "combined_emails"].str.split(";").sum() if e.strip()
+            }))
+
+            st.write("🇪🇸 **Open amounts — Spanish vendor emails**")
+            st.code(es_emails or "No Spanish emails found", language="text")
+            st.write("🇬🇧 **Open amounts — English vendor emails**")
+            st.code(en_emails or "No English emails found", language="text")
+
+        # ========== 5️⃣ FIND INVALID OR MISSING EMAILS ==========
         elif "find invalid or missing emails" in prompt.lower():
             email_cols = [c for c in df.columns if any(k in c.lower() for k in ["email", "e-mail", "correo", "ηλεκτρον", "διευθυν"])]
             if not email_cols:
@@ -140,7 +184,7 @@ if uploaded:
                 cols = [vendor_col] + email_cols if vendor_col else email_cols
                 st.dataframe(invalid_df[cols].drop_duplicates(), use_container_width=True)
 
-        # ========== ADD MULTIPLE EMAILS ==========
+        # ========== 6️⃣ ADD MULTIPLE EMAILS ==========
         elif prompt.lower().startswith("add multiple emails:"):
             lines = prompt.split("\n")[1:]
             vendor_col = next((c for c in ["vendor_name", "supp_name", "supplier", "vendor"] if c in df.columns), None)
@@ -160,7 +204,7 @@ if uploaded:
                 st.session_state.df_session = df
                 st.success(f"✅ Updated emails for: {', '.join(updates)}")
 
-        # ========== TOTAL OPEN AMOUNTS ==========
+        # ========== 7️⃣ SHOW TOTAL OPEN AMOUNTS ==========
         elif "show total open amounts" in prompt.lower():
             amount_col = "open_amount" if "open_amount" in df.columns else "open_amount_in_base_cur"
             total = pd.to_numeric(df[amount_col], errors="coerce").sum()
@@ -168,7 +212,7 @@ if uploaded:
 
         else:
             if prompt.strip():
-                st.warning("⚠️ Unknown command. Try 'show overdue invoices' or 'get emails for current filter'.")
+                st.warning("⚠️ Unknown command. Try one of the email or invoice prompts above.")
 
     except Exception as e:
         st.error(f"❌ Error: {e}")
