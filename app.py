@@ -92,17 +92,19 @@ if uploaded:
         # --------- Prompt 1: table output ---------
         if prompt and "open amounts emails" in prompt.lower():
             vendor_col = None
-            email_col = None
-
             for c in df.columns:
                 if "vendor" in c or "supp_name" in c:
                     vendor_col = c
-                if any(k in c for k in ["email", "correo", "διεύθυνση"]):
-                    email_col = c
 
-            if not vendor_col or not email_col:
-                st.error("⚠️ Missing vendor or email column in Excel.")
+            # Combine both email and accounting email columns
+            email_cols = [c for c in df.columns if any(k in c for k in ["email", "correo", "διεύθυνση"])]
+            if not email_cols:
+                st.error("⚠️ No email-related columns found in Excel.")
             else:
+                df["combined_emails"] = df[email_cols].apply(
+                    lambda row: "; ".join(sorted({str(e).strip() for e in row if str(e).strip()})), axis=1
+                )
+
                 if "country" not in df.columns:
                     df["country"] = "other"
 
@@ -111,8 +113,8 @@ if uploaded:
                 )
 
                 grouped = (
-                    df.groupby(["lang", vendor_col])[email_col]
-                    .apply(lambda x: "; ".join(sorted({e.strip() for e in x if e.strip()})))
+                    df.groupby(["lang", vendor_col])["combined_emails"]
+                    .apply(lambda x: "; ".join(sorted({e.strip() for e in "; ".join(x).split(";") if e.strip()})))
                     .reset_index()
                 )
 
@@ -127,24 +129,28 @@ if uploaded:
 
         # --------- Prompt 2: combined list output ---------
         elif prompt and "all spanish" in prompt.lower() and "english" in prompt.lower():
-            if "country" not in df.columns:
-                df["country"] = "other"
-
-            df["lang"] = df["country"].str.lower().apply(
-                lambda x: "ES" if "spain" in x or x.strip() in ["es", "esp", "españa"] else "EN"
-            )
-
-            email_col = None
-            for c in df.columns:
-                if any(k in c for k in ["email", "correo", "διεύθυνση"]):
-                    email_col = c
-                    break
-
-            if not email_col:
-                st.error("⚠️ Email column not found.")
+            # Combine both email and accounting email columns
+            email_cols = [c for c in df.columns if any(k in c for k in ["email", "correo", "διεύθυνση"])]
+            if not email_cols:
+                st.error("⚠️ No email-related columns found in Excel.")
             else:
-                es_emails = "; ".join(sorted({e.strip() for e in df.loc[df["lang"] == "ES", email_col] if e.strip()}))
-                en_emails = "; ".join(sorted({e.strip() for e in df.loc[df["lang"] == "EN", email_col] if e.strip()}))
+                df["combined_emails"] = df[email_cols].apply(
+                    lambda row: "; ".join(sorted({str(e).strip() for e in row if str(e).strip()})), axis=1
+                )
+
+                if "country" not in df.columns:
+                    df["country"] = "other"
+
+                df["lang"] = df["country"].str.lower().apply(
+                    lambda x: "ES" if "spain" in x or x.strip() in ["es", "esp", "españa"] else "EN"
+                )
+
+                es_emails = "; ".join(sorted({
+                    e.strip() for e in df.loc[df["lang"] == "ES", "combined_emails"].str.split(";").sum() if e.strip()
+                }))
+                en_emails = "; ".join(sorted({
+                    e.strip() for e in df.loc[df["lang"] == "EN", "combined_emails"].str.split(";").sum() if e.strip()
+                }))
 
                 st.write("🇪🇸 **Spanish emails (copy for Outlook)**")
                 st.code(es_emails or "No Spanish emails found", language="text")
