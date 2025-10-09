@@ -1,4 +1,5 @@
 import io
+import re
 import pandas as pd
 import streamlit as st
 from openpyxl import load_workbook
@@ -129,7 +130,6 @@ if uploaded:
 
         # --------- Prompt 2: combined list output ---------
         elif prompt and "all spanish" in prompt.lower() and "english" in prompt.lower():
-            # Combine both email and accounting email columns
             email_cols = [c for c in df.columns if any(k in c for k in ["email", "correo", "διεύθυνση"])]
             if not email_cols:
                 st.error("⚠️ No email-related columns found in Excel.")
@@ -157,6 +157,36 @@ if uploaded:
 
                 st.write("🇬🇧 **English emails (copy for Outlook)**")
                 st.code(en_emails or "No English emails found", language="text")
+
+        # --------- Prompt 3: find invalid / missing emails ---------
+        elif prompt and any(k in prompt.lower() for k in ["invalid", "missing", "empty emails"]):
+            email_cols = [c for c in df.columns if any(k in c for k in ["email", "correo", "διεύθυνση"])]
+            if not email_cols:
+                st.error("⚠️ No email-related columns found in Excel.")
+            else:
+                df["combined_emails"] = df[email_cols].apply(
+                    lambda row: "; ".join(sorted({str(e).strip() for e in row if str(e).strip()})), axis=1
+                )
+
+                # find invalid, empty, or gibberish emails
+                invalid_df = df[
+                    df["combined_emails"].isna()
+                    | (df["combined_emails"].str.strip() == "")
+                    | (~df["combined_emails"].str.contains("@", case=False, na=False))
+                    | (df["combined_emails"].str.match(r"^[;]+$", na=False))
+                ]
+
+                vendor_col = None
+                for c in df.columns:
+                    if "vendor" in c or "supp_name" in c:
+                        vendor_col = c
+                        break
+
+                if invalid_df.empty:
+                    st.success("✅ All vendors have valid emails.")
+                else:
+                    st.warning(f"⚠️ Found {len(invalid_df)} vendors with missing or invalid emails.")
+                    st.dataframe(invalid_df[[vendor_col, "combined_emails"]], use_container_width=True)
 
     except Exception as e:
         st.error(f"❌ Error reading file: {e}")
