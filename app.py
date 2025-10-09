@@ -5,40 +5,23 @@ import streamlit as st
 from openpyxl import load_workbook
 
 st.set_page_config(page_title="AP Email Extractor", page_icon="💼", layout="wide")
-st.title("💬 Accounts Payable — Vendor Emails by Language")
+st.title("💬 Accounts Payable — Vendor Email Manager")
 
-# ========== FUNCTIONS ==========
+# ================= FUNCTIONS =================
 def safe_excel_to_df(uploaded_file):
-    """Read Excel safely, rename duplicate headers, and return cleaned DataFrame."""
     file_bytes = uploaded_file.getvalue()
     wb = load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=True)
+    ws = next((wb[name] for name in wb.sheetnames if wb[name].max_row > 1 and wb[name].max_column > 1), wb.active)
 
-    ws = None
-    for name in wb.sheetnames:
-        w = wb[name]
-        if w.max_row > 1 and w.max_column > 1:
-            ws = w
-            break
-    if ws is None:
-        ws = wb.active
-
-    # Convert all cells to strings safely
     data = []
     for row in ws.values:
-        safe_row = []
-        for cell in row:
-            if cell is None:
-                safe_row.append("")
-            else:
-                safe_row.append(str(cell))
+        safe_row = ["" if cell is None else str(cell) for cell in row]
         data.append(safe_row)
 
     if not data:
-        raise ValueError("Excel file is empty.")
+        raise ValueError("Excel file is empty")
 
     headers = [str(h).strip().lower().replace(" ", "_") if h else f"col_{i}" for i, h in enumerate(data[0])]
-
-    # ---- FIX DUPLICATES ----
     seen = {}
     unique_headers = []
     for h in headers:
@@ -49,144 +32,147 @@ def safe_excel_to_df(uploaded_file):
             seen[h] = 0
             unique_headers.append(h)
 
-    df = pd.DataFrame(data[1:], columns=unique_headers)
+    return pd.DataFrame(data[1:], columns=unique_headers)
+
+
+def combine_emails(df):
+    email_cols = [c for c in df.columns if "email" in c]
+    if not email_cols:
+        return None
+    df["combined_emails"] = df[email_cols].apply(
+        lambda r: "; ".join(sorted({str(x).strip() for x in r if str(x).strip()})), axis=1
+    )
     return df
 
 
-# ========== MAIN ==========
+def detect_invalid(df):
+    df = combine_emails(df.copy())
+    invalid = df[
+        df["combined_emails"].isna()
+        | (df["combined_emails"].str.strip() == "")
+        | (~df["combined_emails"].str.contains("@", case=False, na=False))
+        | (df["combined_emails"].str.match(r"^[;]+$", na=False))
+    ]
+    vendor_col = next((c for c in df.columns if "vendor" in c or "supp_name" in c), None)
+    if vendor_col:
+        invalid = invalid[[vendor_col, "combined_emails"]].drop_duplicates(subset=[vendor_col])
+    return invalid
+
+
+# ================= MAIN =================
 uploaded = st.file_uploader("📦 Upload Excel (.xlsx)", type=["xlsx"])
 
 if uploaded:
     try:
         df = safe_excel_to_df(uploaded)
 
-        # --- CLEAN DATA ---
+        # clean base
         if "document" in df.columns:
             df = df[~df["document"].str.contains("F&B", case=False, na=False)]
-
         if "type" in df.columns:
             df = df[df["type"].str.upper() == "XPI"]
+        for c in [c for c in df.columns if "payment_method" in c]:
+            df = df[~df[c].str.lower().isin(["downpayment", "direct debit", "cash", "credit card"])]
 
-        # detect payment_method columns even if name slightly differs
-        pay_cols = [c for c in df.columns if "payment_method" in c]
-        for c in pay_cols:
-            df = df[~df[c].str.lower().isin(
-                ["downpayment", "direct debit", "cash", "credit card"]
-            )]
-
-        # agreed/agreeded column
-        agreed_col = None
-        for col in ["agreed", "agreeded"]:
-            if col in df.columns:
-                agreed_col = col
-                break
+        agreed_col = next((c for c in ["agreed", "agreeded"] if c in df.columns), None)
         if agreed_col:
             df[agreed_col] = pd.to_numeric(df[agreed_col], errors="coerce").fillna(0)
             df = df[df[agreed_col] == 0]
 
-        st.success(f"✅ Excel loaded and filtered: {len(df)} rows")
+        # save to session
+        st.session_state.df_session = df
+        st.success(f"✅ Excel loaded: {len(df)} rows")
         st.dataframe(df.head(20), use_container_width=True)
 
-        # ========== PROMPT ==========
         prompt = st.text_input("Type your request:")
 
-        # --------- Prompt 1: table output ---------
+        df = st.session_state.df_session.copy()
+
+        # ----------- Prompt 1 -----------
         if prompt and "open amounts emails" in prompt.lower():
-            vendor_col = None
-            for c in df.columns:
-                if "vendor" in c or "supp_name" in c:
-                    vendor_col = c
+            vendor_col = next((c for c in df.columns if "vendor" in c or "supp_name" in c), None)
+            df = combine_emails(df)
+            if "country" not in df.columns:
+                df["country"] = "other"
+            df["lang"] = df["country"].str.lower().apply(
+                lambda x: "ES" if "spain" in x or x.strip() in ["es", "esp", "españa"] else "EN"
+            )
+            grouped = (
+                df.groupby(["lang", vendor_col])["combined_emails"]
+                .apply(lambda x: "; ".join(sorted({e.strip() for e in "; ".join(x).split(";") if e.strip()})))
+                .reset_index()
+            )
+            st.write("🇪🇸 **Spanish Vendors**")
+            st.dataframe(grouped[grouped["lang"] == "ES"].drop(columns=["lang"]), use_container_width=True)
+            st.write("🇬🇧 **English Vendors**")
+            st.dataframe(grouped[grouped["lang"] == "EN"].drop(columns=["lang"]), use_container_width=True)
 
-            # Combine both email and accounting email columns
-            email_cols = [c for c in df.columns if any(k in c for k in ["email", "correo", "διεύθυνση"])]
-            if not email_cols:
-                st.error("⚠️ No email-related columns found in Excel.")
-            else:
-                df["combined_emails"] = df[email_cols].apply(
-                    lambda row: "; ".join(sorted({str(e).strip() for e in row if str(e).strip()})), axis=1
-                )
-
-                if "country" not in df.columns:
-                    df["country"] = "other"
-
-                df["lang"] = df["country"].str.lower().apply(
-                    lambda x: "ES" if "spain" in x or x.strip() in ["es", "esp", "españa"] else "EN"
-                )
-
-                grouped = (
-                    df.groupby(["lang", vendor_col])["combined_emails"]
-                    .apply(lambda x: "; ".join(sorted({e.strip() for e in "; ".join(x).split(";") if e.strip()})))
-                    .reset_index()
-                )
-
-                es_df = grouped[grouped["lang"] == "ES"].drop(columns=["lang"])
-                en_df = grouped[grouped["lang"] == "EN"].drop(columns=["lang"])
-
-                st.write("🇪🇸 **Spanish Vendors (Spain)**")
-                st.dataframe(es_df, use_container_width=True)
-
-                st.write("🇬🇧 **English Vendors (Other Countries)**")
-                st.dataframe(en_df, use_container_width=True)
-
-        # --------- Prompt 2: combined list output ---------
-        elif prompt and "all spanish" in prompt.lower() and "english" in prompt.lower():
-            email_cols = [c for c in df.columns if any(k in c for k in ["email", "correo", "διεύθυνση"])]
-            if not email_cols:
-                st.error("⚠️ No email-related columns found in Excel.")
-            else:
-                df["combined_emails"] = df[email_cols].apply(
-                    lambda row: "; ".join(sorted({str(e).strip() for e in row if str(e).strip()})), axis=1
-                )
-
-                if "country" not in df.columns:
-                    df["country"] = "other"
-
-                df["lang"] = df["country"].str.lower().apply(
-                    lambda x: "ES" if "spain" in x or x.strip() in ["es", "esp", "españa"] else "EN"
-                )
-
-                es_emails = "; ".join(sorted({
-                    e.strip() for e in df.loc[df["lang"] == "ES", "combined_emails"].str.split(";").sum() if e.strip()
-                }))
-                en_emails = "; ".join(sorted({
-                    e.strip() for e in df.loc[df["lang"] == "EN", "combined_emails"].str.split(";").sum() if e.strip()
-                }))
-
-                st.write("🇪🇸 **Spanish emails (copy for Outlook)**")
-                st.code(es_emails or "No Spanish emails found", language="text")
-
-                st.write("🇬🇧 **English emails (copy for Outlook)**")
-                st.code(en_emails or "No English emails found", language="text")
-
-        # --------- Prompt 3: find invalid / missing emails ---------
+        # ----------- Prompt 2 -----------
         elif prompt and any(k in prompt.lower() for k in ["invalid", "missing", "empty emails"]):
-            email_cols = [c for c in df.columns if any(k in c for k in ["email", "correo", "διεύθυνση"])]
-            if not email_cols:
-                st.error("⚠️ No email-related columns found in Excel.")
+            invalid_df = detect_invalid(df)
+            if invalid_df.empty:
+                st.success("✅ No missing or invalid emails.")
             else:
-                df["combined_emails"] = df[email_cols].apply(
-                    lambda row: "; ".join(sorted({str(e).strip() for e in row if str(e).strip()})), axis=1
-                )
+                st.warning(f"⚠️ Found {len(invalid_df)} vendors missing or invalid emails.")
+                st.dataframe(invalid_df, use_container_width=True)
+                st.session_state.invalid_df = invalid_df
 
-                # find invalid, empty, or gibberish emails
-                invalid_df = df[
-                    df["combined_emails"].isna()
-                    | (df["combined_emails"].str.strip() == "")
-                    | (~df["combined_emails"].str.contains("@", case=False, na=False))
-                    | (df["combined_emails"].str.match(r"^[;]+$", na=False))
-                ]
-
-                vendor_col = None
-                for c in df.columns:
-                    if "vendor" in c or "supp_name" in c:
-                        vendor_col = c
-                        break
-
-                if invalid_df.empty:
-                    st.success("✅ All vendors have valid emails.")
+        # ----------- Prompt 3 -----------
+        elif prompt and prompt.lower().startswith("add email for"):
+            m = re.match(r"add email for\s+(.+?):\s*(.+)", prompt, re.IGNORECASE)
+            if not m:
+                st.info("Use: `add email for SUPP_NAME: vendor@email.com; accounting@email.com`")
+            else:
+                supp = m.group(1).strip()
+                emails = [e.strip() for e in m.group(2).split(";") if e.strip()]
+                if not emails:
+                    st.error("❌ No valid email detected after ':'.")
                 else:
-                    st.warning(f"⚠️ Found {len(invalid_df)} vendors with missing or invalid emails.")
-                    st.dataframe(invalid_df[[vendor_col, "combined_emails"]], use_container_width=True)
+                    vendor_col = next((c for c in df.columns if "vendor" in c or "supp_name" in c), None)
+                    if vendor_col is None:
+                        st.error("Vendor column not found.")
+                    else:
+                        idx = df[vendor_col].astype(str).str.lower() == supp.lower()
+                        if not idx.any():
+                            st.error(f"Vendor '{supp}' not found in data.")
+                        else:
+                            # Update email + accounting_email columns
+                            email_main = emails[0]
+                            email_acc = emails[1] if len(emails) > 1 else emails[0]
+
+                            if "email" in df.columns:
+                                df.loc[idx, "email"] = email_main
+                            else:
+                                df["email"] = ""
+                                df.loc[idx, "email"] = email_main
+
+                            if "accounting_email" in df.columns:
+                                df.loc[idx, "accounting_email"] = email_acc
+                            else:
+                                df["accounting_email"] = ""
+                                df.loc[idx, "accounting_email"] = email_acc
+
+                            st.session_state.df_session = df
+                            st.success(f"✅ Updated {supp}: {email_main}; {email_acc}")
+
+        # ----------- Prompt 4 -----------
+        elif prompt and "all spanish" in prompt.lower() and "english" in prompt.lower():
+            df = combine_emails(df)
+            if "country" not in df.columns:
+                df["country"] = "other"
+            df["lang"] = df["country"].str.lower().apply(
+                lambda x: "ES" if "spain" in x or x.strip() in ["es", "esp", "españa"] else "EN"
+            )
+            es_emails = "; ".join(sorted({
+                e.strip() for e in df.loc[df["lang"] == "ES", "combined_emails"].str.split(";").sum() if e.strip()
+            }))
+            en_emails = "; ".join(sorted({
+                e.strip() for e in df.loc[df["lang"] == "EN", "combined_emails"].str.split(";").sum() if e.strip()
+            }))
+            st.write("🇪🇸 **Spanish emails (copy for Outlook)**")
+            st.code(es_emails or "No Spanish emails found", language="text")
+            st.write("🇬🇧 **English emails (copy for Outlook)**")
+            st.code(en_emails or "No English emails found", language="text")
 
     except Exception as e:
-        st.error(f"❌ Error reading file: {e}")
+        st.error(f"❌ Error: {e}")
