@@ -6,15 +6,12 @@ from openpyxl import load_workbook
 st.set_page_config(page_title="AP Email Extractor", page_icon="💼", layout="wide")
 st.title("💬 Accounts Payable — Vendor Emails by Language")
 
-# ======================
-# FILE UPLOAD
-# ======================
-uploaded = st.file_uploader("📦 Upload Excel (.xlsx)", type=["xlsx"])
-
+# ========== FUNCTIONS ==========
 def safe_excel_to_df(uploaded_file):
-    """Read Excel safely and return a cleaned DataFrame"""
+    """Read Excel safely, rename duplicate headers, and return cleaned DataFrame."""
     file_bytes = uploaded_file.getvalue()
     wb = load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=True)
+
     ws = None
     for name in wb.sheetnames:
         w = wb[name]
@@ -35,29 +32,47 @@ def safe_excel_to_df(uploaded_file):
                 safe_row.append(str(cell))
         data.append(safe_row)
 
+    if not data:
+        raise ValueError("Excel file is empty.")
+
     headers = [str(h).strip().lower().replace(" ", "_") if h else f"col_{i}" for i, h in enumerate(data[0])]
-    df = pd.DataFrame(data[1:], columns=headers)
+
+    # ---- FIX DUPLICATES ----
+    seen = {}
+    unique_headers = []
+    for h in headers:
+        if h in seen:
+            seen[h] += 1
+            unique_headers.append(f"{h}_{seen[h]}")
+        else:
+            seen[h] = 0
+            unique_headers.append(h)
+
+    df = pd.DataFrame(data[1:], columns=unique_headers)
     return df
 
-# ======================
-# MAIN LOGIC
-# ======================
+# ========== MAIN ==========
+uploaded = st.file_uploader("📦 Upload Excel (.xlsx)", type=["xlsx"])
+
 if uploaded:
     try:
         df = safe_excel_to_df(uploaded)
 
-        # --- Clean data ---
+        # --- CLEAN DATA ---
         if "document" in df.columns:
             df = df[~df["document"].str.contains("F&B", case=False, na=False)]
 
         if "type" in df.columns:
             df = df[df["type"].str.upper() == "XPI"]
 
-        if "payment_method_descri" in df.columns:
-            df = df[~df["payment_method_descri"].str.lower().isin(
+        # detect payment_method_descri even if name slightly differs
+        pay_cols = [c for c in df.columns if "payment_method" in c]
+        for c in pay_cols:
+            df = df[~df[c].str.lower().isin(
                 ["downpayment", "direct debit", "cash", "credit card"]
             )]
 
+        # agreed/agreeded column
         agreed_col = None
         for col in ["agreed", "agreeded"]:
             if col in df.columns:
@@ -70,13 +85,22 @@ if uploaded:
         st.success(f"✅ Excel loaded and filtered: {len(df)} rows")
         st.dataframe(df.head(20), use_container_width=True)
 
-        # ======================
-        # PROMPT
-        # ======================
+        # ========== PROMPT ==========
         prompt = st.text_input("Type your request:")
+
         if prompt and "open amounts emails" in prompt.lower():
-            if "vendor_name" not in df.columns or "vendor_email" not in df.columns:
-                st.error("⚠️ Missing 'vendor_name' or 'vendor_email' columns.")
+            # detect vendor and email columns dynamically
+            vendor_col = None
+            email_col = None
+
+            for c in df.columns:
+                if "vendor" in c or "supp_name" in c:
+                    vendor_col = c
+                if any(k in c for k in ["email", "correo", "διεύθυνση"]):
+                    email_col = c
+
+            if not vendor_col or not email_col:
+                st.error("⚠️ Missing vendor or email column in Excel.")
             else:
                 if "country" not in df.columns:
                     df["country"] = "other"
@@ -86,7 +110,7 @@ if uploaded:
                 )
 
                 grouped = (
-                    df.groupby(["lang", "vendor_name"])["vendor_email"]
+                    df.groupby(["lang", vendor_col])[email_col]
                     .apply(lambda x: "; ".join(sorted({e.strip() for e in x if e.strip()})))
                     .reset_index()
                 )
