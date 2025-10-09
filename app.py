@@ -1,5 +1,5 @@
-import re
 import io
+import re
 import unicodedata
 import pandas as pd
 import streamlit as st
@@ -11,10 +11,9 @@ from openpyxl import load_workbook
 # =========================
 st.set_page_config(page_title="Accounts Payable Chatbot", page_icon="💼", layout="wide")
 st.title("💬 Accounts Payable Chatbot — Excel-driven")
-st.caption("Examples: 'open invoices', 'emails for paid invoices', 'group by vendor', "
-           "'due date between 2025-01-01 and 2025-03-31', "
-           "'comment for Technogym Iberia: waiting bank confirmation', "
-           "'blocked for payment'")
+st.caption("Examples: 'open amounts', 'emails for open invoices', "
+           "'group by vendor', 'due date between 2025-01-01 and 2025-03-31', "
+           "'give me the open amounts emails separate with ; per language'")
 
 # =========================
 # HELPERS
@@ -46,44 +45,45 @@ def strip_accents(s: str) -> str:
     return "".join(ch for ch in unicodedata.normalize("NFD", s) if unicodedata.category(ch) != "Mn")
 
 def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Map all possible variants of your columns to canonical names,
-    and auto-detect email column names (including Greek ones).
-    """
     base_map = {
         "supp_name": "vendor_name",
         "supplier": "vendor_name",
         "vendor": "vendor_name",
         "trade_account": "trade_account",
-        "document": "invoice_no",
+
+        "document": "document",
         "invoice_number": "invoice_no",
+        "invoice": "invoice_no",
+
         "open_amount_in_base_cur": "amount",
         "open_amount": "amount",
         "amount_in_eur": "amount",
+        "amount_2": "amount",
+
         "currency": "currency",
         "due_date": "due_date",
         "issue_date": "issue_date",
-        "payment_method_doc": "payment_method",
-        "payment_method_supplier": "payment_method",
+        "due_month": "due_month",
+
+        "payment_method_doc": "payment_method_descri",
+        "payment_method_supplier": "payment_method_descri",
+
         "workflow_step": "workflow_step",
         "agreeded": "agreed",
         "agreed": "agreed",
-        "alternative_document": "alternative_document",
-    }
 
-    # First pass direct rename
+        "email": "vendor_email",
+        "e_mail": "vendor_email",
+        "correo": "vendor_email",
+        "country": "country"
+    }
     df = df.rename(columns=lambda c: base_map.get(c, c))
 
-    # Try to detect vendor_email automatically
     if "vendor_email" not in df.columns:
-        for col in df.columns:
-            c = col.lower().strip()
-            if any(word in c for word in ["email", "e_mail", "mail", "correo"]):
-                df = df.rename(columns={col: "vendor_email"})
-                break
-            # Greek detection
-            if any(word in c for word in ["ηλεκτρον", "διευθυν", "διευθυνση"]):
-                df = df.rename(columns={col: "vendor_email"})
+        for c in df.columns:
+            c_plain = strip_accents(c)
+            if any(x in c_plain.lower() for x in ["email", "correo", "mail", "ηλεκτρον", "διευθυν"]):
+                df = df.rename(columns={c: "vendor_email"})
                 break
 
     return df
@@ -112,117 +112,48 @@ def run_query(q: str, df: pd.DataFrame):
         return "⚠️ Please upload an Excel first.", None
 
     ql = q.lower()
-    df = df.copy()
 
-    # Prepare main columns
     if "amount" in df.columns:
         df["amount"] = pd.to_numeric(df["amount"], errors="coerce")
     if "due_date" in df.columns:
         df["due_date_parsed"] = pd.to_datetime(df["due_date"], errors="coerce")
-
-    # Define invoice column fallback
-    invoice_col = "invoice_no"
-    if invoice_col not in df.columns:
-        if "alternative_document" in df.columns:
-            invoice_col = "alternative_document"
-
-    # Ensure 'agreed' column
     if "agreed" in df.columns:
         df["agreed"] = pd.to_numeric(df["agreed"], errors="coerce").fillna(0).astype(int)
     else:
         df["agreed"] = 0
 
-    # ---------------- FILTERS ----------------
-    is_open = any(k in ql for k in ["open", "unpaid", "pending"])
-    is_paid = any(k in ql for k in ["paid", "settled", "agreed", "aggreed", "approved", "posted", "reconciled"])
+    # ---- NEW PROMPT ----
+    if "open amounts emails" in ql:
+        if "vendor_name" not in df.columns or "vendor_email" not in df.columns:
+            return "⚠️ Missing 'vendor_name' or 'vendor_email' columns.", None
 
-    if is_open:
-        df = df[df["agreed"] == 0]
-    elif is_paid:
-        df = df[df["agreed"] == 1]
-
-    # Blocked for payment
-    if "blocked" in ql or "block" in ql:
-        if "workflow_step" in df.columns:
-            df = df[df["workflow_step"].astype(str).str.contains("block", case=False, na=False)]
-            if df.empty:
-                return "✅ No invoices currently blocked for payment.", None
-            else:
-                return f"🚫 Found {len(df)} blocked invoices.", df
+        if "country" in df.columns:
+            df["country_norm"] = df["country"].astype(str).str.lower()
         else:
-            return "⚠️ No 'workflow_step' column found to check blocked invoices.", None
+            df["country_norm"] = "other"
 
-    # Vendor filter
-    vendor_match = None
-    if "vendor_name" in df.columns:
-        for v in df["vendor_name"].dropna().astype(str).unique():
-            if v.lower() in ql:
-                vendor_match = v
-                df = df[df["vendor_name"].astype(str).str.lower() == v.lower()]
-                break
-
-    # Date filter
-    cond = parse_date_filter(ql)
-    if cond and "due_date_parsed" in df.columns:
-        mode, d1, d2 = cond
-        if mode == "before":
-            df = df[df["due_date_parsed"] < d1]
-        elif mode == "after":
-            df = df[df["due_date_parsed"] > d1]
-        elif mode == "between":
-            df = df[(df["due_date_parsed"] >= d1) & (df["due_date_parsed"] <= d2)]
-
-    if df.empty:
-        return "❌ No invoices found.", None
-
-    # ---------------- EMAILS ----------------
-    if "email" in ql:
-        if "vendor_email" not in df.columns:
-            return "⚠️ No 'vendor_email' column found.", None
-
-        # Split by open / paid context
-        if "open" in ql:
-            emails_df = df[df["agreed"] == 0]
-        elif "paid" in ql:
-            emails_df = df[df["agreed"] == 1]
-        else:
-            emails_df = df
-
-        emails = "; ".join(sorted({str(x).strip() for x in emails_df["vendor_email"].dropna() if str(x).strip()}))
-        return f"📧 Vendor emails: {emails if emails else 'none found'}", None
-
-    # ---------------- GROUP BY VENDOR ----------------
-    if "group" in ql or "vendor by amount" in ql or "amount per vendor" in ql:
-        if "vendor_name" not in df.columns or "amount" not in df.columns:
-            return "⚠️ Missing 'vendor_name' or 'amount' columns.", None
-        grouped = (
-            df.groupby("vendor_name", dropna=True)
-              .agg(total_amount=("amount", "sum"), invoices=(invoice_col, "count"))
-              .reset_index()
+        df["lang"] = df["country_norm"].apply(
+            lambda x: "ES" if "spain" in x or x.strip() in ["es", "esp", "españa"] else "EN"
         )
-        grouped["total_amount"] = grouped["total_amount"].map(lambda x: f"{x:,.2f}")
-        return "📊 Totals by vendor:", grouped
 
-    # ---------------- VENDOR SUMMARY ----------------
-    if vendor_match and "summary" in ql:
-        vendor_all = df.copy()
-        open_df = vendor_all[vendor_all["agreed"] == 0]
-        paid_df = vendor_all[vendor_all["agreed"] == 1]
-        msg = (f"📊 Vendor **{vendor_match}** summary:\n"
-               f"- Open invoices: {len(open_df)} (Total {open_df['amount'].sum():,.2f})\n"
-               f"- Paid invoices: {len(paid_df)} (Total {paid_df['amount'].sum():,.2f})")
-        return msg, df
+        df["vendor_email"] = df["vendor_email"].astype(str)
+        grouped = (
+            df.groupby(["lang", "vendor_name"], dropna=True)["vendor_email"]
+            .apply(lambda x: "; ".join(sorted({e.strip() for e in x if e.strip()})))
+            .reset_index()
+        )
 
-    # ---------------- TOTALS ----------------
-    if "open amount" in ql or "open amounts" in ql:
-        total = df["amount"].sum(skipna=True)
-        return f"💶 Total open amount: {total:,.2f}", df
+        es_df = grouped[grouped["lang"] == "ES"].drop(columns=["lang"])
+        en_df = grouped[grouped["lang"] == "EN"].drop(columns=["lang"])
 
-    if "paid amount" in ql or "paid amounts" in ql:
-        total = df["amount"].sum(skipna=True)
-        return f"✅ Total paid amount: {total:,.2f}", df
+        st.write("🇪🇸 **Spanish Vendors (Spain)**")
+        st.dataframe(es_df, use_container_width=True)
 
-    # ---------------- DEFAULT ----------------
+        st.write("🇬🇧 **English Vendors (Other Countries)**")
+        st.dataframe(en_df, use_container_width=True)
+
+        return "📧 Open amounts emails separated per language.", None
+
     return f"Found **{len(df)}** matching invoices.", df
 
 # =========================
@@ -238,33 +169,63 @@ if uploaded:
     try:
         file_bytes = uploaded.getvalue()
         wb = load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=True)
-        ws = wb.active
+
+        ws = None
+        for name in wb.sheetnames:
+            w = wb[name]
+            if w.max_row > 1 and w.max_column > 1:
+                ws = w
+                break
+        if ws is None:
+            ws = wb.active
+
         data = list(ws.values)
-        headers_raw = [str(h).strip() if h else f"Unnamed_{i}" for i, h in enumerate(data[0])]
-        headers_dedup = dedupe_headers(headers_raw)
-        df = pd.DataFrame(data[1:], columns=headers_dedup)
-        df = clean_headers(df)
-        df.columns = dedupe_headers(df.columns)
-        df = normalize_columns(df)
-        st.session_state.df = df
-        st.success(f"✅ Excel loaded: {len(df)} rows | {len(df.columns)} cols.")
-        st.dataframe(df.head(30), use_container_width=True)
+        if not data:
+            st.error("❌ Excel is empty.")
+        else:
+            headers_raw = [str(h).strip() if h else f"Unnamed_{i}" for i, h in enumerate(data[0])]
+            headers_dedup = dedupe_headers(headers_raw)
+            df = pd.DataFrame(data[1:], columns=headers_dedup)
+
+            df = clean_headers(df)
+            df.columns = dedupe_headers(df.columns)
+            df = normalize_columns(df)
+
+            # =======================
+            # APPLY FILTERS
+            # =======================
+            if "document" in df.columns:
+                df = df[~df["document"].astype(str).str.contains("F&B", case=False, na=False)]
+
+            if "type" in df.columns:
+                df = df[df["type"].astype(str).str.upper() == "XPI"]
+
+            if "payment_method_descri" in df.columns:
+                df = df[~df["payment_method_descri"].astype(str).str.lower().isin(
+                    ["downpayment", "direct debit", "cash", "credit card"]
+                )]
+
+            agreed_col = "agreed" if "agreed" in df.columns else "agreeded" if "agreeded" in df.columns else None
+            if agreed_col:
+                df = df[pd.to_numeric(df[agreed_col], errors="coerce").fillna(0) == 0]
+
+            st.session_state.df = df
+            st.success(f"✅ Excel loaded and filtered: {len(df)} rows | {len(df.columns)} cols.")
+            st.dataframe(df.head(30), use_container_width=True)
+
     except Exception as e:
         st.error(f"❌ Error reading file: {e}")
 
 # =========================
-# CHAT + COMMENTS
+# CHAT SECTION
 # =========================
 st.subheader("Chat")
 
 if "history" not in st.session_state:
     st.session_state.history = []
-if "comments" not in st.session_state:
-    st.session_state.comments = {}
 
 if st.button("🔄 Restart Chat"):
     st.session_state.history = []
-    st.session_state.comments = {}
     st.rerun()
 
 for role, msg in st.session_state.history:
@@ -274,29 +235,8 @@ prompt = st.chat_input("Ask or add comment...")
 if prompt:
     st.session_state.history.append(("user", prompt))
     st.chat_message("user").write(prompt)
-    pl = prompt.lower()
-
-    # ----- Comments -----
-    if pl.startswith("comment"):
-        m = re.search(r"comment\s+for\s+(.+?):\s*(.+)", prompt, re.IGNORECASE)
-        if m:
-            vendor, note = m.group(1).strip(), m.group(2).strip()
-            st.session_state.comments[vendor.lower()] = note
-            resp = f"💬 Saved comment for {vendor}."
-        else:
-            m = re.search(r"comment\s+for\s+(.+)", prompt, re.IGNORECASE)
-            if m:
-                vendor = m.group(1).strip()
-                note = st.session_state.comments.get(vendor.lower())
-                resp = f"💬 Comment for {vendor}: {note}" if note else "⚠️ No comment found."
-            else:
-                resp = "ℹ️ Use: `comment for VendorName: your note`"
-        st.session_state.history.append(("assistant", resp))
-        st.chat_message("assistant").write(resp)
-    else:
-        # ----- Normal query -----
-        answer, df_out = run_query(prompt, st.session_state.df)
-        st.session_state.history.append(("assistant", answer))
-        st.chat_message("assistant").write(answer)
-        if df_out is not None and not df_out.empty:
-            st.dataframe(df_out, use_container_width=True)
+    answer, df_out = run_query(prompt, st.session_state.df)
+    st.session_state.history.append(("assistant", answer))
+    st.chat_message("assistant").write(answer)
+    if df_out is not None and not df_out.empty:
+        st.dataframe(df_out, use_container_width=True)
