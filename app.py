@@ -3,12 +3,12 @@ import re
 import pandas as pd
 import streamlit as st
 from openpyxl import load_workbook
-from datetime import datetime, timedelta
+from datetime import datetime
 
-st.set_page_config(page_title="AP Email Extractor", page_icon="💼", layout="wide")
-st.title("💬 Accounts Payable — Vendor Email Manager & Aging Dashboard")
+st.set_page_config(page_title="AP Overdue Email Manager", page_icon="💼", layout="wide")
+st.title("💬 Accounts Payable — Overdue Invoice Manager")
 
-# ========== FUNCTIONS ==========
+# ================= HELPER FUNCTIONS =================
 def safe_excel_to_df(uploaded_file):
     file_bytes = uploaded_file.getvalue()
     wb = load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=True)
@@ -31,7 +31,6 @@ def safe_excel_to_df(uploaded_file):
             unique_headers.append(h)
     return pd.DataFrame(data[1:], columns=unique_headers)
 
-
 def combine_emails(df):
     email_cols = [c for c in df.columns if "email" in c]
     if not email_cols:
@@ -41,44 +40,14 @@ def combine_emails(df):
     )
     return df
 
-
-def detect_invalid(df):
-    df = combine_emails(df.copy())
-    invalid = df[
-        df["combined_emails"].isna()
-        | (df["combined_emails"].str.strip() == "")
-        | (~df["combined_emails"].str.contains("@", case=False, na=False))
-        | (df["combined_emails"].str.match(r"^[;]+$", na=False))
-    ]
-    vendor_col = next((c for c in df.columns if "vendor" in c or "supp_name" in c), None)
-    if vendor_col:
-        invalid = invalid[[vendor_col, "combined_emails"]].drop_duplicates(subset=[vendor_col])
-    return invalid
-
-
-def calc_aging(df):
-    """Compute aging categories based on due_date."""
-    df = df.copy()
-    if "due_date" not in df.columns:
-        return None
-    today = datetime.today()
-    df["due_date_parsed"] = pd.to_datetime(df["due_date"], errors="coerce")
-    df["aging_status"] = df["due_date_parsed"].apply(
-        lambda d: "Overdue" if d and d < today
-        else "Due Soon" if d and today <= d <= today + timedelta(days=7)
-        else "Future Due"
-    )
-    return df
-
-
-# ========== MAIN ==========
+# ================= MAIN APP =================
 uploaded = st.file_uploader("📦 Upload Excel (.xlsx)", type=["xlsx"])
 
 if uploaded:
     try:
         df = safe_excel_to_df(uploaded)
 
-        # base cleanup
+        # --- FILTER BASE EXCEL ---
         if "document" in df.columns:
             df = df[~df["document"].str.contains("F&B", case=False, na=False)]
         if "type" in df.columns:
@@ -91,7 +60,7 @@ if uploaded:
             df[agreed_col] = pd.to_numeric(df[agreed_col], errors="coerce").fillna(0)
             df = df[df[agreed_col] == 0]
 
-        # store in session
+        # store filtered version in session
         st.session_state.df_session = df
         st.success(f"✅ Excel loaded and filtered: {len(df)} rows")
         st.dataframe(df.head(20), use_container_width=True)
@@ -99,101 +68,59 @@ if uploaded:
         prompt = st.text_area("Type your request (supports multi-line):")
         df = st.session_state.df_session.copy()
 
-        # -------- Prompt 1: open amounts per language ----------
-        if prompt and "open amounts emails" in prompt.lower():
-            vendor_col = next((c for c in df.columns if "vendor" in c or "supp_name" in c), None)
-            df = combine_emails(df)
-            if "country" not in df.columns:
-                df["country"] = "other"
-            df["lang"] = df["country"].str.lower().apply(
-                lambda x: "ES" if "spain" in x or x.strip() in ["es", "esp", "españa"] else "EN"
-            )
-            grouped = (
-                df.groupby(["lang", vendor_col])["combined_emails"]
-                .apply(lambda x: "; ".join(sorted({e.strip() for e in "; ".join(x).split(";") if e.strip()})))
-                .reset_index()
-            )
-            st.write("🇪🇸 **Spanish Vendors**")
-            st.dataframe(grouped[grouped["lang"] == "ES"].drop(columns=["lang"]), use_container_width=True)
-            st.write("🇬🇧 **English Vendors**")
-            st.dataframe(grouped[grouped["lang"] == "EN"].drop(columns=["lang"]), use_container_width=True)
-
-        # -------- Prompt 2: invalid / missing ----------
-        elif prompt and any(k in prompt.lower() for k in ["invalid", "missing", "empty emails"]):
-            invalid_df = detect_invalid(df)
-            if invalid_df.empty:
-                st.success("✅ No missing or invalid emails.")
+        # ----------- PROMPT: Show Overdue Invoices -----------
+        if prompt.lower().startswith("show overdue invoices"):
+            m = re.search(r"as of\s+(\d{4}-\d{2}-\d{2})", prompt)
+            if m:
+                ref_date = pd.to_datetime(m.group(1))
             else:
-                st.warning(f"⚠️ Found {len(invalid_df)} vendors missing or invalid emails.")
-                st.dataframe(invalid_df, use_container_width=True)
-                st.session_state.invalid_df = invalid_df
+                ref_date = datetime.today()
 
-        # -------- Prompt 3: multiple additions ----------
-        elif prompt and prompt.lower().startswith("add multiple emails"):
-            lines = prompt.splitlines()[1:]  # skip header line
-            vendor_col = next((c for c in df.columns if "vendor" in c or "supp_name" in c), None)
-            updates = []
-            for line in lines:
-                m = re.match(r"(.+?):\s*(.+)", line.strip())
-                if m:
-                    supp = m.group(1).strip()
-                    emails = [e.strip() for e in m.group(2).split(";") if e.strip()]
-                    if emails:
-                        idx = df[vendor_col].astype(str).str.lower() == supp.lower()
-                        if idx.any():
-                            email_main = emails[0]
-                            email_acc = emails[1] if len(emails) > 1 else emails[0]
-                            if "email" not in df.columns:
-                                df["email"] = ""
-                            if "accounting_email" not in df.columns:
-                                df["accounting_email"] = ""
-                            df.loc[idx, "email"] = email_main
-                            df.loc[idx, "accounting_email"] = email_acc
-                            updates.append(f"✅ {supp}: {email_main}; {email_acc}")
-                        else:
-                            updates.append(f"⚠️ Supplier '{supp}' not found.")
-            st.session_state.df_session = df
-            if updates:
-                st.write("\n".join(updates))
-
-        # -------- Prompt 4: spanish + english list ----------
-        elif prompt and "all spanish" in prompt.lower() and "english" in prompt.lower():
-            df = combine_emails(df)
-            if "country" not in df.columns:
-                df["country"] = "other"
-            df["lang"] = df["country"].str.lower().apply(
-                lambda x: "ES" if "spain" in x or x.strip() in ["es", "esp", "españa"] else "EN"
-            )
-            es_emails = "; ".join(sorted({
-                e.strip() for e in df.loc[df["lang"] == "ES", "combined_emails"].str.split(";").sum() if e.strip()
-            }))
-            en_emails = "; ".join(sorted({
-                e.strip() for e in df.loc[df["lang"] == "EN", "combined_emails"].str.split(";").sum() if e.strip()
-            }))
-            st.write("🇪🇸 **Spanish emails (copy for Outlook)**")
-            st.code(es_emails or "No Spanish emails found", language="text")
-            st.write("🇬🇧 **English emails (copy for Outlook)**")
-            st.code(en_emails or "No English emails found", language="text")
-
-        # -------- Prompt 5: totals + aging ----------
-        elif prompt and any(k in prompt.lower() for k in ["total", "aging", "summary", "open amount"]):
-            df = calc_aging(df)
-            if df is None:
+            if "due_date" not in df.columns:
                 st.error("⚠️ No due_date column found in Excel.")
             else:
-                amount_col = "open_amount"
-                if "open_amount_in_base_cur" in df.columns:
-                    amount_col = "open_amount_in_base_cur"
-                df[amount_col] = pd.to_numeric(df[amount_col], errors="coerce").fillna(0)
-                total_open = df[amount_col].sum()
+                df["due_date_parsed"] = pd.to_datetime(df["due_date"], errors="coerce")
+                overdue_df = df[df["due_date_parsed"] < ref_date].copy()
 
-                aging_summary = df.groupby("aging_status")[amount_col].sum().reset_index()
-                aging_summary[amount_col] = aging_summary[amount_col].map(lambda x: f"{x:,.2f}")
+                if "open_amount" in overdue_df.columns:
+                    overdue_df["open_amount"] = pd.to_numeric(overdue_df["open_amount"], errors="coerce").fillna(0)
+                elif "open_amount_in_base_cur" in overdue_df.columns:
+                    overdue_df["open_amount"] = pd.to_numeric(overdue_df["open_amount_in_base_cur"], errors="coerce").fillna(0)
+                else:
+                    overdue_df["open_amount"] = 0
 
-                st.write(f"💰 **Total Open Amount:** {total_open:,.2f} EUR")
-                st.write("📊 **Aging Breakdown (based on due_date):**")
-                st.dataframe(aging_summary, use_container_width=True)
-                st.session_state.df_session = df
+                total_overdue = overdue_df["open_amount"].sum()
+
+                st.session_state.filtered_df = overdue_df
+                st.warning(f"⚠️ Found {len(overdue_df)} overdue invoices as of {ref_date.date()}")
+                st.write(f"💰 **Total overdue amount:** {total_overdue:,.2f} EUR")
+                st.dataframe(overdue_df[["vendor_name", "document", "due_date", "open_amount"]], use_container_width=True)
+
+        # ----------- PROMPT: Get Emails for Current Filter -----------
+        elif "get emails for current filter" in prompt.lower():
+            if "filtered_df" not in st.session_state or st.session_state.filtered_df.empty:
+                st.error("⚠️ No active filter. Run 'show overdue invoices ...' first.")
+            else:
+                df = st.session_state.filtered_df.copy()
+                df = combine_emails(df)
+                if "country" not in df.columns:
+                    df["country"] = "other"
+                df["lang"] = df["country"].str.lower().apply(
+                    lambda x: "ES" if "spain" in x or x.strip() in ["es", "esp", "españa"] else "EN"
+                )
+
+                es_emails = "; ".join(sorted({
+                    e.strip() for e in df.loc[df["lang"] == "ES", "combined_emails"].str.split(";").sum() if e.strip()
+                }))
+                en_emails = "; ".join(sorted({
+                    e.strip() for e in df.loc[df["lang"] == "EN", "combined_emails"].str.split(";").sum() if e.strip()
+                }))
+
+                st.write(f"📅 Filtered overdue invoices as of current filter: {len(df)} rows")
+                st.write("🇪🇸 **Spanish vendor emails (copy for Outlook)**")
+                st.code(es_emails or "No Spanish emails found", language="text")
+                st.write("🇬🇧 **English vendor emails (copy for Outlook)**")
+                st.code(en_emails or "No English emails found", language="text")
 
     except Exception as e:
         st.error(f"❌ Error: {e}")
