@@ -16,51 +16,53 @@ Upload your Excel file, enter a **Payment Code**, and the bot will:
 """)
 
 # ====================== FILE UPLOAD ======================
-uploaded_file = st.file_uploader("📂 Upload your Excel file (e.g. TEST.xlsx)", type=["xlsx"])
+uploaded_file = st.file_uploader("📂 Upload your Excel file", type=["xlsx"])
 
 if uploaded_file:
     try:
-        # Read and clean Excel
         df = pd.read_excel(uploaded_file)
-        df.columns = [str(c).strip() for c in df.columns]
-        df = df.loc[:, ~df.columns.duplicated()]
+        df.columns = [str(c).strip() for c in df.columns]      # keep exact names, just strip spaces
+        df = df.loc[:, ~df.columns.duplicated()]               # remove any duplicate column headers
         st.success("✅ Excel file loaded successfully!")
         st.write("Columns detected:", list(df.columns))
     except Exception as e:
         st.error(f"❌ Error loading Excel file: {e}")
         st.stop()
 
-    # ====================== REQUIRED COLUMNS ======================
-    required_cols = ["Payment_Code", "Invoice_No", "Amount", "Vendor", "Email"]
-    missing = [c for c in required_cols if c not in df.columns]
-    if missing:
-        st.error(f"Missing columns: {missing}. Please correct your Excel and re-upload.")
-        st.stop()
+    # ====================== ASK USER WHICH COLUMN IS WHICH ======================
+    st.markdown("### 🧩 Match your Excel columns")
+    payment_col = st.selectbox("Select the column for Payment Code", options=df.columns)
+    invoice_col = st.selectbox("Select the column for Invoice", options=df.columns)
+    amount_col = st.selectbox("Select the column for Amount", options=df.columns)
+    vendor_col = st.selectbox("Select the column for Vendor", options=df.columns)
+    email_col = st.selectbox("Select the column for Email", options=df.columns)
 
     # ====================== PAYMENT CODE INPUT ======================
     payment_code = st.text_input("🔎 Enter Payment Code:")
 
     if payment_code:
-        subset = df[df["Payment_Code"].astype(str) == str(payment_code)]
+        subset = df[df[payment_col].astype(str) == str(payment_code)]
 
         if subset.empty:
             st.warning("⚠️ No records found for this payment code.")
         else:
             # ====================== DATA SUMMARY ======================
-            summary = subset.groupby("Invoice_No", as_index=False)["Amount"].sum()
-            total = summary["Amount"].sum()
-            vendor = subset["Vendor"].iloc[0]
-            email = subset["Email"].iloc[0]
+            summary = subset.groupby(invoice_col, as_index=False)[amount_col].sum()
+            total = summary[amount_col].sum()
+            vendor = subset[vendor_col].iloc[0]
+            email = subset[email_col].iloc[0]
 
             st.divider()
             st.subheader(f"📋 Summary for Payment Code: {payment_code}")
             st.write(f"**Vendor:** {vendor}")
             st.write(f"**Email:** {email}")
-            st.dataframe(summary.style.format({"Amount": "€{:,.2f}".format}))
+            st.dataframe(summary.style.format({amount_col: "€{:,.2f}".format}))
             st.write(f"**Total Payment Amount:** €{total:,.2f}")
 
             # ====================== EMAIL GENERATION ======================
-            invoice_lines = "\n".join(f"- {row.Invoice_No}: €{row.Amount:,.2f}" for _, row in summary.iterrows())
+            invoice_lines = "\n".join(
+                f"- {row[invoice_col]}: €{row[amount_col]:,.2f}" for _, row in summary.iterrows()
+            )
 
             email_body = f"""
 Dear {vendor},
@@ -106,7 +108,7 @@ Ikos Resorts
 
                         st.success(f"✅ Email successfully sent to {email}")
                 except smtplib.SMTPAuthenticationError:
-                    st.error("❌ Authentication failed. Please check your email or password, or enable SMTP access in your Outlook settings.")
+                    st.error("❌ Authentication failed. Please check your email or password, or enable SMTP access in your Outlook account settings.")
                 except Exception as e:
                     st.error(f"❌ Error sending email: {e}")
 else:
