@@ -4,7 +4,6 @@ from io import BytesIO
 from openpyxl import Workbook
 from openpyxl.utils.dataframe import dataframe_to_rows
 import os
-import shutil
 
 # ===== Streamlit config =====
 st.set_page_config(page_title="💼 Vendor Payment Reconciliation Exporter", layout="wide")
@@ -44,60 +43,56 @@ if uploaded_file:
         if subset.empty:
             st.warning("⚠️ No rows found for this Payment Document Code.")
         else:
-            # Clean and summarize
             subset = subset.copy()
             subset["Invoice Value"] = pd.to_numeric(subset["Invoice Value"], errors="coerce").fillna(0)
             summary = subset.groupby("Alt. Document", as_index=False)["Invoice Value"].sum()
 
-            # Calculate total and append as last row
             total_value = summary["Invoice Value"].sum()
             total_row = pd.DataFrame([{"Alt. Document": "TOTAL", "Invoice Value": total_value}])
             summary = pd.concat([summary, total_row], ignore_index=True)
 
-            # Get vendor details
             vendor = str(subset["Supplier Name"].dropna().iloc[0])
             email_to = str(subset["Supplier's Email"].dropna().iloc[0])
 
-            # Display results
             st.divider()
             st.subheader(f"📋 Summary for Payment Code: {pay_code}")
             st.write(f"**Vendor:** {vendor}")
             st.write(f"**Email:** {email_to}")
             st.dataframe(summary.style.format({"Invoice Value": "€{:,.2f}".format}))
 
-            # --- Create workbook manually to hide email ---
+            # --- Create workbook and hide email sheet ---
             wb = Workbook()
             ws_summary = wb.active
             ws_summary.title = "Summary"
-
             for r in dataframe_to_rows(summary, index=False, header=True):
                 ws_summary.append(r)
 
-            # Create a hidden sheet for Power Automate
             ws_hidden = wb.create_sheet("HiddenMeta")
             ws_hidden["A1"] = "Email"
             ws_hidden["B1"] = email_to
             ws_hidden.sheet_state = "hidden"
 
-            # --- Save Excel to universal folder (safe everywhere) ---
-            folder_path = os.path.join(os.getcwd(), "Payment Remmitance")
+            # --- Save directly to Mac Desktop folder ---
+            folder_path = "/Users/angeloskeramaris/Desktop/Payment Remmitance"
             os.makedirs(folder_path, exist_ok=True)
             file_path = os.path.join(folder_path, f"{vendor}_Payment_{pay_code}.xlsx")
-            wb.save(file_path)
-            st.success(f"✅ File saved in: {file_path}")
 
-            # --- Download button ---
+            try:
+                wb.save(file_path)
+                st.success(f"✅ File saved directly to Desktop: {file_path}")
+            except PermissionError:
+                st.error("❌ Permission denied. Run Streamlit locally on your Mac (not on Streamlit Cloud).")
+
+            # --- Optional: still allow manual download ---
             buffer = BytesIO()
             wb.save(buffer)
             buffer.seek(0)
 
-            filename = f"{vendor}_Payment_{pay_code}.xlsx"
             st.download_button(
                 label="💾 Download Excel Summary",
                 data=buffer,
-                file_name=filename,
+                file_name=f"{vendor}_Payment_{pay_code}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
-            st.success("✅ Ready to download the Excel summary file.")
 else:
     st.info("Upload your Excel file to begin.")
