@@ -1,74 +1,70 @@
 import pandas as pd
 import streamlit as st
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-import re
+import win32com.client as win32
 
-st.set_page_config(page_title="💼 Vendor Payment Reconciliation & Email Bot", layout="wide")
+# ====================== STREAMLIT CONFIG ======================
+st.set_page_config(page_title="💬 Vendor Payment Chatbot", layout="wide")
 st.title("💼 Vendor Payment Reconciliation & Email Bot")
 
-uploaded_file = st.file_uploader("📂 Upload your Excel file", type=["xlsx"])
+st.markdown("""
+Upload your Excel file, enter a **Payment Code**, and the bot will:
+1. Find all invoices linked to that payment.
+2. Summarize invoice amounts and totals.
+3. Retrieve the vendor email.
+4. Generate and send a professional email automatically via your **local Outlook** (no password needed).
+""")
+
+# ====================== FILE UPLOAD ======================
+uploaded_file = st.file_uploader("📂 Upload your Excel file (e.g. TEST.xlsx)", type=["xlsx"])
 
 if uploaded_file:
-    df = pd.read_excel(uploaded_file)
-    # normalize headers
-    df.columns = [
-        re.sub(r'[^a-z0-9]+', ' ', c.lower()).strip()
-        for c in df.columns
-    ]
-    df = df.loc[:, ~df.columns.duplicated()]
-
-    st.success("✅ Excel file loaded successfully!")
-    st.write("### 🧭 Normalized column headers:")
-    st.dataframe(pd.DataFrame(df.columns, columns=["Normalized Header"]))
-
-    # Flexible column detection
-    col_payment = [c for c in df.columns if "payment" in c and "code" in c]
-    col_invoice = [c for c in df.columns if "alt" in c and "document" in c]
-    col_amount = [c for c in df.columns if "invoice" in c and "value" in c]
-    col_vendor = [c for c in df.columns if "supplier" in c and "name" in c]
-    col_email = [c for c in df.columns if "email" in c]
-
-    if not all([col_payment, col_invoice, col_amount, col_vendor, col_email]):
-        st.error(f"❌ Some required columns are missing. Detected:\n"
-                 f"Payment Code: {col_payment}\nAlt.Document: {col_invoice}\n"
-                 f"Invoice Value: {col_amount}\nSupplier Name: {col_vendor}\nSupplier Email: {col_email}")
+    try:
+        # Read and clean Excel
+        df = pd.read_excel(uploaded_file)
+        df.columns = [str(c).strip() for c in df.columns]  # clean column names
+        df = df.loc[:, ~df.columns.duplicated()]           # remove duplicates
+        st.success("✅ Excel file loaded successfully!")
+        st.write("Columns detected:", list(df.columns))
+    except Exception as e:
+        st.error(f"❌ Error loading Excel file: {e}")
         st.stop()
 
-    # map detected names
-    col_payment, col_invoice, col_amount, col_vendor, col_email = (
-        col_payment[0], col_invoice[0], col_amount[0], col_vendor[0], col_email[0]
-    )
+    # ====================== COLUMN CHECK ======================
+    required_cols = ["Payment_Code", "Invoice_No", "Amount", "Vendor", "Email"]
+    missing = [c for c in required_cols if c not in df.columns]
+    if missing:
+        st.error(f"Missing columns: {missing}. Please correct your Excel and re-upload.")
+        st.stop()
 
-    payment_code = st.text_input("🔎 Enter Payment Document Code:")
+    # ====================== PAYMENT CODE INPUT ======================
+    payment_code = st.text_input("🔎 Enter Payment Code:")
 
     if payment_code:
-        subset = df[df[col_payment].astype(str).str.strip() == str(payment_code).strip()]
+        subset = df[df["Payment_Code"].astype(str) == str(payment_code)]
 
         if subset.empty:
-            st.warning("⚠️ No records found for this Payment Document Code.")
+            st.warning("⚠️ No records found for this payment code.")
         else:
-            # group invoices
-            summary = subset.groupby(col_invoice, as_index=False)[col_amount].sum()
-            total = summary[col_amount].sum()
-            vendor = subset[col_vendor].iloc[0]
-            email = subset[col_email].iloc[0]
+            # ====================== DATA SUMMARY ======================
+            summary = subset.groupby("Invoice_No", as_index=False)["Amount"].sum()
+            total = summary["Amount"].sum()
+            vendor = subset["Vendor"].iloc[0]
+            email = subset["Email"].iloc[0]
 
-            st.write("### 🧾 Invoices related to this Payment Document Code:")
-            st.dataframe(summary)
+            st.divider()
+            st.subheader(f"📋 Summary for Payment Code: {payment_code}")
             st.write(f"**Vendor:** {vendor}")
             st.write(f"**Email:** {email}")
-            st.write(f"**Total Amount:** €{total:,.2f}")
+            st.dataframe(summary.style.format({"Amount": "€{:,.2f}".format}))
+            st.write(f"**Total Payment Amount:** €{total:,.2f}")
 
-            invoice_lines = "\n".join(
-                f"- {row[col_invoice]}: €{row[col_amount]:,.2f}" for _, row in summary.iterrows()
-            )
+            # ====================== EMAIL GENERATION ======================
+            invoice_lines = "\n".join(f"- {row.Invoice_No}: €{row.Amount:,.2f}" for _, row in summary.iterrows())
 
             email_body = f"""
 Dear {vendor},
 
-Please find below the invoices corresponding to the payment we made under payment document code {payment_code}.
+Please find below the invoices corresponding to the payment we made under payment code {payment_code}.
 
 {invoice_lines}
 
@@ -82,31 +78,22 @@ Accounts Payable Department
 Ikos Resorts
 """
 
-            st.text_area("📧 Email draft:", email_body, height=250)
+            st.divider()
+            st.subheader("✉️ Email Preview")
+            st.text_area("Generated Email:", email_body.strip(), height=250)
 
-            # ==============================
-            # SMTP send (works anywhere)
-            # ==============================
-            st.write("---")
-            st.write("### ✉️ Email Settings (Outlook SMTP)")
-            smtp_server = st.text_input("SMTP server", "smtp.office365.com")
-            smtp_port = st.number_input("SMTP port", min_value=1, max_value=9999, value=587)
-            smtp_user = st.text_input("Your Outlook email address:")
-            smtp_pass = st.text_input("Your Outlook password or app password:", type="password")
-
-            if st.button("📨 Send Email"):
+            # ====================== SEND VIA LOCAL OUTLOOK ======================
+            if st.button("📨 Send Email via Outlook"):
                 try:
-                    msg = MIMEMultipart()
-                    msg["From"] = smtp_user
-                    msg["To"] = email
-                    msg["Subject"] = f"Payment details — Document {payment_code}"
-                    msg.attach(MIMEText(email_body, "plain"))
-
-                    with smtplib.SMTP(smtp_server, smtp_port) as server:
-                        server.starttls()
-                        server.login(smtp_user, smtp_pass)
-                        server.send_message(msg)
-
-                    st.success(f"✅ Email successfully sent to {email}")
+                    outlook = win32.Dispatch('outlook.application')
+                    mail = outlook.CreateItem(0)
+                    mail.To = email
+                    mail.Subject = f"Payment details — Code {payment_code}"
+                    mail.Body = email_body
+                    mail.Send()
+                    st.success(f"✅ Email successfully sent to {email} via your local Outlook account.")
                 except Exception as e:
-                    st.error(f"❌ Failed to send email: {e}")
+                    st.error(f"❌ Error sending email via Outlook: {e}")
+
+else:
+    st.info("Please upload your Excel file to start.")
