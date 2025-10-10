@@ -15,21 +15,22 @@ if uploaded_file:
     st.write("### 🧭 Columns found in your Excel:")
     st.dataframe(pd.DataFrame({"Columns": df.columns}))
 
-    # Try to guess columns
+    # Helper: Find column dynamically
     def find_col(patterns):
         for col in df.columns:
             if any(re.search(p, col, re.IGNORECASE) for p in patterns):
                 return col
         return None
 
+    # Detect columns
     col_payment = find_col(["payment", "pay code", "code"])
-    col_invoice = find_col(["invoice", "factura"])
-    col_amount = find_col(["amount", "importe", "value"])
+    col_alt_doc = find_col(["alternative", "alt doc", "document"])
+    col_amount = find_col(["amount", "importe", "value", "total"])
     col_vendor = find_col(["vendor", "supplier", "proveedor"])
     col_email = find_col(["email", "mail", "correo"])
 
-    if not all([col_payment, col_invoice, col_amount, col_vendor, col_email]):
-        st.error("❌ Some required columns could not be identified. Please check your Excel headers.")
+    if not all([col_payment, col_alt_doc, col_amount, col_vendor, col_email]):
+        st.error("❌ Some required columns could not be identified. Please verify your Excel headers.")
     else:
         payment_code = st.text_input("Enter payment code:")
 
@@ -39,13 +40,13 @@ if uploaded_file:
             if subset.empty:
                 st.warning("No records found for this payment code.")
             else:
-                # Summarize invoices
-                summary = subset.groupby(col_invoice, as_index=False)[col_amount].sum()
+                # Summarize invoices by Alternative Document
+                summary = subset.groupby(col_alt_doc, as_index=False)[col_amount].sum()
                 total = summary[col_amount].sum()
                 vendor = subset[col_vendor].iloc[0]
                 email = subset[col_email].iloc[0]
 
-                st.write("### 🧾 Invoices related to this payment code:")
+                st.write("### 🧾 Invoices (Alternative Documents) for this payment:")
                 st.dataframe(summary)
                 st.write(f"**Vendor:** {vendor}")
                 st.write(f"**Email:** {email}")
@@ -53,7 +54,7 @@ if uploaded_file:
 
                 # Build email
                 invoice_lines = "\n".join(
-                    f"- {row[col_invoice]}: €{row[col_amount]:,.2f}" for _, row in summary.iterrows()
+                    f"- {row[col_alt_doc]}: €{row[col_amount]:,.2f}" for _, row in summary.iterrows()
                 )
 
                 email_body = f"""
