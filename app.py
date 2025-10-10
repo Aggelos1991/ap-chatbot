@@ -5,22 +5,15 @@ from io import BytesIO
 from openpyxl import Workbook
 from openpyxl.utils.dataframe import dataframe_to_rows
 import os
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from email.mime.base import MIMEBase
-from email import encoders
 from datetime import datetime
 
-
-# ---------- HELPERS ----------
+# ====== Helpers ======
 def parse_amount(value):
-    """Parses European or US formatted numbers to float."""
+    """Convert European/US numeric formats to float."""
     if pd.isna(value):
         return None
     s = str(value).strip()
     s = re.sub(r'[^\d,.\-]', '', s)
-    # handle formats like 1.234,56 or 1,234.56
     if s.count(',') == 1 and s.count('.') == 1:
         if s.find(',') > s.find('.'):
             s = s.replace('.', '').replace(',', '.')
@@ -33,13 +26,10 @@ def parse_amount(value):
     except:
         return None
 
-
 def norm_vendor(v):
     if pd.isna(v):
         return ''
-    v = re.sub(r'[^A-Za-z0-9]', '', str(v)).lower()
-    return v
-
+    return re.sub(r'[^A-Za-z0-9]', '', str(v)).lower()
 
 def find_col(df, variants):
     for c in df.columns:
@@ -48,11 +38,11 @@ def find_col(df, variants):
     return None
 
 
-# ---------- STREAMLIT CONFIG ----------
+# ====== Streamlit Config ======
 st.set_page_config(page_title="💼 Vendor Payment Reconciliation Exporter", layout="wide")
 st.title("💼 Vendor Payment Reconciliation — Excel Export & Email Tool")
 
-# ---------- FILE UPLOADS ----------
+# ====== File Uploads ======
 uploaded_file = st.file_uploader("📂 Upload Payment Excel (TEST.xlsx)", type=["xlsx"])
 credit_file = st.file_uploader("📂 Optional: Upload Credit Notes Excel", type=["xlsx"])
 
@@ -62,8 +52,6 @@ if credit_file:
         credit_df = pd.read_excel(credit_file)
         credit_df.columns = [c.strip() for c in credit_df.columns]
         credit_df = credit_df.loc[:, ~credit_df.columns.duplicated()]
-        st.success("✅ Credit Notes file loaded")
-        st.write("Columns:", list(credit_df.columns))
     except Exception as e:
         st.error(f"❌ Error loading Credit Notes Excel: {e}")
 
@@ -72,18 +60,13 @@ if uploaded_file:
         df = pd.read_excel(uploaded_file)
         df.columns = [c.strip() for c in df.columns]
         df = df.loc[:, ~df.columns.duplicated()]
-        st.success("✅ Payment Excel loaded")
+        st.success("✅ Payment Excel loaded successfully")
     except Exception as e:
         st.error(f"❌ Error loading Excel: {e}")
         st.stop()
 
-    REQ = [
-        "Payment Document Code",
-        "Alt. Document",
-        "Invoice Value",
-        "Supplier Name",
-        "Supplier's Email",
-    ]
+    # Required columns
+    REQ = ["Payment Document Code", "Alt. Document", "Invoice Value", "Supplier Name", "Supplier's Email"]
     missing = [c for c in REQ if c not in df.columns]
     if missing:
         st.error(f"Missing columns in Excel: {missing}")
@@ -96,88 +79,62 @@ if uploaded_file:
         if subset.empty:
             st.warning("⚠️ No rows found for this Payment Document Code.")
         else:
-            subset = subset.copy()
             subset["Invoice Value"] = subset["Invoice Value"].apply(parse_amount).fillna(0.0)
             vendor = subset["Supplier Name"].iloc[0]
             vendor_norm = norm_vendor(vendor)
             email_to = subset["Supplier's Email"].iloc[0]
-
             summary = subset.groupby("Alt. Document", as_index=False)["Invoice Value"].sum()
 
-            st.divider()
-            payment_amount = st.text_input("💶 Actual Payment Amount (optional)", value="")
-            payment_value = parse_amount(payment_amount)
+            payment_input = st.text_input("💶 Actual Payment Amount (optional)")
+            payment_value = parse_amount(payment_input)
 
-            # --- CN DETECTION ---
-            if credit_df is not None:
-                st.info("🔎 Checking for Credit Notes...")
-
+            # === Automatic CN logic (no messages, silent) ===
+            if credit_df is not None and payment_value:
                 alt_col = find_col(credit_df, ["Alt.Document", "Alt. Document", "Document"])
                 val_col = find_col(credit_df, ["Invoice Value", "Amount", "Value"])
                 vendor_col = find_col(credit_df, ["Supplier Name", "Vendor", "Supplier"])
 
-                if not alt_col or not val_col:
-                    st.warning("⚠️ CN file missing 'Alt.Document' or 'Amount' column.")
-                else:
+                if alt_col and val_col:
                     cn = credit_df.copy()
                     cn[val_col] = cn[val_col].apply(parse_amount)
                     cn = cn.dropna(subset=[val_col])
-                    cn["VendorNorm"] = cn[vendor_col].apply(norm_vendor) if vendor_col else ""
                     cn["AbsVal"] = cn[val_col].abs().round(2)
+                    cn["VendorNorm"] = cn[vendor_col].apply(norm_vendor) if vendor_col else ""
 
                     total_invoices = round(summary["Invoice Value"].sum(), 2)
-                    if payment_value:
-                        diff = round(total_invoices - payment_value, 2)
-                        st.caption(f"Invoices total €{total_invoices:.2f} | Payment €{payment_value:.2f} | Diff €{diff:.2f}")
-                        target = abs(diff)
+                    diff = round(total_invoices - payment_value, 2)
+                    target = abs(diff)
 
-                        if target > 0.01:
-                            vendor_cn = cn[cn["VendorNorm"] == vendor_norm]
-                            matches = vendor_cn[vendor_cn["AbsVal"].round(2) == round(target, 2)]
+                    # Match by vendor & value
+                    matches = cn[(cn["VendorNorm"] == vendor_norm) & (cn["AbsVal"] == target)]
+                    if matches.empty:
+                        matches = cn[cn["AbsVal"] == target]
 
-                            if matches.empty:
-                                # fallback: match all vendors
-                                matches = cn[cn["AbsVal"].round(2) == round(target, 2)]
+                    if not matches.empty:
+                        last = matches.iloc[-1]  # apply last found CN
+                        cn_alt = str(last[alt_col])
+                        cn_val = -abs(last[val_col])  # deduct
+                        summary = pd.concat([
+                            summary,
+                            pd.DataFrame([{"Alt. Document": f"{cn_alt} (CN)", "Invoice Value": cn_val}])
+                        ], ignore_index=True)
 
-                            if not matches.empty:
-                                st.write("🔍 CN candidates found:")
-                                st.dataframe(matches[[alt_col, val_col]])
-
-                                # pick LAST if multiple
-                                chosen = matches.iloc[-1]
-                                cn_alt = str(chosen[alt_col])
-                                cn_val = -abs(chosen[val_col])  # deduct
-                                summary = pd.concat([
-                                    summary,
-                                    pd.DataFrame([{"Alt. Document": f"{cn_alt} (CN)", "Invoice Value": cn_val}])
-                                ], ignore_index=True)
-
-                                if len(matches) > 1:
-                                    st.warning(
-                                        f"⚠️ Found {len(matches)} CNs with same amount €{target:.2f}. "
-                                        f"Applied LAST: {cn_alt}."
-                                    )
-                                else:
-                                    st.success(f"✅ Applied CN '{cn_alt}' (deducted €{abs(cn_val):.2f}).")
-                            else:
-                                st.info("ℹ️ No Credit Note matches the exact difference.")
-                        else:
-                            st.info("No difference detected — no CN needed.")
-
-            # --- FINAL TOTAL ---
+            # === Final total ===
             total_value = summary["Invoice Value"].sum()
-            total_row = pd.DataFrame([{"Alt. Document": "TOTAL", "Invoice Value": total_value}])
-            summary = pd.concat([summary, total_row], ignore_index=True)
+            summary = pd.concat([
+                summary,
+                pd.DataFrame([{"Alt. Document": "TOTAL", "Invoice Value": total_value}])
+            ], ignore_index=True)
 
-            # --- DISPLAY ---
             summary["Invoice Value"] = summary["Invoice Value"].apply(lambda v: f"€{v:,.2f}")
+
             st.divider()
             st.subheader(f"📋 Summary for Payment Code: {pay_code}")
             st.write(f"**Vendor:** {vendor}")
             st.write(f"**Vendor Email (from Excel):** {email_to}")
             st.dataframe(summary)
 
-            # --- EXCEL EXPORT ---
+            # === Excel Export ===
             wb = Workbook()
             ws = wb.active
             ws.title = "Summary"
