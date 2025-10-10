@@ -1,6 +1,6 @@
 import pandas as pd
 import streamlit as st
-import win32com.client as win32
+import platform
 
 st.set_page_config(page_title="💬 Vendor Payment Chatbot", layout="wide")
 st.title("💼 Vendor Payment Reconciliation & Email Bot")
@@ -55,15 +55,25 @@ Ikos Resorts
 
             st.text_area("📧 Email draft:", email_body, height=250)
 
-            # Step 4. Send via Outlook
-            if st.button("📨 Send Email via Outlook"):
-                try:
-                    outlook = win32.Dispatch('outlook.application')
-                    mail = outlook.CreateItem(0)
-                    mail.To = email
-                    mail.Subject = f"Payment details — Code {payment_code}"
-                    mail.Body = email_body
-                    mail.Send()
-                    st.success(f"Email successfully sent to {email}")
-                except Exception as e:
-                    st.error(f"Error sending email: {e}")
+            # Step 4. Send or show email
+            if st.button("📨 Send Email"):
+                os_name = platform.system()
+
+                if os_name == "Windows":
+                    try:
+                        import win32com.client as win32
+                        outlook = win32.Dispatch("outlook.application")
+                        mail = outlook.CreateItem(0)
+                        mail.To = email
+                        mail.Subject = f"Payment details — Code {payment_code}"
+                        mail.Body = email_body
+                        mail.Send()
+                        st.success(f"Email successfully sent to {email}")
+                    except Exception as e:
+                        st.error(f"Error sending email via Outlook: {e}")
+
+                else:
+                    # On Mac or other systems: just display email content
+                    st.info("Outlook automation not available on this system.")
+                    st.write("You can copy and send the following message manually:")
+                    st.code(f"To: {email}\nSubject: Payment details — Code {payment_code}\n\n{email_body}")
