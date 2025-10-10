@@ -4,6 +4,7 @@ import streamlit as st
 from io import BytesIO
 from openpyxl import Workbook
 from openpyxl.utils.dataframe import dataframe_to_rows
+from openpyxl.worksheet.table import Table, TableStyleInfo
 import os
 from datetime import datetime
 
@@ -94,7 +95,6 @@ if pay_file and cn_file:
 
     # ---- Base summary ----
     summary = subset[["Alt. Document", "Invoice Value"]].copy()
-
     cn_rows = []
 
     # ---- Logic: Payment vs Invoice difference ----
@@ -142,13 +142,25 @@ if pay_file and cn_file:
     for r in dataframe_to_rows(summary, index=False, header=True):
         ws.append(r)
 
+    # ---- Hidden meta table ----
     ws_hidden = wb.create_sheet("HiddenMeta")
-    ws_hidden["A1"], ws_hidden["B1"] = "Vendor", vendor
-    ws_hidden["A2"], ws_hidden["B2"] = "Vendor Email", email
-    ws_hidden["A3"], ws_hidden["B3"] = "Payment Code", pay_code
-    ws_hidden["A4"], ws_hidden["B4"] = "Exported At", datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    meta_data = [
+        ["Vendor", vendor],
+        ["Vendor Email", email],
+        ["Payment Code", pay_code],
+        ["Exported At", datetime.now().strftime("%Y-%m-%d %H:%M:%S")]
+    ]
+    for row in meta_data:
+        ws_hidden.append(row)
+
+    # Create actual Excel table
+    tab = Table(displayName="MetaTable", ref=f"A1:B{len(meta_data)}")
+    style = TableStyleInfo(name="TableStyleMedium2", showRowStripes=True)
+    tab.tableStyleInfo = style
+    ws_hidden.add_table(tab)
     ws_hidden.sheet_state = "hidden"
 
+    # ---- Save ----
     folder = os.path.join(os.getcwd(), "exports")
     os.makedirs(folder, exist_ok=True)
     file_path = os.path.join(folder, f"{vendor}_Payment_{pay_code}.xlsx")
