@@ -61,48 +61,52 @@ if uploaded_file:
             st.divider()
             st.subheader(f"📋 Summary for Payment Code: {pay_code}")
             st.write(f"**Vendor:** {vendor}")
-            st.write(f"**Email:** {email_to}")
+            st.write(f"**Vendor Email (from Excel):** {email_to}")
             st.dataframe(summary.style.format({"Invoice Value": "€{:,.2f}".format}))
 
-            # --- Create workbook ---
-            wb = Workbook()
-            ws_summary = wb.active
-            ws_summary.title = "Summary"
-            for r in dataframe_to_rows(summary, index=False, header=True):
-                ws_summary.append(r)
-
-            ws_hidden = wb.create_sheet("HiddenMeta")
-            ws_hidden["A1"] = "Email"
-            ws_hidden["B1"] = email_to
-            ws_hidden.sheet_state = "hidden"
-
-            # Save temporarily
-            folder_path = os.path.join(os.getcwd(), "exports")
-            os.makedirs(folder_path, exist_ok=True)
-            file_path = os.path.join(folder_path, f"{vendor}_Payment_{pay_code}.xlsx")
-            wb.save(file_path)
-
-            st.success(f"✅ File created: {file_path}")
-
-            # --- Send Email ---
             st.divider()
             st.subheader("📨 Send Excel by Gmail")
 
             sender_email = st.text_input("Your Gmail address:")
             app_password = st.text_input("Your Gmail App Password:", type="password")
+
             subject = f"Payment Summary — {vendor}"
             body = f"Dear {vendor},\n\nPlease find attached the payment summary for code {pay_code}.\n\nKind regards,\nAngelos"
 
-            if st.button("✉️ Send Email"):
+            if st.button("💾 Generate & Send Excel"):
                 try:
-                    # Setup message
+                    # --- Create workbook ---
+                    wb = Workbook()
+                    ws_summary = wb.active
+                    ws_summary.title = "Summary"
+                    for r in dataframe_to_rows(summary, index=False, header=True):
+                        ws_summary.append(r)
+
+                    # Add hidden sheet for metadata
+                    ws_hidden = wb.create_sheet("HiddenMeta")
+                    ws_hidden["A1"] = "Vendor"
+                    ws_hidden["B1"] = vendor
+                    ws_hidden["A2"] = "Vendor Email"
+                    ws_hidden["B2"] = email_to
+                    ws_hidden["A3"] = "Sender Email"
+                    ws_hidden["B3"] = sender_email
+                    ws_hidden["A4"] = "Payment Code"
+                    ws_hidden["B4"] = pay_code
+                    ws_hidden.sheet_state = "hidden"
+
+                    # Save locally
+                    folder_path = os.path.join(os.getcwd(), "exports")
+                    os.makedirs(folder_path, exist_ok=True)
+                    file_path = os.path.join(folder_path, f"{vendor}_Payment_{pay_code}.xlsx")
+                    wb.save(file_path)
+
+                    # --- Send Email ---
                     msg = MIMEMultipart()
                     msg["From"] = sender_email
                     msg["To"] = email_to
                     msg["Subject"] = subject
                     msg.attach(MIMEText(body, "plain"))
 
-                    # Attach Excel
                     with open(file_path, "rb") as f:
                         part = MIMEBase("application", "octet-stream")
                         part.set_payload(f.read())
@@ -110,7 +114,6 @@ if uploaded_file:
                     part.add_header("Content-Disposition", f"attachment; filename={os.path.basename(file_path)}")
                     msg.attach(part)
 
-                    # Send via Gmail SMTP
                     server = smtplib.SMTP("smtp.gmail.com", 587)
                     server.starttls()
                     server.login(sender_email, app_password)
@@ -126,10 +129,11 @@ if uploaded_file:
             wb.save(buffer)
             buffer.seek(0)
             st.download_button(
-                label="💾 Download Excel Summary",
+                label="⬇️ Download Excel Summary (with hidden email tab)",
                 data=buffer,
                 file_name=f"{vendor}_Payment_{pay_code}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
+
 else:
     st.info("Upload your Excel file to begin.")
