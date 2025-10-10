@@ -1,3 +1,4 @@
+import re
 import pandas as pd
 import streamlit as st
 from io import BytesIO
@@ -10,6 +11,28 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email import encoders
 from datetime import datetime
+
+# ===== Helpers =====
+def parse_number(x):
+    """Robust parser for amounts like '1.234,56' or '1,234.56' or '167,09'."""
+    if pd.isna(x): return None
+    s = str(x).strip()
+    # remove currency and spaces
+    s = re.sub(r'[^\d,.\-\+]', '', s)
+    # if comma is decimal separator (common EU): convert to dot
+    if s.count(',') == 1 and (s.count('.') == 0 or s.find(',') > s.find('.')):
+        s = s.replace('.', '')         # drop thousand sep
+        s = s.replace(',', '.')        # decimal to dot
+    # else: assume dot is decimal, remove any thousands commas
+    elif s.count('.') >= 1 and s.count(',') >= 1:
+        s = s.replace(',', '')         # drop thousands comma
+    try:
+        return float(s)
+    except:
+        return None
+
+def norm_txt(s):
+    return str(s).strip().upper() if pd.notna(s) else ""
 
 # ===== Streamlit config =====
 st.set_page_config(page_title="💼 Vendor Payment Reconciliation Exporter", layout="wide")
@@ -62,11 +85,12 @@ if uploaded_file:
             st.warning("⚠️ No rows found for this Payment Document Code.")
         else:
             subset = subset.copy()
-            subset["Invoice Value"] = pd.to_numeric(subset["Invoice Value"], errors="coerce").fillna(0)
-            summary = subset.groupby("Alt. Document", as_index=False)["Invoice Value"].sum()
-
-            vendor = str(subset["Supplier Name"].dropna().iloc[0])
+            subset["Invoice Value"] = subset["Invoice Value"].apply(parse_number).fillna(0.0)
+            # normalize supplier name once
+            vendor = norm_txt(subset["Supplier Name"].dropna().iloc[0])
             email_to = str(subset["Supplier's Email"].dropna().iloc[0])
+
+            summary = subset.groupby("Alt. Document", as_index=False)["Invoice Value"].sum()
 
             st.divider()
             payment_amount = st.number_input("💶 Actual Payment Amount (optional)", min_value=0.0, step=0.01, format="%.2f")
@@ -76,23 +100,18 @@ if uploaded_file:
                 st.info("🔎 Checking for Credit Notes...")
 
                 # --- Flexible column mapping for Credit Notes ---
-                alt_col = next(
-                    (c for c in credit_df.columns if c.strip().replace(" ", "").lower() in ["alt.document", "altdocument"]),
-                    None,
-                )
-                val_col = next(
-                    (c for c in credit_df.columns if c.strip().replace(" ", "").lower() in ["invoicevalue", "amount", "value"]),
-                    None,
-                )
+                alt_col = next((c for c in credit_df.columns if c.strip().replace(" ", "").lower() in ["alt.document","altdocument"]), None)
+                val_col = next((c for c in credit_df.columns if c.strip().replace(" ", "").lower() in ["invoicevalue","amount","value"]), None)
 
                 if alt_col and val_col:
-                    credit_df[val_col] = pd.to_numeric(credit_df[val_col], errors="coerce").fillna(0)
+                    work_cn = credit_df.copy()
 
-                    # Match vendor if column exists
-                    if "Supplier Name" in credit_df.columns:
-                        vendor_cn_df = credit_df[credit_df["Supplier Name"].astype(str) == vendor].copy()
-                    else:
-                        vendor_cn_df = credit_df.copy()
+                    # normalize amounts & vendor names for CN file
+                    work_cn[val_col] = work_cn[val_col].apply(parse_number)
+                    if "Supplier Name" in work_cn.columns:
+                        work_cn["_VENDOR_NORM"] = work_cn["Supplier Name"].apply(norm_txt)
+                        work_cn = work_cn[work_cn["_VENDOR_NORM"] == vendor]  # match same vendor
+                    work_cn = work_cn.dropna(subset=[val_col])
 
                     total_invoices = float(summary["Invoice Value"].sum())
                     chosen_cn_added = False
@@ -100,38 +119,41 @@ if uploaded_file:
                     if payment_amount and payment_amount > 0:
                         diff = round(total_invoices - float(payment_amount), 2)
                         if abs(diff) > 0.01:
-                            tmp = vendor_cn_df.copy()
-                            tmp["_abs_val"] = tmp[val_col].abs().round(2)
                             target = round(abs(diff), 2)
-                            matches = tmp[tmp["_abs_val"] == target]
+                            # tolerance for float/locale noise
+                            work_cn["_ABS_VAL"] = work_cn[val_col].abs()
+                            matches = work_cn[(work_cn["_ABS_VAL"] - target).abs() <= 0.01]
 
                             if not matches.empty:
+                                # sort by Alt to make "first" deterministic
+                                try:
+                                    matches = matches.sort_values(by=alt_col.astype(str))
+                                except:
+                                    matches = matches.copy()
+
                                 if len(matches) > 1:
                                     st.warning(
                                         f"⚠️ Found {len(matches)} Credit Notes with the same value €{target:.2f}. "
-                                        "Only the first one will be applied."
+                                        "Only the first one was applied."
                                     )
 
-                                cn_row = matches.iloc[0]
-                                cn_alt = str(cn_row[alt_col])
-                                cn_value = -target
-                                cn_df = pd.DataFrame(
-                                    [{"Alt. Document": f"{cn_alt} (CN)", "Invoice Value": cn_value}]
-                                )
+                                first = matches.iloc[0]
+                                cn_alt = str(first[alt_col])
+                                cn_value = -target  # deduct once
+
+                                cn_df = pd.DataFrame([{"Alt. Document": f"{cn_alt} (CN)", "Invoice Value": cn_value}])
                                 summary = pd.concat([summary, cn_df], ignore_index=True)
                                 chosen_cn_added = True
-                                st.success(f"✅ Applied CN '{cn_alt}' for {vendor}: deducted €{target:.2f}.")
+                                st.success(f"✅ Applied CN '{cn_alt}': deducted €{target:.2f}.")
                             else:
                                 st.info("ℹ️ No Credit Note matches the exact difference. No CN applied.")
                         else:
                             st.info("No difference detected between invoices and payment — no CN needed.")
-
-                    # If user did NOT enter payment amount → fallback (optional)
-                    if not chosen_cn_added and (not payment_amount or payment_amount == 0):
+                    else:
                         st.info("No payment amount entered — skipping CN deduction logic.")
 
                 else:
-                    st.warning("⚠️ Credit Notes file missing recognizable columns (expected something like 'Alt.Document' and 'Amount').")
+                    st.warning("⚠️ Credit Notes file missing recognizable columns (expected e.g. 'Alt.Document' and 'Amount').")
 
             # === Total row (includes CN deduction if any) ===
             total_value = summary["Invoice Value"].sum()
@@ -140,7 +162,7 @@ if uploaded_file:
 
             st.divider()
             st.subheader(f"📋 Summary for Payment Code: {pay_code}")
-            st.write(f"**Vendor:** {vendor}")
+            st.write(f"**Vendor:** {vendor.title()}")
             st.write(f"**Vendor Email (from Excel):** {email_to}")
             st.dataframe(summary.style.format({"Invoice Value": "€{:,.2f}".format}))
 
@@ -172,8 +194,8 @@ if uploaded_file:
             sender_email = st.text_input("Your Gmail address:")
             app_password = st.text_input("Your Gmail App Password:", type="password")
 
-            subject = f"Payment Summary — {vendor}"
-            body = f"Dear {vendor},\n\nPlease find attached the payment summary for code {pay_code}.\n\nKind regards,\nAngelos"
+            subject = f"Payment Summary — {vendor.title()}"
+            body = f"Dear {vendor.title()},\n\nPlease find attached the payment summary for code {pay_code}.\n\nKind regards,\nAngelos"
 
             if st.button("✉️ Send Email"):
                 try:
