@@ -1,64 +1,61 @@
 import pandas as pd
 import streamlit as st
-import win32com.client as win32
+import requests
+from msal import PublicClientApplication
 
-# ====================== STREAMLIT CONFIG ======================
+# ====================== CONFIG ======================
 st.set_page_config(page_title="💬 Vendor Payment Chatbot", layout="wide")
-st.title("💼 Vendor Payment Reconciliation & Email Bot")
+st.title("💼 Vendor Payment Reconciliation & Email Bot (Outlook 365 Secure)")
 
-st.markdown("""
-Upload your Excel file, enter a **Payment Code**, and the bot will:
-1. Find all invoices linked to that payment.
-2. Summarize invoice amounts and totals.
-3. Retrieve the vendor email.
-4. Generate and send a professional email automatically via your **local Outlook** (no password needed).
-""")
+CLIENT_ID = "YOUR_AZURE_APP_CLIENT_ID"
+TENANT_ID = "common"
+AUTHORITY = f"https://login.microsoftonline.com/{TENANT_ID}"
+SCOPES = ["https://graph.microsoft.com/Mail.Send"]
+
+# ====================== LOGIN ======================
+st.sidebar.subheader("🔐 Microsoft 365 Login")
+
+if "access_token" not in st.session_state:
+    st.session_state.access_token = None
+
+if st.button("Login with Microsoft 365"):
+    app = PublicClientApplication(CLIENT_ID, authority=AUTHORITY)
+    result = app.acquire_token_interactive(scopes=SCOPES)
+    st.session_state.access_token = result["access_token"]
+    st.sidebar.success("✅ Logged in successfully!")
 
 # ====================== FILE UPLOAD ======================
 uploaded_file = st.file_uploader("📂 Upload your Excel file (e.g. TEST.xlsx)", type=["xlsx"])
 
 if uploaded_file:
-    try:
-        # Read and clean Excel
-        df = pd.read_excel(uploaded_file)
-        df.columns = [str(c).strip() for c in df.columns]  # clean column names
-        df = df.loc[:, ~df.columns.duplicated()]           # remove duplicates
-        st.success("✅ Excel file loaded successfully!")
-        st.write("Columns detected:", list(df.columns))
-    except Exception as e:
-        st.error(f"❌ Error loading Excel file: {e}")
-        st.stop()
+    df = pd.read_excel(uploaded_file)
+    df.columns = [str(c).strip() for c in df.columns]
+    df = df.loc[:, ~df.columns.duplicated()]
 
-    # ====================== COLUMN CHECK ======================
     required_cols = ["Payment_Code", "Invoice_No", "Amount", "Vendor", "Email"]
     missing = [c for c in required_cols if c not in df.columns]
     if missing:
-        st.error(f"Missing columns: {missing}. Please correct your Excel and re-upload.")
+        st.error(f"Missing columns: {missing}")
         st.stop()
 
-    # ====================== PAYMENT CODE INPUT ======================
     payment_code = st.text_input("🔎 Enter Payment Code:")
 
     if payment_code:
         subset = df[df["Payment_Code"].astype(str) == str(payment_code)]
-
         if subset.empty:
             st.warning("⚠️ No records found for this payment code.")
         else:
-            # ====================== DATA SUMMARY ======================
             summary = subset.groupby("Invoice_No", as_index=False)["Amount"].sum()
             total = summary["Amount"].sum()
             vendor = subset["Vendor"].iloc[0]
             email = subset["Email"].iloc[0]
 
-            st.divider()
             st.subheader(f"📋 Summary for Payment Code: {payment_code}")
+            st.dataframe(summary.style.format({"Amount": "€{:,.2f}".format}))
             st.write(f"**Vendor:** {vendor}")
             st.write(f"**Email:** {email}")
-            st.dataframe(summary.style.format({"Amount": "€{:,.2f}".format}))
             st.write(f"**Total Payment Amount:** €{total:,.2f}")
 
-            # ====================== EMAIL GENERATION ======================
             invoice_lines = "\n".join(f"- {row.Invoice_No}: €{row.Amount:,.2f}" for _, row in summary.iterrows())
 
             email_body = f"""
@@ -78,22 +75,33 @@ Accounts Payable Department
 Ikos Resorts
 """
 
-            st.divider()
-            st.subheader("✉️ Email Preview")
-            st.text_area("Generated Email:", email_body.strip(), height=250)
+            st.text_area("✉️ Email Preview", email_body.strip(), height=250)
 
-            # ====================== SEND VIA LOCAL OUTLOOK ======================
-            if st.button("📨 Send Email via Outlook"):
-                try:
-                    outlook = win32.Dispatch('outlook.application')
-                    mail = outlook.CreateItem(0)
-                    mail.To = email
-                    mail.Subject = f"Payment details — Code {payment_code}"
-                    mail.Body = email_body
-                    mail.Send()
-                    st.success(f"✅ Email successfully sent to {email} via your local Outlook account.")
-                except Exception as e:
-                    st.error(f"❌ Error sending email via Outlook: {e}")
+            # ====================== SEND EMAIL USING GRAPH API ======================
+            if st.button("📨 Send Email"):
+                if not st.session_state.access_token:
+                    st.error("Please log in with Microsoft 365 first.")
+                else:
+                    email_json = {
+                        "message": {
+                            "subject": f"Payment details — Code {payment_code}",
+                            "body": {
+                                "contentType": "Text",
+                                "content": email_body
+                            },
+                            "toRecipients": [{"emailAddress": {"address": email}}],
+                        },
+                        "saveToSentItems": "true"
+                    }
 
-else:
-    st.info("Please upload your Excel file to start.")
+                    response = requests.post(
+                        "https://graph.microsoft.com/v1.0/me/sendMail",
+                        headers={"Authorization": f"Bearer {st.session_state.access_token}",
+                                 "Content-Type": "application/json"},
+                        json=email_json
+                    )
+
+                    if response.status_code == 202:
+                        st.success(f"✅ Email sent successfully to {email}")
+                    else:
+                        st.error(f"❌ Failed to send email: {response.text}")
