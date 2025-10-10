@@ -17,19 +17,16 @@ def parse_number_to_cents(x):
     """Parse amounts like '1.234,56' / '1,234.56' / 167,09 / 167.09 -> int cents."""
     if pd.isna(x): return None
     s = str(x).strip()
-    s = re.sub(r'[^\d,.\-\+]', '', s)  # keep digits, signs, separators
-    # If exactly one comma and it's after the dot OR there is no dot -> treat comma as decimal
+    s = re.sub(r'[^\d,.\-\+]', '', s)
     if s.count(',') == 1 and (s.count('.') == 0 or s.find(',') > s.find('.')):
-        s = s.replace('.', '')   # thousands
-        s = s.replace(',', '.')  # decimal point
+        s = s.replace('.', '')
+        s = s.replace(',', '.')
     elif s.count(',') >= 1 and s.count('.') >= 1:
-        # assume comma is thousands
         s = s.replace(',', '')
     try:
         val = float(s)
     except:
         return None
-    # convert to cents with banker-proof rounding
     return int(round(val * 100))
 
 def norm_vendor(s):
@@ -39,7 +36,6 @@ def norm_vendor(s):
     return re.sub(r'\s+', ' ', s).strip()
 
 def find_col(cols, candidates):
-    """Return the first column from cols matching any normalized candidate names."""
     norm = {c: c.strip().replace(" ", "").lower() for c in cols}
     for cand in candidates:
         target = cand.replace(" ", "").lower()
@@ -62,8 +58,8 @@ if credit_file:
         credit_df = pd.read_excel(credit_file)
         credit_df.columns = [str(c).strip() for c in credit_df.columns]
         credit_df = credit_df.loc[:, ~credit_df.columns.duplicated()]
-        st.success("✅ Credit Notes file loaded")
-        st.write("Credit Notes Columns:", list(credit_df.columns))
+        st.success("✅ Credit Notes file loaded successfully")
+        st.write("Credit Notes Columns detected:", list(credit_df.columns))
     except Exception as e:
         st.error(f"❌ Error loading Credit Notes Excel: {e}")
 
@@ -72,13 +68,13 @@ if uploaded_file:
         df = pd.read_excel(uploaded_file)
         df.columns = [str(c).strip() for c in df.columns]
         df = df.loc[:, ~df.columns.duplicated()]
-        st.success("✅ Payment Excel loaded")
+        st.success("✅ Payment Excel loaded successfully")
         st.write("Columns detected:", list(df.columns))
     except Exception as e:
         st.error(f"❌ Error loading Excel: {e}")
         st.stop()
 
-    # Required columns in the PAYMENT file
+    # Required columns
     REQ = [
         "Payment Document Code",
         "Alt. Document",
@@ -110,14 +106,13 @@ if uploaded_file:
             payment_amount = st.text_input("💶 Actual Payment Amount (optional)", value="")
             payment_cents = parse_number_to_cents(payment_amount) if payment_amount.strip() else None
 
-            # ---- CN handling (apply ONLY ONE that matches the exact diff) ----
+            # ---- CN handling ----
             applied_cn = None
             extra_cn_alts = []
 
             if credit_df is not None:
                 st.info("🔎 Checking for Credit Notes...")
 
-                # Map flexible columns in CN file
                 alt_col = find_col(credit_df.columns, ["Alt.Document", "Alt. Document", "AltDoc", "Document"])
                 val_col = find_col(credit_df.columns, ["Invoice Value", "Amount", "Value"])
                 sup_col = find_col(credit_df.columns, ["Supplier Name", "Vendor", "Supplier"])
@@ -139,49 +134,40 @@ if uploaded_file:
                         diff_cents = total_inv_cents - int(payment_cents)
                         target_cents = abs(diff_cents)
 
-                        # Debug line
                         st.caption(
                             f"• Invoices total: €{total_inv_cents/100:.2f} | Payment: €{(payment_cents or 0)/100:.2f} | "
                             f"Diff: €{diff_cents/100:.2f} (target CN = €{target_cents/100:.2f})"
                         )
 
                         if target_cents > 0:
-                            # Pass 1: strict same vendor
-                            pass1 = cn[cn["__VENDOR_NORM__"] == vendor_norm]
-                            matches = pass1[pass1["__abs_cents__"] == target_cents]
+                            # Match CNs (strict same vendor)
+                            matches = cn[(cn["__VENDOR_NORM__"] == vendor_norm) & (cn["__abs_cents__"] == target_cents)]
 
-                            # Pass 2: loose vendor (contains)
+                            # If none found, try loose vendor match
                             if matches.empty and sup_col:
-                                contains_mask = pass1.empty and cn["__VENDOR_NORM__"].str.contains(vendor_norm, na=False)
-                                loose = cn[contains_mask] if pass1.empty else pass1
-                                matches = loose[loose["__abs_cents__"] == target_cents]
-
-                            # Pass 3: any vendor
-                            if matches.empty:
                                 matches = cn[cn["__abs_cents__"] == target_cents]
 
                             if not matches.empty:
                                 matches = matches.sort_values(by=alt_col.astype(str) if alt_col in matches.columns else "__abs_cents__")
-                                first = matches.iloc[0]
+                                last = matches.iloc[-1]  # take the last one
                                 applied_cn = {
-                                    "alt": str(first[alt_col]),
-                                    "cents": -target_cents  # deduct ONCE
+                                    "alt": str(last[alt_col]),
+                                    "cents": -target_cents  # deduct
                                 }
 
                                 if len(matches) > 1:
-                                    # gather extra alt docs for warning
-                                    extra_cn_alts = [str(a) for a in matches[alt_col].astype(str).tolist()[1:]]
+                                    extra_cn_alts = [str(a) for a in matches[alt_col].astype(str).tolist()[:-1]]
 
-                                # append to summary
+                                # Append CN as negative line
                                 cn_row = pd.DataFrame([{
                                     "Alt. Document": f"{applied_cn['alt']} (CN)",
                                     "Invoice Value (cents)": applied_cn["cents"]
                                 }])
                                 summary = pd.concat([summary, cn_row], ignore_index=True)
-                                st.success(f"✅ Applied CN '{applied_cn['alt']}': deducted €{target_cents/100:.2f}.")
+
+                                st.success(f"✅ Applied CN '{applied_cn['alt']}' and deducted €{target_cents/100:.2f}.")
                                 if extra_cn_alts:
-                                    st.warning(f"⚠️ Found {len(extra_cn_alts) + 1} CNs with the same amount. "
-                                               f"Only the first applied. Others: {', '.join(extra_cn_alts)}")
+                                    st.warning(f"⚠️ Found {len(extra_cn_alts)+1} CNs with the same amount — only the LAST one applied. Others: {', '.join(extra_cn_alts)}")
                             else:
                                 st.info("ℹ️ No Credit Note matches the exact difference. No CN applied.")
                         else:
@@ -189,15 +175,14 @@ if uploaded_file:
                 else:
                     st.warning("⚠️ Credit Notes file missing recognizable columns (expected e.g. 'Alt.Document' and 'Amount').")
 
-            # ---------- Final total & presentation ----------
+            # ---------- Final total ----------
             total_value_cents = int(summary["Invoice Value (cents)"].sum())
             total_row = pd.DataFrame([{"Alt. Document": "TOTAL", "Invoice Value (cents)": total_value_cents}])
             summary = pd.concat([summary, total_row], ignore_index=True)
 
-            # Pretty display in euros
             show = summary.copy()
-            show["Invoice Value"] = show["Invoice Value (cents)"].apply(lambda c: f"€{c/100:,.2f}")
-            show = show[["Alt. Document", "Invoice Value"]]
+            show["Invoice Value (€)"] = show["Invoice Value (cents)"].apply(lambda c: f"€{c/100:,.2f}")
+            show = show[["Alt. Document", "Invoice Value (€)"]]
 
             st.divider()
             st.subheader(f"📋 Summary for Payment Code: {pay_code}")
@@ -205,14 +190,13 @@ if uploaded_file:
             st.write(f"**Vendor Email (from Excel):** {email_to}")
             st.dataframe(show)
 
-            # ---------- Create workbook ----------
+            # ---------- Excel Export ----------
             wb = Workbook()
             ws_summary = wb.active
             ws_summary.title = "Summary"
             for r in dataframe_to_rows(show, index=False, header=True):
                 ws_summary.append(r)
 
-            # Hidden metadata
             ws_hidden = wb.create_sheet("HiddenMeta")
             ws_hidden["A1"], ws_hidden["B1"] = "Vendor", vendor_raw
             ws_hidden["A2"], ws_hidden["B2"] = "Vendor Email", email_to
@@ -220,15 +204,15 @@ if uploaded_file:
             ws_hidden["A4"], ws_hidden["B4"] = "Exported At", datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             ws_hidden.sheet_state = "hidden"
 
-            # Save to /exports
             folder_path = os.path.join(os.getcwd(), "exports")
             os.makedirs(folder_path, exist_ok=True)
             file_path = os.path.join(folder_path, f"{norm_vendor(vendor_raw)}_Payment_{pay_code}.xlsx")
             wb.save(file_path)
 
-            # ---------- Email section ----------
+            # ---------- Gmail Section ----------
             st.divider()
             st.subheader("📨 Send Excel by Gmail")
+
             sender_email = st.text_input("Your Gmail address:")
             app_password = st.text_input("Your Gmail App Password:", type="password")
 
@@ -260,10 +244,11 @@ if uploaded_file:
                 except Exception as e:
                     st.error(f"❌ Failed to send email: {e}")
 
-            # ---------- Download section ----------
+            # ---------- Download ----------
             buffer = BytesIO()
             wb.save(buffer)
             buffer.seek(0)
+
             st.download_button(
                 label="💾 Download Excel Summary (with hidden email tab)",
                 data=buffer,
