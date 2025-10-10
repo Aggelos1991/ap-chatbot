@@ -4,10 +4,15 @@ from io import BytesIO
 from openpyxl import Workbook
 from openpyxl.utils.dataframe import dataframe_to_rows
 import os
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email import encoders
 
 # ===== Streamlit config =====
 st.set_page_config(page_title="💼 Vendor Payment Reconciliation Exporter", layout="wide")
-st.title("💼 Vendor Payment Reconciliation — Excel Export Tool")
+st.title("💼 Vendor Payment Reconciliation — Excel Export & Email Tool")
 
 uploaded_file = st.file_uploader("📂 Upload Excel (TEST.xlsx)", type=["xlsx"])
 
@@ -35,7 +40,6 @@ if uploaded_file:
         st.error(f"Missing columns in Excel: {missing}")
         st.stop()
 
-    # --- Filter by Payment Code ---
     pay_code = st.text_input("🔎 Enter Payment Document Code:")
 
     if pay_code:
@@ -60,7 +64,7 @@ if uploaded_file:
             st.write(f"**Email:** {email_to}")
             st.dataframe(summary.style.format({"Invoice Value": "€{:,.2f}".format}))
 
-            # --- Create workbook and hide email sheet ---
+            # --- Create workbook ---
             wb = Workbook()
             ws_summary = wb.active
             ws_summary.title = "Summary"
@@ -72,22 +76,55 @@ if uploaded_file:
             ws_hidden["B1"] = email_to
             ws_hidden.sheet_state = "hidden"
 
-            # --- Save directly to Mac Desktop folder ---
-            folder_path = "/Users/angeloskeramaris/Desktop/Payment Remmitance"
+            # Save temporarily
+            folder_path = os.path.join(os.getcwd(), "exports")
             os.makedirs(folder_path, exist_ok=True)
             file_path = os.path.join(folder_path, f"{vendor}_Payment_{pay_code}.xlsx")
+            wb.save(file_path)
 
-            try:
-                wb.save(file_path)
-                st.success(f"✅ File saved directly to Desktop: {file_path}")
-            except PermissionError:
-                st.error("❌ Permission denied. Run Streamlit locally on your Mac (not on Streamlit Cloud).")
+            st.success(f"✅ File created: {file_path}")
 
-            # --- Optional: still allow manual download ---
+            # --- Send Email ---
+            st.divider()
+            st.subheader("📨 Send Excel by Gmail")
+
+            sender_email = st.text_input("Your Gmail address:")
+            app_password = st.text_input("Your Gmail App Password:", type="password")
+            subject = f"Payment Summary — {vendor}"
+            body = f"Dear {vendor},\n\nPlease find attached the payment summary for code {pay_code}.\n\nKind regards,\nAngelos"
+
+            if st.button("✉️ Send Email"):
+                try:
+                    # Setup message
+                    msg = MIMEMultipart()
+                    msg["From"] = sender_email
+                    msg["To"] = email_to
+                    msg["Subject"] = subject
+                    msg.attach(MIMEText(body, "plain"))
+
+                    # Attach Excel
+                    with open(file_path, "rb") as f:
+                        part = MIMEBase("application", "octet-stream")
+                        part.set_payload(f.read())
+                    encoders.encode_base64(part)
+                    part.add_header("Content-Disposition", f"attachment; filename={os.path.basename(file_path)}")
+                    msg.attach(part)
+
+                    # Send via Gmail SMTP
+                    server = smtplib.SMTP("smtp.gmail.com", 587)
+                    server.starttls()
+                    server.login(sender_email, app_password)
+                    server.send_message(msg)
+                    server.quit()
+
+                    st.success(f"✅ Email sent successfully to {email_to}")
+                except Exception as e:
+                    st.error(f"❌ Failed to send email: {e}")
+
+            # --- Download Button ---
             buffer = BytesIO()
             wb.save(buffer)
             buffer.seek(0)
-
             st.download_button(
                 label="💾 Download Excel Summary",
                 data=buffer,
