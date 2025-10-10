@@ -1,6 +1,8 @@
 import pandas as pd
 import streamlit as st
 from io import BytesIO
+from openpyxl import Workbook
+from openpyxl.utils.dataframe import dataframe_to_rows
 
 # ===== Streamlit config =====
 st.set_page_config(page_title="💼 Vendor Payment Reconciliation Exporter", layout="wide")
@@ -19,7 +21,7 @@ if uploaded_file:
         st.error(f"❌ Error loading Excel: {e}")
         st.stop()
 
-    # --- REQUIRED columns ---
+    # --- Required columns ---
     REQ = [
         "Payment Document Code",
         "Alt. Document",
@@ -32,7 +34,6 @@ if uploaded_file:
         st.error(f"Missing columns in Excel: {missing}")
         st.stop()
 
-    # --- Filter by Payment Code ---
     pay_code = st.text_input("🔎 Enter Payment Document Code:")
 
     if pay_code:
@@ -40,41 +41,52 @@ if uploaded_file:
         if subset.empty:
             st.warning("⚠️ No rows found for this Payment Document Code.")
         else:
-            # Clean and summarize
             subset = subset.copy()
             subset["Invoice Value"] = pd.to_numeric(subset["Invoice Value"], errors="coerce").fillna(0)
             summary = subset.groupby("Alt. Document", as_index=False)["Invoice Value"].sum()
 
-            # Calculate total and append as last row
             total_value = summary["Invoice Value"].sum()
             total_row = pd.DataFrame([{"Alt. Document": "TOTAL", "Invoice Value": total_value}])
             summary = pd.concat([summary, total_row], ignore_index=True)
 
-            # Get vendor details
             vendor = str(subset["Supplier Name"].dropna().iloc[0])
             email_to = str(subset["Supplier's Email"].dropna().iloc[0])
 
-            # Display results
             st.divider()
             st.subheader(f"📋 Summary for Payment Code: {pay_code}")
             st.write(f"**Vendor:** {vendor}")
             st.write(f"**Email:** {email_to}")
             st.dataframe(summary.style.format({"Invoice Value": "€{:,.2f}".format}))
 
-            # --- Save Excel to memory ---
-            buffer = BytesIO()
-            with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-                summary.to_excel(writer, index=False, sheet_name="Summary")
-            buffer.seek(0)
+            # --- Create workbook manually to hide email ---
+            wb = Workbook()
+            ws_summary = wb.active
+            ws_summary.title = "Summary"
 
-            # --- Download button ---
-            filename = f"{vendor}_Payment_{pay_code}.xlsx"
+            for r in dataframe_to_rows(summary, index=False, header=True):
+                ws_summary.append(r)
+
+            # Hidden sheet for Power Automate
+            ws_hidden = wb.create_sheet("HiddenMeta")
+            ws_hidden["A1"] = "Email"
+            ws_hidden["B1"] = email_to
+            ws_hidden.sheet_state = "hidden"
+
+            # Save to OneDrive path
+            one_drive_path = f"/Users/angeloskeramaris/Library/CloudStorage/OneDrive-Personal/Payment Remmitience/{vendor}_Payment_{pay_code}.xlsx"
+            wb.save(one_drive_path)
+
+            st.success(f"✅ File saved to OneDrive:\n{one_drive_path}")
+
+            # Optional: also provide download
+            buffer = BytesIO()
+            wb.save(buffer)
+            buffer.seek(0)
             st.download_button(
                 label="💾 Download Excel Summary",
                 data=buffer,
-                file_name=filename,
+                file_name=f"{vendor}_Payment_{pay_code}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
-            st.success("✅ Ready to download the Excel summary file.")
 else:
     st.info("Upload your Excel file to begin.")
