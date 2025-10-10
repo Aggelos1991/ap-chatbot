@@ -15,7 +15,7 @@ if uploaded_file:
     st.write("### 🧭 Columns found in your Excel:")
     st.dataframe(pd.DataFrame({"Columns": df.columns}))
 
-    # Helper: Find column dynamically
+    # Helper: auto-detect column names
     def find_col(patterns):
         for col in df.columns:
             if any(re.search(p, col, re.IGNORECASE) for p in patterns):
@@ -23,7 +23,7 @@ if uploaded_file:
         return None
 
     # Detect columns
-    col_payment = find_col(["payment", "pay code", "code"])
+    col_payment = find_col(["payment", "pay doc", "payment document", "code"])
     col_alt_doc = find_col(["alternative", "alt doc", "document"])
     col_amount = find_col(["amount", "importe", "value", "total"])
     col_vendor = find_col(["vendor", "supplier", "proveedor"])
@@ -40,21 +40,24 @@ if uploaded_file:
             if subset.empty:
                 st.warning("No records found for this payment code.")
             else:
-                # Summarize invoices by Alternative Document
-                summary = subset.groupby(col_alt_doc, as_index=False)[col_amount].sum()
-                total = summary[col_amount].sum()
                 vendor = subset[col_vendor].iloc[0]
                 email = subset[col_email].iloc[0]
 
-                st.write("### 🧾 Invoices (Alternative Documents) for this payment:")
+                # Build summary pivot table by Payment Document + Alternative Document
+                summary = subset[[col_payment, col_alt_doc, col_amount]]
+                total = summary[col_amount].sum()
+
+                st.write("### 🧾 Invoices (Alternative Documents) for this Payment Code:")
                 st.dataframe(summary)
                 st.write(f"**Vendor:** {vendor}")
                 st.write(f"**Email:** {email}")
                 st.write(f"**Total Payment Amount:** €{total:,.2f}")
 
-                # Build email
-                invoice_lines = "\n".join(
-                    f"- {row[col_alt_doc]}: €{row[col_amount]:,.2f}" for _, row in summary.iterrows()
+                # Email table formatting
+                table_header = "| Payment Doc | Alternative Document | Amount (€) |\n|--------------|---------------------|-------------|\n"
+                invoice_rows = "\n".join(
+                    f"| {row[col_payment]} | {row[col_alt_doc]} | {row[col_amount]:,.2f} |"
+                    for _, row in summary.iterrows()
                 )
 
                 email_body = f"""
@@ -62,9 +65,9 @@ Dear {vendor},
 
 Please find below the invoices corresponding to the payment we made under payment code {payment_code}.
 
-{invoice_lines}
+{table_header}{invoice_rows}
 
-Total amount: €{total:,.2f}
+**Total amount:** €{total:,.2f}
 
 Thank you for your cooperation.
 
@@ -74,7 +77,7 @@ Accounts Payable Department
 Ikos Resorts
 """
 
-                st.text_area("📧 Email draft:", email_body, height=250)
+                st.text_area("📧 Email draft:", email_body, height=350)
 
                 if st.button("📨 Send Email"):
                     os_name = platform.system()
