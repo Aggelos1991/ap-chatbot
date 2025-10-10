@@ -50,6 +50,18 @@ def combine_emails(df):
     )
     return df
 
+# ---- FIX: safe flattener for email series (avoids .sum() on lists) ----
+def _collect_emails(series: pd.Series) -> str:
+    """Given a Series with 'a; b; c' strings, return a '; ' joined unique cleaned list."""
+    if series is None or series.empty:
+        return ""
+    s = series.dropna().astype(str).str.split(";")
+    # flatten safely
+    flat = s.explode().dropna().astype(str).str.strip()
+    # keep valid-looking emails only
+    flat = flat[(flat.str.contains("@")) & (flat.str.len() > 5)]
+    return "; ".join(sorted(flat.unique()))
+
 # ================= MAIN APP =================
 uploaded = st.file_uploader("📦 Upload Excel (.xlsx)", type=["xlsx"])
 
@@ -116,18 +128,18 @@ if uploaded:
                     lambda x: "ES" if any(k in x for k in ["spain", "es", "esp", "españa"]) else "EN"
                 )
 
-                es_emails = "; ".join(sorted({
-                    e.strip() for e in df.loc[df["lang"] == "ES", "combined_emails"].str.split(";").sum() if e.strip()
-                }))
-                en_emails = "; ".join(sorted({
-                    e.strip() for e in df.loc[df["lang"] == "EN", "combined_emails"].str.split(";").sum() if e.strip()
-                }))
+                if "combined_emails" not in df.columns:
+                    st.error("⚠️ No email columns found to combine.")
+                else:
+                    # ---- FIX: use _collect_emails instead of .str.split().sum() ----
+                    es_emails = _collect_emails(df.loc[df["lang"] == "ES", "combined_emails"])
+                    en_emails = _collect_emails(df.loc[df["lang"] == "EN", "combined_emails"])
 
-                st.write(f"📅 Filtered overdue invoices: {len(df)} rows")
-                st.write("🇪🇸 **Spanish vendor emails (copy for Outlook)**")
-                st.code(es_emails or "No Spanish emails found", language="text")
-                st.write("🇬🇧 **English vendor emails (copy for Outlook)**")
-                st.code(en_emails or "No English emails found", language="text")
+                    st.write(f"📅 Filtered overdue invoices: {len(df)} rows")
+                    st.write("🇪🇸 **Spanish vendor emails (copy for Outlook)**")
+                    st.code(es_emails or "No Spanish emails found", language="text")
+                    st.write("🇬🇧 **English vendor emails (copy for Outlook)**")
+                    st.code(en_emails or "No English emails found", language="text")
 
         # ========== 3️⃣ GET ALL EMAILS (GLOBAL) ==========
         elif "give me all spanish and english emails" in prompt.lower():
@@ -139,17 +151,17 @@ if uploaded:
                 lambda x: "ES" if any(k in x for k in ["spain", "es", "esp", "españa"]) else "EN"
             )
 
-            es_emails = "; ".join(sorted({
-                e.strip() for e in df.loc[df["lang"] == "ES", "combined_emails"].str.split(";").sum() if e.strip()
-            }))
-            en_emails = "; ".join(sorted({
-                e.strip() for e in df.loc[df["lang"] == "EN", "combined_emails"].str.split(";").sum() if e.strip()
-            }))
+            if "combined_emails" not in df.columns:
+                st.error("⚠️ No email columns found to combine.")
+            else:
+                # ---- FIX: use _collect_emails instead of .str.split().sum() ----
+                es_emails = _collect_emails(df.loc[df["lang"] == "ES", "combined_emails"])
+                en_emails = _collect_emails(df.loc[df["lang"] == "EN", "combined_emails"])
 
-            st.write("🇪🇸 **All Spanish vendor emails (copy for Outlook)**")
-            st.code(es_emails or "No Spanish emails found", language="text")
-            st.write("🇬🇧 **All English vendor emails (copy for Outlook)**")
-            st.code(en_emails or "No English emails found", language="text")
+                st.write("🇪🇸 **All Spanish vendor emails (copy for Outlook)**")
+                st.code(es_emails or "No Spanish emails found", language="text")
+                st.write("🇬🇧 **All English vendor emails (copy for Outlook)**")
+                st.code(en_emails or "No English emails found", language="text")
 
         # ========== 4️⃣ GET OPEN AMOUNTS EMAILS BY LANGUAGE ==========
         elif "give me the open amounts emails" in prompt.lower():
@@ -161,17 +173,17 @@ if uploaded:
                 lambda x: "ES" if any(k in x for k in ["spain", "es", "esp", "españa"]) else "EN"
             )
 
-            es_emails = "; ".join(sorted({
-                e.strip() for e in df.loc[df["lang"] == "ES", "combined_emails"].str.split(";").sum() if e.strip()
-            }))
-            en_emails = "; ".join(sorted({
-                e.strip() for e in df.loc[df["lang"] == "EN", "combined_emails"].str.split(";").sum() if e.strip()
-            }))
+            if "combined_emails" not in df.columns:
+                st.error("⚠️ No email columns found to combine.")
+            else:
+                # ---- FIX: use _collect_emails instead of .str.split().sum() ----
+                es_emails = _collect_emails(df.loc[df["lang"] == "ES", "combined_emails"])
+                en_emails = _collect_emails(df.loc[df["lang"] == "EN", "combined_emails"])
 
-            st.write("🇪🇸 **Open amounts — Spanish vendor emails**")
-            st.code(es_emails or "No Spanish emails found", language="text")
-            st.write("🇬🇧 **Open amounts — English vendor emails**")
-            st.code(en_emails or "No English emails found", language="text")
+                st.write("🇪🇸 **Open amounts — Spanish vendor emails**")
+                st.code(es_emails or "No Spanish emails found", language="text")
+                st.write("🇬🇧 **Open amounts — English vendor emails**")
+                st.code(en_emails or "No English emails found", language="text")
 
         # ========== 5️⃣ FIND INVALID OR MISSING EMAILS ==========
         elif "find invalid or missing emails" in prompt.lower():
