@@ -26,13 +26,16 @@ def parse_amount(v):
     except:
         return 0.0
 
+
 def find_col(df, names):
+    """Find a column name that loosely matches one of the candidates."""
     for c in df.columns:
         name = c.strip().lower().replace(" ", "").replace(".", "")
         for n in names:
             if n.replace(" ", "").replace(".", "").lower() in name:
                 return c
     return None
+
 
 # ===== Streamlit Config =====
 st.set_page_config(page_title="💼 Vendor Payment Reconciliation", layout="wide")
@@ -104,10 +107,13 @@ if pay_file and cn_file:
             # Find matching CN
             match = cn[cn[cn_val_col].abs().round(2) == abs(diff)]
             if not match.empty:
+                # take ONLY the last match
                 last_cn = match.iloc[-1]
-                cn_no = str(last_cn[cn_alt_col])  # dynamically uses the detected column name
+                cn_no = str(last_cn[cn_alt_col])
                 cn_amt = -abs(last_cn[cn_val_col])
-                cn_rows.append({"Alt. Document": f"{cn_no} (CN)", "Invoice Value": cn_amt})
+                cn_rows = [  # overwrite to ensure only last CN kept
+                    {"Alt. Document": f"{cn_no} (CN)", "Invoice Value": cn_amt}
+                ]
 
     # ---- Add CNs ----
     if cn_rows:
