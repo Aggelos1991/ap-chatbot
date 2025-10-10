@@ -65,9 +65,16 @@ if uploaded_file:
             subset["Invoice Value"] = pd.to_numeric(subset["Invoice Value"], errors="coerce").fillna(0)
             summary = subset.groupby("Alt. Document", as_index=False)["Invoice Value"].sum()
 
+            vendor = str(subset["Supplier Name"].dropna().iloc[0])
+            email_to = str(subset["Supplier's Email"].dropna().iloc[0])
+
+            # Optional: actual payment amount (to pick exactly one CN = difference)
+            st.divider()
+            payment_amount = st.number_input("💶 Actual Payment Amount (optional)", min_value=0.0, step=0.01, format="%.2f")
+
             # === Handle Credit Notes if file uploaded ===
             if credit_df is not None:
-                st.info("🔎 Checking for matching Credit Notes...")
+                st.info("🔎 Checking for Credit Notes...")
 
                 # --- Flexible column mapping for Credit Notes ---
                 alt_col = next(
@@ -82,38 +89,58 @@ if uploaded_file:
                 if alt_col and val_col:
                     credit_df[val_col] = pd.to_numeric(credit_df[val_col], errors="coerce").fillna(0)
 
-                    # Match by Supplier Name for accuracy
+                    # Narrow to same vendor if possible
                     if "Supplier Name" in credit_df.columns:
-                        related_cn = credit_df[credit_df["Supplier Name"].astype(str) == subset["Supplier Name"].iloc[0]]
+                        vendor_cn_df = credit_df[credit_df["Supplier Name"].astype(str) == vendor].copy()
                     else:
-                        related_cn = credit_df.copy()
+                        vendor_cn_df = credit_df.copy()
 
-                    # Exclude already existing Alt. Docs
-                    related_cn = related_cn[~related_cn[alt_col].isin(summary["Alt. Document"])]
+                    # If user provided an actual payment amount, use difference logic to pick ONE CN
+                    total_invoices = float(summary["Invoice Value"].sum())
+                    chosen_cn_added = False
+                    if payment_amount and payment_amount > 0:
+                        diff = round(total_invoices - float(payment_amount), 2)
+                        if abs(diff) > 0.01:
+                            # Match one CN whose absolute value equals the difference
+                            tmp = vendor_cn_df.copy()
+                            tmp["_abs_val"] = tmp[val_col].abs().round(2)
+                            target = round(abs(diff), 2)
+                            matches = tmp[tmp["_abs_val"] == target]
 
-                    if not related_cn.empty:
-                        st.success(f"✅ Found {len(related_cn)} Credit Note(s) for {subset['Supplier Name'].iloc[0]}")
-                        cn_summary = related_cn[[alt_col, val_col]].copy()
-                        cn_summary.columns = ["Alt. Document", "Invoice Value"]
+                            if not matches.empty:
+                                if len(matches) > 1:
+                                    st.warning(f"⚠️ Multiple CNs with the same amount {target:.2f} found. Using the first one.")
+                                cn_row = matches.iloc[0]
+                                cn_alt = str(cn_row[alt_col])
+                                cn_value = -target  # deduct
+                                cn_df = pd.DataFrame([{"Alt. Document": f"{cn_alt} (CN)", "Invoice Value": cn_value}])
+                                summary = pd.concat([summary, cn_df], ignore_index=True)
+                                chosen_cn_added = True
+                                st.success(f"✅ Applied CN '{cn_alt}' for {vendor}: deducted €{target:.2f}.")
+                            else:
+                                st.info("ℹ️ No Credit Note matches the exact difference. No CN applied.")
 
-                        # Make CNs negative (deduction)
-                        cn_summary["Invoice Value"] = cn_summary["Invoice Value"] * -1
-                        cn_summary["Alt. Document"] = cn_summary["Alt. Document"].astype(str) + " (CN)"
-
-                        # Append CNs to summary
-                        summary = pd.concat([summary, cn_summary], ignore_index=True)
-                    else:
-                        st.info("No matching Credit Notes found for this vendor.")
+                    # Fallback: if no payment amount provided (or diff=0), include all vendor CNs grouped by CN doc (deducted)
+                    if not chosen_cn_added and (not payment_amount or payment_amount == 0):
+                        if not vendor_cn_df.empty:
+                            cn_summary = vendor_cn_df[[alt_col, val_col]].copy()
+                            cn_summary.columns = ["Alt. Document", "Invoice Value"]
+                            # Merge duplicates by CN document
+                            cn_summary = cn_summary.groupby("Alt. Document", as_index=False)["Invoice Value"].sum()
+                            # Make negative (deductions)
+                            cn_summary["Invoice Value"] = -cn_summary["Invoice Value"].abs()
+                            cn_summary["Alt. Document"] = cn_summary["Alt. Document"].astype(str) + " (CN)"
+                            summary = pd.concat([summary, cn_summary], ignore_index=True)
+                            st.success(f"✅ Added {len(cn_summary)} CN row(s) for {vendor} (no payment amount provided).")
+                        else:
+                            st.info("No Credit Notes found for this vendor.")
                 else:
                     st.warning("⚠️ Credit Notes file missing recognizable columns (expected something like 'Alt.Document' and 'Amount').")
 
-            # === Total row (includes CN deduction) ===
+            # === Total row (includes CN deduction if any) ===
             total_value = summary["Invoice Value"].sum()
             total_row = pd.DataFrame([{"Alt. Document": "TOTAL", "Invoice Value": total_value}])
             summary = pd.concat([summary, total_row], ignore_index=True)
-
-            vendor = str(subset["Supplier Name"].dropna().iloc[0])
-            email_to = str(subset["Supplier's Email"].dropna().iloc[0])
 
             st.divider()
             st.subheader(f"📋 Summary for Payment Code: {pay_code}")
