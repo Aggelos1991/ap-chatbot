@@ -79,12 +79,12 @@ if uploaded_file:
             ws_hidden["B1"] = email_to
             ws_hidden.sheet_state = "hidden"
 
-            # --- Save directly to Desktop folder ---
-            folder_path = "/Users/angeloskeramaris/Desktop/Payment Remmitance"
+            # --- Save Excel to universal folder (safe everywhere) ---
+            folder_path = os.path.join(os.getcwd(), "Payment Remmitance")
             os.makedirs(folder_path, exist_ok=True)
-            file_path = f"{folder_path}/{vendor}_Payment_{pay_code}.xlsx"
+            file_path = os.path.join(folder_path, f"{vendor}_Payment_{pay_code}.xlsx")
             wb.save(file_path)
-            st.success(f"✅ File saved to Desktop: {file_path}")
+            st.success(f"✅ File saved in: {file_path}")
 
             # --- Download button ---
             buffer = BytesIO()
