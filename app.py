@@ -1,85 +1,56 @@
 import pandas as pd
 import streamlit as st
-import requests
-from msal import PublicClientApplication
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
-# ====================== APP CONFIG ======================
+# ====================== CONFIG ======================
 st.set_page_config(page_title="💬 AP Payment Email Bot", layout="wide")
-st.title("💼 Vendor Payment Reconciliation & Outlook 365 Email Sender")
+st.title("💼 Vendor Payment Reconciliation & Email Sender (Outlook 365 Compatible)")
 
 st.markdown("""
-This app lets you:
-1. Upload your Excel with invoices & payment codes.
-2. Enter a **Payment Code** to see all related invoices.
-3. Review the email preview.
-4. Send the email directly via **Outlook 365 (Microsoft Graph API)**.
+This app:
+1. Reads your Excel file with payment data.
+2. Lets you search by **Payment Code**.
+3. Shows invoice summary.
+4. Sends an email securely via Outlook 365 (no MSAL, no win32).
 """)
 
-# ====================== MICROSOFT AUTH CONFIG ======================
-CLIENT_ID = "YOUR_AZURE_APP_CLIENT_ID"  # Replace with your registered Azure app ID
-TENANT_ID = "common"  # Use 'common' if you want both work/school & personal Microsoft accounts
-AUTHORITY = f"https://login.microsoftonline.com/{TENANT_ID}"
-SCOPES = ["https://graph.microsoft.com/Mail.Send"]
-
-# ====================== LOGIN SECTION ======================
-st.sidebar.header("🔐 Microsoft 365 Login")
-
-if "access_token" not in st.session_state:
-    st.session_state.access_token = None
-
-if st.sidebar.button("Login with Microsoft 365"):
-    app = PublicClientApplication(CLIENT_ID, authority=AUTHORITY)
-    result = app.acquire_token_interactive(scopes=SCOPES)
-    st.session_state.access_token = result.get("access_token")
-    if st.session_state.access_token:
-        st.sidebar.success("✅ Successfully logged in with Microsoft 365")
-    else:
-        st.sidebar.error("❌ Login failed. Please try again.")
-
 # ====================== FILE UPLOAD ======================
-uploaded_file = st.file_uploader("📂 Upload your Excel file (e.g. TEST.xlsx)", type=["xlsx"])
+uploaded_file = st.file_uploader("📂 Upload your Excel file", type=["xlsx"])
 
 if uploaded_file:
-    try:
-        df = pd.read_excel(uploaded_file)
-        df.columns = [str(c).strip() for c in df.columns]   # Clean headers
-        df = df.loc[:, ~df.columns.duplicated()]            # Remove duplicates
-        st.success("✅ Excel file loaded successfully!")
-        st.write("Detected columns:", list(df.columns))
-    except Exception as e:
-        st.error(f"❌ Error reading Excel file: {e}")
-        st.stop()
+    df = pd.read_excel(uploaded_file)
+    df.columns = [str(c).strip() for c in df.columns]
+    df = df.loc[:, ~df.columns.duplicated()]
+    st.success("✅ Excel loaded!")
+    st.write("Detected columns:", list(df.columns))
 
-    # ====================== CHECK REQUIRED COLUMNS ======================
     required_cols = ["Payment_Code", "Invoice_No", "Amount", "Vendor", "Email"]
-    missing_cols = [c for c in required_cols if c not in df.columns]
-    if missing_cols:
-        st.error(f"⚠️ Missing columns in Excel: {missing_cols}")
+    missing = [c for c in required_cols if c not in df.columns]
+    if missing:
+        st.error(f"⚠️ Missing columns: {missing}")
         st.stop()
 
-    # ====================== USER INPUT ======================
+    # ====================== INPUTS ======================
     payment_code = st.text_input("🔎 Enter Payment Code:")
 
     if payment_code:
         subset = df[df["Payment_Code"].astype(str) == str(payment_code)]
-
         if subset.empty:
-            st.warning("⚠️ No invoices found for that payment code.")
+            st.warning("⚠️ No records found for that code.")
         else:
-            # ====================== PIVOT SUMMARY ======================
             summary = subset.groupby("Invoice_No", as_index=False)["Amount"].sum()
             total = summary["Amount"].sum()
             vendor = subset["Vendor"].iloc[0]
             email = subset["Email"].iloc[0]
 
-            st.divider()
-            st.subheader(f"📊 Summary for Payment Code: {payment_code}")
-            st.write(f"**Vendor:** {vendor}")
-            st.write(f"**Email:** {email}")
+            st.subheader(f"📋 Summary for Payment Code: {payment_code}")
             st.dataframe(summary.style.format({"Amount": "€{:,.2f}".format}))
-            st.write(f"**Total Payment Amount:** €{total:,.2f}")
+            st.write(f"**Vendor:** {vendor}")
+            st.write(f"**Vendor Email:** {email}")
+            st.write(f"**Total:** €{total:,.2f}")
 
-            # ====================== EMAIL PREPARATION ======================
             invoice_lines = "\n".join(f"- {row.Invoice_No}: €{row.Amount:,.2f}" for _, row in summary.iterrows())
 
             email_body = f"""
@@ -98,37 +69,37 @@ Angelos Keramaris
 Accounts Payable Department
 Ikos Resorts
 """
-
             st.divider()
             st.subheader("✉️ Email Preview")
             st.text_area("Email Body", email_body.strip(), height=250)
 
-            # ====================== SEND EMAIL BUTTON ======================
-            if st.button("📨 Send Email via Outlook 365"):
-                if not st.session_state.access_token:
-                    st.error("❌ Please log in with Microsoft 365 first.")
-                else:
-                    send_url = "https://graph.microsoft.com/v1.0/me/sendMail"
-                    headers = {
-                        "Authorization": f"Bearer {st.session_state.access_token}",
-                        "Content-Type": "application/json"
-                    }
-                    email_payload = {
-                        "message": {
-                            "subject": f"Payment details — Code {payment_code}",
-                            "body": {"contentType": "Text", "content": email_body},
-                            "toRecipients": [{"emailAddress": {"address": email}}],
-                        },
-                        "saveToSentItems": "true"
-                    }
+            # ====================== EMAIL SETTINGS ======================
+            st.divider()
+            st.subheader("📧 Email Sending Settings")
 
-                    try:
-                        response = requests.post(send_url, headers=headers, json=email_payload)
-                        if response.status_code == 202:
-                            st.success(f"✅ Email successfully sent to {email}")
+            sender_email = st.text_input("Your Outlook email address (e.g. aggelos@ikosresorts.com)")
+            sender_password = st.text_input("Your Outlook App Password (if MFA disabled) or leave blank for manual auth", type="password")
+
+            if st.button("📨 Send Email"):
+                try:
+                    msg = MIMEMultipart()
+                    msg["From"] = sender_email
+                    msg["To"] = email
+                    msg["Subject"] = f"Payment details — Code {payment_code}"
+                    msg.attach(MIMEText(email_body, "plain"))
+
+                    # Send via Outlook SMTP relay
+                    with smtplib.SMTP("smtp.office365.com", 587) as server:
+                        server.starttls()
+                        if sender_password:
+                            server.login(sender_email, sender_password)
                         else:
-                            st.error(f"❌ Email sending failed — {response.text}")
-                    except Exception as e:
-                        st.error(f"❌ Error sending email: {e}")
+                            st.info("If authentication fails, please use an app password or contact IT for SMTP relay access.")
+                        server.send_message(msg)
+
+                    st.success(f"✅ Email sent successfully to {email}")
+                except Exception as e:
+                    st.error(f"❌ Email sending failed: {e}")
+
 else:
-    st.info("📁 Please upload your Excel file to begin.")
+    st.info("Please upload your Excel file to begin.")
