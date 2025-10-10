@@ -92,17 +92,22 @@ if uploaded_file:
                     related_cn = related_cn[~related_cn[alt_col].isin(summary["Alt. Document"])]
 
                     if not related_cn.empty:
-                        st.success(f"✅ Found {len(related_cn)} possible Credit Note(s) for {subset['Supplier Name'].iloc[0]}")
+                        st.success(f"✅ Found {len(related_cn)} Credit Note(s) for {subset['Supplier Name'].iloc[0]}")
                         cn_summary = related_cn[[alt_col, val_col]].copy()
                         cn_summary.columns = ["Alt. Document", "Invoice Value"]
+
+                        # Make CNs negative (deduction)
+                        cn_summary["Invoice Value"] = cn_summary["Invoice Value"] * -1
                         cn_summary["Alt. Document"] = cn_summary["Alt. Document"].astype(str) + " (CN)"
+
+                        # Append CNs to summary
                         summary = pd.concat([summary, cn_summary], ignore_index=True)
                     else:
                         st.info("No matching Credit Notes found for this vendor.")
                 else:
                     st.warning("⚠️ Credit Notes file missing recognizable columns (expected something like 'Alt.Document' and 'Amount').")
 
-            # === Total row ===
+            # === Total row (includes CN deduction) ===
             total_value = summary["Invoice Value"].sum()
             total_row = pd.DataFrame([{"Alt. Document": "TOTAL", "Invoice Value": total_value}])
             summary = pd.concat([summary, total_row], ignore_index=True)
