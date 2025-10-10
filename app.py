@@ -7,128 +7,114 @@ from openpyxl.utils.dataframe import dataframe_to_rows
 import os
 from datetime import datetime
 
-# ===== Helpers =====
+# ===== Helper functions =====
 def parse_amount(v):
-    """Parse European/US style amounts to float."""
+    """Parse numeric strings (EU/US formats) into float."""
     if pd.isna(v):
         return 0.0
     s = str(v).strip()
-    s = re.sub(r'[^\d,.\-]', '', s)
-    if s.count(',') == 1 and s.count('.') == 1:
-        if s.find(',') > s.find('.'):
-            s = s.replace('.', '').replace(',', '.')
+    s = re.sub(r"[^\d,.\-]", "", s)
+    if s.count(",") == 1 and s.count(".") == 1:
+        if s.find(",") > s.find("."):
+            s = s.replace(".", "").replace(",", ".")
         else:
-            s = s.replace(',', '')
-    elif s.count(',') == 1:
-        s = s.replace(',', '.')
+            s = s.replace(",", "")
+    elif s.count(",") == 1:
+        s = s.replace(",", ".")
     try:
         return float(s)
     except:
         return 0.0
 
-def find_col(df, names):
-    for c in df.columns:
-        cname = c.strip().replace(" ", "").lower()
-        for n in names:
-            if n.replace(" ", "").lower() in cname:
-                return c
-    return None
 
 # ===== Streamlit Config =====
-st.set_page_config(page_title="💼 Vendor Payment + CN Matcher", layout="wide")
-st.title("💼 Vendor Payment Reconciliation — Auto CN Match by Difference")
+st.set_page_config(page_title="💼 Vendor Payment Reconciliation", layout="wide")
+st.title("💼 Vendor Payment Reconciliation — CN Deduction by Difference")
 
 # ===== Uploads =====
 pay_file = st.file_uploader("📂 Upload Payment Excel", type=["xlsx"])
 cn_file = st.file_uploader("📂 Upload Credit Notes Excel", type=["xlsx"])
 
 if pay_file and cn_file:
-    # --- Load files ---
-    pay = pd.read_excel(pay_file)
-    pay.columns = [c.strip() for c in pay.columns]
-    pay = pay.loc[:, ~pay.columns.duplicated()]
+    try:
+        df = pd.read_excel(pay_file)
+        df.columns = [c.strip() for c in df.columns]
+        df = df.loc[:, ~df.columns.duplicated()]
 
-    cn = pd.read_excel(cn_file)
-    cn.columns = [c.strip() for c in cn.columns]
-    cn = cn.loc[:, ~cn.columns.duplicated()]
+        cn = pd.read_excel(cn_file)
+        cn.columns = [c.strip() for c in cn.columns]
+        cn = cn.loc[:, ~cn.columns.duplicated()]
 
-    st.success("✅ Both files loaded successfully")
+        st.success("✅ Both files loaded successfully")
+    except Exception as e:
+        st.error(f"❌ Error loading Excel: {e}")
+        st.stop()
 
-    # --- Required columns in payment file ---
-    req_cols = ["Payment Document Code", "Alt. Document", "Invoice Value", "Supplier Name", "Supplier's Email"]
-    missing = [c for c in req_cols if c not in pay.columns]
+    # ---- Required columns in Payment file ----
+    req = ["Payment Document Code", "Alt. Document", "Invoice Value", "Payment Value", "Supplier Name", "Supplier's Email"]
+    missing = [c for c in req if c not in df.columns]
     if missing:
-        st.error(f"Missing columns in Payment Excel: {missing}")
+        st.error(f"❌ Missing columns in Payment Excel: {missing}")
         st.stop()
 
     pay_code = st.text_input("🔎 Enter Payment Document Code:")
     if not pay_code:
         st.stop()
 
-    subset = pay[pay["Payment Document Code"].astype(str) == str(pay_code)].copy()
+    subset = df[df["Payment Document Code"].astype(str) == str(pay_code)].copy()
     if subset.empty:
         st.warning("⚠️ No rows found for this Payment Document Code.")
         st.stop()
 
-    # --- Detect columns ---
-    pay_val_col = find_col(pay, ["Payment Value", "Paid Amount", "Amount Paid", "Payment"])
-    inv_val_col = "Invoice Value"
-    cn_alt_col = find_col(cn, ["Alt.Document", "Alt. Document", "Document", "CN Number"])
-    cn_val_col = find_col(cn, ["Amount", "Invoice Value", "Value"])
-
-    if not pay_val_col or not cn_alt_col or not cn_val_col:
-        st.error("⚠️ Missing required columns (Payment Value or CN columns).")
-        st.stop()
-
-    # --- Clean data ---
-    subset[pay_val_col] = subset[pay_val_col].apply(parse_amount)
-    subset[inv_val_col] = subset[inv_val_col].apply(parse_amount)
-    cn[cn_val_col] = cn[cn_val_col].apply(parse_amount)
+    # ---- Parse numeric columns ----
+    subset["Invoice Value"] = subset["Invoice Value"].apply(parse_amount)
+    subset["Payment Value"] = subset["Payment Value"].apply(parse_amount)
+    cn["Amount"] = cn["Amount"].apply(parse_amount)
 
     vendor = subset["Supplier Name"].iloc[0]
     email = subset["Supplier's Email"].iloc[0]
 
-    # --- Start summary table ---
-    summary = subset[["Alt. Document", inv_val_col]].copy()
+    # ---- Base summary ----
+    summary = subset[["Alt. Document", "Invoice Value"]].copy()
 
-    cn_lines = []
+    cn_rows = []
 
-    # --- Main logic: detect difference per line ---
+    # ---- Logic: Payment vs Invoice difference ----
     for _, row in subset.iterrows():
-        payment_val = row[pay_val_col]
-        invoice_val = row[inv_val_col]
+        payment_val = row["Payment Value"]
+        invoice_val = row["Invoice Value"]
         diff = round(payment_val - invoice_val, 2)
 
         if abs(diff) > 0.01:
-            # Find CN with matching value
-            match = cn[cn[cn_val_col].abs().round(2) == abs(diff)]
+            # Find matching CN in CN Excel
+            match = cn[cn["Amount"].abs().round(2) == abs(diff)]
             if not match.empty:
-                last = match.iloc[-1]
-                cn_no = str(last[cn_alt_col])
-                cn_amt = -abs(last[cn_val_col])  # Deduct
-                cn_lines.append({"Alt. Document": f"{cn_no} (CN)", inv_val_col: cn_amt})
+                last_cn = match.iloc[-1]
+                cn_no = str(last_cn["Alt.Document"])
+                cn_amt = -abs(last_cn["Amount"])
+                cn_rows.append({"Alt. Document": f"{cn_no} (CN)", "Invoice Value": cn_amt})
 
-    # --- Add CN lines ---
-    if cn_lines:
-        cn_df = pd.DataFrame(cn_lines)
-        summary = pd.concat([summary, cn_df], ignore_index=True)
+    # ---- Add CNs ----
+    if cn_rows:
+        summary = pd.concat([summary, pd.DataFrame(cn_rows)], ignore_index=True)
 
-    # --- Total line ---
-    total_value = summary[inv_val_col].sum()
-    total_row = pd.DataFrame([{"Alt. Document": "TOTAL", inv_val_col: total_value}])
+    # ---- Add total ----
+    total_val = summary["Invoice Value"].sum()
+    total_row = pd.DataFrame([{"Alt. Document": "TOTAL", "Invoice Value": total_val}])
     summary = pd.concat([summary, total_row], ignore_index=True)
 
-    # --- Format for display ---
-    summary["Invoice Value (€)"] = summary[inv_val_col].apply(lambda v: f"€{v:,.2f}")
+    # ---- Format ----
+    summary["Invoice Value (€)"] = summary["Invoice Value"].apply(lambda v: f"€{v:,.2f}")
     summary = summary[["Alt. Document", "Invoice Value (€)"]]
 
+    # ---- Display ----
     st.divider()
     st.subheader(f"📋 Summary for Payment Code: {pay_code}")
     st.write(f"**Vendor:** {vendor}")
     st.write(f"**Vendor Email:** {email}")
     st.dataframe(summary)
 
-    # --- Export Excel ---
+    # ---- Export Excel ----
     wb = Workbook()
     ws = wb.active
     ws.title = "Summary"
@@ -144,8 +130,8 @@ if pay_file and cn_file:
 
     folder = os.path.join(os.getcwd(), "exports")
     os.makedirs(folder, exist_ok=True)
-    path = os.path.join(folder, f"{vendor}_Payment_{pay_code}.xlsx")
-    wb.save(path)
+    file_path = os.path.join(folder, f"{vendor}_Payment_{pay_code}.xlsx")
+    wb.save(file_path)
 
     buffer = BytesIO()
     wb.save(buffer)
