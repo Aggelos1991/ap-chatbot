@@ -77,7 +77,7 @@ if uploaded_file:
             ws_hidden["A1"], ws_hidden["B1"] = "Vendor", vendor
             ws_hidden["A2"], ws_hidden["B2"] = "Vendor Email", email_to
             ws_hidden["A3"], ws_hidden["B3"] = "Payment Code", pay_code
-            ws_hidden["A4"], ws_hidden["B4"] = "Exported At", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            ws_hidden["A4"], ws_hidden["B4"] = "Exported At", datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             ws_hidden.sheet_state = "hidden"
 
             # Prepare temp folder
