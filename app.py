@@ -15,7 +15,20 @@ from datetime import datetime
 st.set_page_config(page_title="💼 Vendor Payment Reconciliation Exporter", layout="wide")
 st.title("💼 Vendor Payment Reconciliation — Excel Export & Email Tool")
 
-uploaded_file = st.file_uploader("📂 Upload Excel (TEST.xlsx)", type=["xlsx"])
+# --- FILE UPLOADS ---
+uploaded_file = st.file_uploader("📂 Upload Payment Excel (TEST.xlsx)", type=["xlsx"])
+credit_file = st.file_uploader("📂 Optional: Upload Credit Notes Excel", type=["xlsx"])
+
+credit_df = None
+if credit_file:
+    try:
+        credit_df = pd.read_excel(credit_file)
+        credit_df.columns = [str(c).strip() for c in credit_df.columns]
+        credit_df = credit_df.loc[:, ~credit_df.columns.duplicated()]
+        st.success("✅ Credit Notes file loaded successfully")
+        st.write("Credit Notes Columns detected:", list(credit_df.columns))
+    except Exception as e:
+        st.error(f"❌ Error loading Credit Notes Excel: {e}")
 
 if uploaded_file:
     try:
@@ -52,6 +65,33 @@ if uploaded_file:
             subset["Invoice Value"] = pd.to_numeric(subset["Invoice Value"], errors="coerce").fillna(0)
             summary = subset.groupby("Alt. Document", as_index=False)["Invoice Value"].sum()
 
+            # === Handle Credit Notes if file uploaded ===
+            if credit_df is not None:
+                st.info("🔎 Checking for matching Credit Notes...")
+
+                if "Alt. Document" in credit_df.columns and "Invoice Value" in credit_df.columns:
+                    credit_df["Invoice Value"] = pd.to_numeric(credit_df["Invoice Value"], errors="coerce").fillna(0)
+
+                    # Match by Supplier Name for accuracy
+                    if "Supplier Name" in credit_df.columns:
+                        related_cn = credit_df[credit_df["Supplier Name"].astype(str) == subset["Supplier Name"].iloc[0]]
+                    else:
+                        related_cn = credit_df.copy()
+
+                    # Exclude already existing Alt. Docs
+                    related_cn = related_cn[~related_cn["Alt. Document"].isin(summary["Alt. Document"])]
+
+                    if not related_cn.empty:
+                        st.success(f"✅ Found {len(related_cn)} possible Credit Note(s) for {subset['Supplier Name'].iloc[0]}")
+                        cn_summary = related_cn[["Alt. Document", "Invoice Value"]].copy()
+                        cn_summary["Alt. Document"] = cn_summary["Alt. Document"].astype(str) + " (CN)"
+                        summary = pd.concat([summary, cn_summary], ignore_index=True)
+                    else:
+                        st.info("No matching Credit Notes found for this vendor.")
+                else:
+                    st.warning("⚠️ Credit Notes file missing required columns ('Alt. Document', 'Invoice Value').")
+
+            # === Total row ===
             total_value = summary["Invoice Value"].sum()
             total_row = pd.DataFrame([{"Alt. Document": "TOTAL", "Invoice Value": total_value}])
             summary = pd.concat([summary, total_row], ignore_index=True)
@@ -65,7 +105,7 @@ if uploaded_file:
             st.write(f"**Vendor Email (from Excel):** {email_to}")
             st.dataframe(summary.style.format({"Invoice Value": "€{:,.2f}".format}))
 
-            # --- Create workbook (ALWAYS AVAILABLE) ---
+            # --- Create workbook ---
             wb = Workbook()
             ws_summary = wb.active
             ws_summary.title = "Summary"
