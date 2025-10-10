@@ -13,22 +13,23 @@ if uploaded_file:
     df = pd.read_excel(uploaded_file)
     df.columns = [str(c).strip() for c in df.columns]
     df = df.loc[:, ~df.columns.duplicated()]
-    
+
     st.success("✅ Excel file loaded successfully!")
     st.write("### 🧭 Columns detected in your Excel:")
     st.dataframe(pd.DataFrame(df.columns, columns=["Columns"]))
 
-    required_cols = [
-        "Payment Document Code",
-        "Alt Document",
-        "Invoice Value",
-        "Supplier Name",
-        "Supplier's Email"
-    ]
+    # === Correct column mapping based on your file ===
+    col_map = {
+        "Payment Document Code": None,
+        "Alt.Document": None,
+        "Invoice Value": None,
+        "Supplier Name": None,
+        "Supplier's Email": None
+    }
 
-    missing = [c for c in required_cols if c not in df.columns]
-    if missing:
-        st.error(f"❌ Missing columns in your Excel: {missing}")
+    missing_cols = [col for col in col_map if col not in df.columns]
+    if missing_cols:
+        st.error(f"❌ Missing columns in your Excel: {missing_cols}")
         st.stop()
 
     payment_code = st.text_input("🔎 Enter Payment Document Code:")
@@ -38,7 +39,8 @@ if uploaded_file:
         if subset.empty:
             st.warning("⚠️ No records found for this Payment Document Code.")
         else:
-            summary = subset.groupby("Alt Document", as_index=False)["Invoice Value"].sum()
+            # Pivot / summary
+            summary = subset.groupby("Alt.Document", as_index=False)["Invoice Value"].sum()
             total = summary["Invoice Value"].sum()
             vendor = subset["Supplier Name"].iloc[0]
             email = subset["Supplier's Email"].iloc[0]
@@ -50,7 +52,7 @@ if uploaded_file:
             st.write(f"**Total Amount:** €{total:,.2f}")
 
             invoice_lines = "\n".join(
-                f"- {row['Alt Document']}: €{row['Invoice Value']:,.2f}" for _, row in summary.iterrows()
+                f"- {row['Alt.Document']}: €{row['Invoice Value']:,.2f}" for _, row in summary.iterrows()
             )
 
             email_body = f"""
@@ -73,14 +75,16 @@ Ikos Resorts
             st.text_area("📧 Email draft:", email_body, height=250)
 
             # ==============================
-            # Send Email via SMTP (Outlook)
+            # Email via Outlook (SMTP)
             # ==============================
-            smtp_server = st.text_input("SMTP server (default: smtp.office365.com)", "smtp.office365.com")
-            smtp_port = st.number_input("SMTP port", min_value=1, max_value=9999, value=587)
+            st.write("---")
+            st.write("### ✉️ Email Settings (SMTP for Outlook)")
+            smtp_server = st.text_input("SMTP server", "smtp.office365.com")
+            smtp_port = st.number_input("SMTP port", 1, 9999, 587)
             smtp_user = st.text_input("Your Outlook email address:")
             smtp_pass = st.text_input("Your Outlook password or app password:", type="password")
 
-            if st.button("📨 Send Email via Outlook (SMTP)"):
+            if st.button("📨 Send Email"):
                 try:
                     msg = MIMEMultipart()
                     msg["From"] = smtp_user
