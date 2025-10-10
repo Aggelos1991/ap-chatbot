@@ -1,6 +1,6 @@
-import os
 import pandas as pd
 import streamlit as st
+from io import BytesIO
 
 # ===== Streamlit config =====
 st.set_page_config(page_title="💼 Vendor Payment Reconciliation Exporter", layout="wide")
@@ -61,15 +61,20 @@ if uploaded_file:
             st.write(f"**Email:** {email_to}")
             st.dataframe(summary.style.format({"Invoice Value": "€{:,.2f}".format}))
 
-            # --- Save Excel file to Desktop ---
-            try:
-                desktop_path = os.path.join(os.path.expanduser("~"), "Desktop")
-                output_filename = f"{vendor}_Payment_{pay_code}.xlsx"
-                output_path = os.path.join(desktop_path, output_filename)
-                summary.to_excel(output_path, index=False)
-                st.success(f"✅ File exported to Desktop: {output_filename}")
-                st.write(f"📂 Path: {output_path}")
-            except Exception as e:
-                st.error(f"❌ Error saving Excel: {e}")
+            # --- Save Excel to memory ---
+            buffer = BytesIO()
+            with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+                summary.to_excel(writer, index=False, sheet_name="Summary")
+            buffer.seek(0)
+
+            # --- Download button ---
+            filename = f"{vendor}_Payment_{pay_code}.xlsx"
+            st.download_button(
+                label="💾 Download Excel Summary",
+                data=buffer,
+                file_name=filename,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+            st.success("✅ Ready to download the Excel summary file.")
 else:
     st.info("Upload your Excel file to begin.")
