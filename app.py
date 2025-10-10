@@ -1,6 +1,12 @@
 import pandas as pd
 import streamlit as st
-import win32com.client as win32
+
+# Try importing Outlook client safely
+try:
+    import win32com.client as win32
+    outlook_available = True
+except ModuleNotFoundError:
+    outlook_available = False
 
 st.set_page_config(page_title="💼 Vendor Payment Reconciliation & Email Bot", layout="wide")
 st.title("💼 Vendor Payment Reconciliation & Email Bot")
@@ -11,23 +17,22 @@ st.title("💼 Vendor Payment Reconciliation & Email Bot")
 uploaded_file = st.file_uploader("📂 Upload your Excel file (e.g. TEST.xlsx)", type=["xlsx"])
 
 if uploaded_file:
-    # Load and clean columns
     df = pd.read_excel(uploaded_file)
-    df.columns = [str(c).strip() for c in df.columns]       # Clean whitespace
-    df = df.loc[:, ~df.columns.duplicated()]                # Remove duplicates
+    df.columns = [str(c).strip() for c in df.columns]
+    df = df.loc[:, ~df.columns.duplicated()]
 
     st.success("✅ Excel file loaded successfully!")
     st.write("### 🧭 Columns detected in your Excel:")
     st.dataframe(pd.DataFrame(df.columns, columns=["Columns"]))
 
     # ==============================
-    # STEP 2 — Validate expected columns
+    # STEP 2 — Validate required columns
     # ==============================
     required_cols = ["Payment Code", "Invoice No", "Amount", "Vendor", "Supplier's Email"]
     missing_cols = [col for col in required_cols if col not in df.columns]
 
     if missing_cols:
-        st.error(f"❌ Missing required columns in Excel: {missing_cols}")
+        st.error(f"❌ Missing required columns: {missing_cols}")
         st.stop()
 
     # ==============================
@@ -58,7 +63,10 @@ if uploaded_file:
             # ==============================
             # STEP 5 — Generate Email
             # ==============================
-            invoice_lines = "\n".join(f"- {row['Invoice No']}: €{row['Amount']:,.2f}" for _, row in summary.iterrows())
+            invoice_lines = "\n".join(
+                f"- {row['Invoice No']}: €{row['Amount']:,.2f}" for _, row in summary.iterrows()
+            )
+
             email_body = f"""
 Dear {vendor},
 
@@ -79,27 +87,19 @@ Ikos Resorts
             st.text_area("📧 Email draft:", email_body, height=250)
 
             # ==============================
-            # STEP 6 — Test Outlook Connection
+            # STEP 6 — Send via Outlook (if available)
             # ==============================
-            if st.button("🧠 Test Outlook Connection"):
-                try:
-                    outlook = win32.Dispatch("Outlook.Application")
-                    _ = outlook.GetNamespace("MAPI")
-                    st.success("✅ Outlook is connected successfully!")
-                except Exception as e:
-                    st.error(f"❌ Outlook connection failed: {e}")
-
-            # ==============================
-            # STEP 7 — Send Email via Outlook
-            # ==============================
-            if st.button("📨 Send Email via Outlook"):
-                try:
-                    outlook = win32.Dispatch("Outlook.Application")
-                    mail = outlook.CreateItem(0)
-                    mail.To = email
-                    mail.Subject = f"Payment details — Code {payment_code}"
-                    mail.Body = email_body
-                    mail.Send()
-                    st.success(f"✅ Email successfully sent to {email}")
-                except Exception as e:
-                    st.error(f"❌ Failed to send email. Error: {e}")
+            if not outlook_available:
+                st.error("⚠️ Outlook module (win32com) not found. Please install it with `pip install pywin32`.")
+            else:
+                if st.button("📨 Send Email via Outlook"):
+                    try:
+                        outlook = win32.Dispatch("Outlook.Application")
+                        mail = outlook.CreateItem(0)
+                        mail.To = email
+                        mail.Subject = f"Payment details — Code {payment_code}"
+                        mail.Body = email_body
+                        mail.Send()
+                        st.success(f"✅ Email successfully sent to {email}")
+                    except Exception as e:
+                        st.error(f"❌ Error sending email: {e}")
