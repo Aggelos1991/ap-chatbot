@@ -26,7 +26,6 @@ def parse_amount(value):
     except:
         return None
 
-
 def find_col(df, variants):
     for c in df.columns:
         if any(v.lower().replace(' ', '') in c.lower().replace(' ', '') for v in variants):
@@ -36,7 +35,7 @@ def find_col(df, variants):
 
 # ===== Streamlit Config =====
 st.set_page_config(page_title="💼 Vendor Payment Reconciliation Exporter", layout="wide")
-st.title("💼 Vendor Payment Reconciliation — Auto CN Deduction Tool")
+st.title("💼 Vendor Payment Reconciliation — Auto CN Deduction by Difference")
 
 # ===== File Uploads =====
 uploaded_file = st.file_uploader("📂 Upload Payment Excel (TEST.xlsx)", type=["xlsx"])
@@ -47,13 +46,12 @@ if uploaded_file and credit_file:
         df = pd.read_excel(uploaded_file)
         df.columns = [c.strip() for c in df.columns]
         df = df.loc[:, ~df.columns.duplicated()]
-        st.success("✅ Payment Excel loaded successfully")
 
         credit_df = pd.read_excel(credit_file)
         credit_df.columns = [c.strip() for c in credit_df.columns]
         credit_df = credit_df.loc[:, ~credit_df.columns.duplicated()]
-        st.success("✅ Credit Notes Excel loaded successfully")
 
+        st.success("✅ Both Excel files loaded successfully")
     except Exception as e:
         st.error(f"❌ Error loading Excel: {e}")
         st.stop()
@@ -84,38 +82,52 @@ if uploaded_file and credit_file:
 
             credit_df[val_col] = credit_df[val_col].apply(parse_amount).fillna(0.0)
 
-            # --- Summary creation ---
-            summary = subset.groupby("Alt. Document", as_index=False)["Invoice Value"].sum()
+            # --- Calculate totals ---
+            grouped = subset.groupby("Alt. Document", as_index=False)["Invoice Value"].sum()
+            total_invoices = grouped["Invoice Value"].sum()
+
+            # Find payment column (if exists)
+            pay_col = find_col(df, ["Payment Value", "Paid Amount", "Amount Paid", "Payment"])
+            if pay_col and df[pay_col].notna().any():
+                total_payment = df.loc[df["Payment Document Code"].astype(str) == str(pay_code), pay_col].apply(parse_amount).sum()
+            else:
+                total_payment = 0
+
+            diff = round(total_payment - total_invoices, 2)
 
             cn_rows = []
 
-            # Loop through each Alt. Document in main file
-            for alt_doc in summary["Alt. Document"]:
-                cn_match = credit_df[credit_df[alt_col].astype(str) == str(alt_doc)]
-                if not cn_match.empty:
-                    # If multiple CNs for same doc, take last one
-                    last_cn = cn_match.iloc[-1]
-                    cn_val = -abs(last_cn[val_col])
-                    cn_rows.append({"Alt. Document": f"{alt_doc} (CN)", "Invoice Value": cn_val})
+            if diff != 0:
+                target = abs(diff)
+                cn_matches = credit_df[credit_df[val_col].abs().round(2) == round(target, 2)]
 
-            # Append CNs to summary
+                if not cn_matches.empty:
+                    # Take last one
+                    cn_last = cn_matches.iloc[-1]
+                    cn_alt = str(cn_last[alt_col])
+                    cn_val = -abs(cn_last[val_col])  # negative deduction
+                    cn_rows.append({"Alt. Document": f"{cn_alt} (CN)", "Invoice Value": cn_val})
+
+            # Merge CNs with invoice table
+            summary = grouped.copy()
             if cn_rows:
                 summary = pd.concat([summary, pd.DataFrame(cn_rows)], ignore_index=True)
 
-            # --- Final total ---
-            total_value = summary["Invoice Value"].sum()
-            total_row = pd.DataFrame([{"Alt. Document": "TOTAL", "Invoice Value": total_value}])
+            # Add total line
+            total_final = summary["Invoice Value"].sum()
+            total_row = pd.DataFrame([{"Alt. Document": "TOTAL", "Invoice Value": total_final}])
             summary = pd.concat([summary, total_row], ignore_index=True)
 
-            # --- Display ---
+            # Format
             summary["Invoice Value"] = summary["Invoice Value"].apply(lambda v: f"€{v:,.2f}")
+
             st.divider()
             st.subheader(f"📋 Summary for Payment Code: {pay_code}")
             st.write(f"**Vendor:** {vendor}")
             st.write(f"**Vendor Email (from Excel):** {email_to}")
             st.dataframe(summary)
 
-            # --- Excel Export ---
+            # Export to Excel
             wb = Workbook()
             ws = wb.active
             ws.title = "Summary"
