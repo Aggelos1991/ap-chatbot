@@ -69,8 +69,18 @@ if uploaded_file:
             if credit_df is not None:
                 st.info("🔎 Checking for matching Credit Notes...")
 
-                if "Alt. Document" in credit_df.columns and "Invoice Value" in credit_df.columns:
-                    credit_df["Invoice Value"] = pd.to_numeric(credit_df["Invoice Value"], errors="coerce").fillna(0)
+                # --- Flexible column mapping for Credit Notes ---
+                alt_col = next(
+                    (c for c in credit_df.columns if c.strip().replace(" ", "").lower() in ["alt.document", "altdocument"]),
+                    None,
+                )
+                val_col = next(
+                    (c for c in credit_df.columns if c.strip().replace(" ", "").lower() in ["invoicevalue", "amount", "value"]),
+                    None,
+                )
+
+                if alt_col and val_col:
+                    credit_df[val_col] = pd.to_numeric(credit_df[val_col], errors="coerce").fillna(0)
 
                     # Match by Supplier Name for accuracy
                     if "Supplier Name" in credit_df.columns:
@@ -79,17 +89,18 @@ if uploaded_file:
                         related_cn = credit_df.copy()
 
                     # Exclude already existing Alt. Docs
-                    related_cn = related_cn[~related_cn["Alt. Document"].isin(summary["Alt. Document"])]
+                    related_cn = related_cn[~related_cn[alt_col].isin(summary["Alt. Document"])]
 
                     if not related_cn.empty:
                         st.success(f"✅ Found {len(related_cn)} possible Credit Note(s) for {subset['Supplier Name'].iloc[0]}")
-                        cn_summary = related_cn[["Alt. Document", "Invoice Value"]].copy()
+                        cn_summary = related_cn[[alt_col, val_col]].copy()
+                        cn_summary.columns = ["Alt. Document", "Invoice Value"]
                         cn_summary["Alt. Document"] = cn_summary["Alt. Document"].astype(str) + " (CN)"
                         summary = pd.concat([summary, cn_summary], ignore_index=True)
                     else:
                         st.info("No matching Credit Notes found for this vendor.")
                 else:
-                    st.warning("⚠️ Credit Notes file missing required columns ('Alt. Document', 'Invoice Value').")
+                    st.warning("⚠️ Credit Notes file missing recognizable columns (expected something like 'Alt.Document' and 'Amount').")
 
             # === Total row ===
             total_value = summary["Invoice Value"].sum()
