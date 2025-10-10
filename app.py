@@ -9,6 +9,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email import encoders
+from datetime import datetime
 
 # ===== Streamlit config =====
 st.set_page_config(page_title="💼 Vendor Payment Reconciliation Exporter", layout="wide")
@@ -64,6 +65,28 @@ if uploaded_file:
             st.write(f"**Vendor Email (from Excel):** {email_to}")
             st.dataframe(summary.style.format({"Invoice Value": "€{:,.2f}".format}))
 
+            # --- Create workbook (ALWAYS AVAILABLE) ---
+            wb = Workbook()
+            ws_summary = wb.active
+            ws_summary.title = "Summary"
+            for r in dataframe_to_rows(summary, index=False, header=True):
+                ws_summary.append(r)
+
+            # Hidden metadata
+            ws_hidden = wb.create_sheet("HiddenMeta")
+            ws_hidden["A1"], ws_hidden["B1"] = "Vendor", vendor
+            ws_hidden["A2"], ws_hidden["B2"] = "Vendor Email", email_to
+            ws_hidden["A3"], ws_hidden["B3"] = "Payment Code", pay_code
+            ws_hidden["A4"], ws_hidden["B4"] = "Exported At", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            ws_hidden.sheet_state = "hidden"
+
+            # Prepare temp folder
+            folder_path = os.path.join(os.getcwd(), "exports")
+            os.makedirs(folder_path, exist_ok=True)
+            file_path = os.path.join(folder_path, f"{vendor}_Payment_{pay_code}.xlsx")
+            wb.save(file_path)
+
+            # === EMAIL SECTION ===
             st.divider()
             st.subheader("📨 Send Excel by Gmail")
 
@@ -73,34 +96,8 @@ if uploaded_file:
             subject = f"Payment Summary — {vendor}"
             body = f"Dear {vendor},\n\nPlease find attached the payment summary for code {pay_code}.\n\nKind regards,\nAngelos"
 
-            if st.button("💾 Generate & Send Excel"):
+            if st.button("✉️ Send Email"):
                 try:
-                    # --- Create workbook ---
-                    wb = Workbook()
-                    ws_summary = wb.active
-                    ws_summary.title = "Summary"
-                    for r in dataframe_to_rows(summary, index=False, header=True):
-                        ws_summary.append(r)
-
-                    # Add hidden sheet for metadata
-                    ws_hidden = wb.create_sheet("HiddenMeta")
-                    ws_hidden["A1"] = "Vendor"
-                    ws_hidden["B1"] = vendor
-                    ws_hidden["A2"] = "Vendor Email"
-                    ws_hidden["B2"] = email_to
-                    ws_hidden["A3"] = "Sender Email"
-                    ws_hidden["B3"] = sender_email
-                    ws_hidden["A4"] = "Payment Code"
-                    ws_hidden["B4"] = pay_code
-                    ws_hidden.sheet_state = "hidden"
-
-                    # Save locally
-                    folder_path = os.path.join(os.getcwd(), "exports")
-                    os.makedirs(folder_path, exist_ok=True)
-                    file_path = os.path.join(folder_path, f"{vendor}_Payment_{pay_code}.xlsx")
-                    wb.save(file_path)
-
-                    # --- Send Email ---
                     msg = MIMEMultipart()
                     msg["From"] = sender_email
                     msg["To"] = email_to
@@ -124,12 +121,13 @@ if uploaded_file:
                 except Exception as e:
                     st.error(f"❌ Failed to send email: {e}")
 
-            # --- Download Button ---
+            # === DOWNLOAD SECTION ===
             buffer = BytesIO()
             wb.save(buffer)
             buffer.seek(0)
+
             st.download_button(
-                label="⬇️ Download Excel Summary (with hidden email tab)",
+                label="💾 Download Excel Summary (with hidden email tab)",
                 data=buffer,
                 file_name=f"{vendor}_Payment_{pay_code}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
