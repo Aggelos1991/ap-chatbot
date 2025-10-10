@@ -1,13 +1,12 @@
 import pandas as pd
 import streamlit as st
-import win32com.client as win32
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 st.set_page_config(page_title="💼 Vendor Payment Reconciliation & Email Bot", layout="wide")
 st.title("💼 Vendor Payment Reconciliation & Email Bot")
 
-# ==============================
-# STEP 1 — Load Excel
-# ==============================
 uploaded_file = st.file_uploader("📂 Upload your Excel file (e.g. TEST.xlsx)", type=["xlsx"])
 
 if uploaded_file:
@@ -19,43 +18,30 @@ if uploaded_file:
     st.write("### 🧭 Columns detected in your Excel:")
     st.dataframe(pd.DataFrame(df.columns, columns=["Columns"]))
 
-    # ==============================
-    # STEP 2 — Validate Columns (based on your file)
-    # ==============================
     required_cols = [
-        "Payment Document Code",  # instead of Payment Code
-        "Alt Document",           # instead of Invoice No
-        "Invoice Value",          # instead of Amount
-        "Supplier Name",          # instead of Vendor
-        "Supplier's Email"        # keep same if exists
+        "Payment Document Code",
+        "Alt Document",
+        "Invoice Value",
+        "Supplier Name",
+        "Supplier's Email"
     ]
 
-    missing_cols = [c for c in required_cols if c not in df.columns]
-    if missing_cols:
-        st.error(f"❌ Missing required columns in Excel: {missing_cols}")
+    missing = [c for c in required_cols if c not in df.columns]
+    if missing:
+        st.error(f"❌ Missing columns in your Excel: {missing}")
         st.stop()
 
-    # ==============================
-    # STEP 3 — Ask for Payment Code
-    # ==============================
     payment_code = st.text_input("🔎 Enter Payment Document Code:")
 
     if payment_code:
         subset = df[df["Payment Document Code"].astype(str).str.strip() == str(payment_code).strip()]
-
         if subset.empty:
             st.warning("⚠️ No records found for this Payment Document Code.")
         else:
-            # ==============================
-            # STEP 4 — Generate Summary
-            # ==============================
             summary = subset.groupby("Alt Document", as_index=False)["Invoice Value"].sum()
             total = summary["Invoice Value"].sum()
             vendor = subset["Supplier Name"].iloc[0]
-
-            # Try to get email from either Supplier's Email or alternative Greek column
-            possible_email_cols = [col for col in df.columns if "email" in col.lower()]
-            email = subset[possible_email_cols[0]].iloc[0] if possible_email_cols else "N/A"
+            email = subset["Supplier's Email"].iloc[0]
 
             st.write("### 🧾 Invoices related to this Payment Document Code:")
             st.dataframe(summary)
@@ -63,9 +49,6 @@ if uploaded_file:
             st.write(f"**Email:** {email}")
             st.write(f"**Total Amount:** €{total:,.2f}")
 
-            # ==============================
-            # STEP 5 — Generate Email
-            # ==============================
             invoice_lines = "\n".join(
                 f"- {row['Alt Document']}: €{row['Invoice Value']:,.2f}" for _, row in summary.iterrows()
             )
@@ -90,16 +73,26 @@ Ikos Resorts
             st.text_area("📧 Email draft:", email_body, height=250)
 
             # ==============================
-            # STEP 6 — Send Email via Outlook
+            # Send Email via SMTP (Outlook)
             # ==============================
-            if st.button("📨 Send Email via Outlook"):
+            smtp_server = st.text_input("SMTP server (default: smtp.office365.com)", "smtp.office365.com")
+            smtp_port = st.number_input("SMTP port", min_value=1, max_value=9999, value=587)
+            smtp_user = st.text_input("Your Outlook email address:")
+            smtp_pass = st.text_input("Your Outlook password or app password:", type="password")
+
+            if st.button("📨 Send Email via Outlook (SMTP)"):
                 try:
-                    outlook = win32.Dispatch("Outlook.Application")
-                    mail = outlook.CreateItem(0)
-                    mail.To = email
-                    mail.Subject = f"Payment details — Document {payment_code}"
-                    mail.Body = email_body
-                    mail.Send()
+                    msg = MIMEMultipart()
+                    msg["From"] = smtp_user
+                    msg["To"] = email
+                    msg["Subject"] = f"Payment details — Document {payment_code}"
+                    msg.attach(MIMEText(email_body, "plain"))
+
+                    with smtplib.SMTP(smtp_server, smtp_port) as server:
+                        server.starttls()
+                        server.login(smtp_user, smtp_pass)
+                        server.send_message(msg)
+
                     st.success(f"✅ Email successfully sent to {email}")
                 except Exception as e:
-                    st.error(f"❌ Failed to send email. Error: {e}")
+                    st.error(f"❌ Failed to send email: {e}")
