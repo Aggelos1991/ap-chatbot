@@ -3,7 +3,9 @@ import streamlit as st
 from io import BytesIO
 from openpyxl import Workbook
 from openpyxl.utils.dataframe import dataframe_to_rows
-import os  # <-- added to handle folder check
+import os
+import tempfile
+import shutil
 
 # ===== Streamlit config =====
 st.set_page_config(page_title="💼 Vendor Payment Reconciliation Exporter", layout="wide")
@@ -78,13 +80,22 @@ if uploaded_file:
             ws_hidden["B1"] = email_to
             ws_hidden.sheet_state = "hidden"
 
-            # --- Save Excel to OneDrive folder (ensure exists) ---
-            folder_path = "/Users/angeloskeramaris/Library/CloudStorage/OneDrive-Personal/Payment Remmitience"
-            os.makedirs(folder_path, exist_ok=True)  # <-- FIXED LINE
-            one_drive_path = f"{folder_path}/{vendor}_Payment_{pay_code}.xlsx"
-            wb.save(one_drive_path)
+            # --- Save locally first ---
+            local_folder = tempfile.gettempdir()
+            local_path = os.path.join(local_folder, f"{vendor}_Payment_{pay_code}.xlsx")
+            wb.save(local_path)
+            st.success(f"✅ File saved locally: {local_path}")
 
-            st.success(f"✅ File saved to OneDrive: {one_drive_path}")
+            # --- Try to copy to OneDrive ---
+            onedrive_path = "/Users/angeloskeramaris/Library/CloudStorage/OneDrive-Personal/Payment Remmitience"
+            if os.path.exists(onedrive_path):
+                try:
+                    shutil.copy(local_path, onedrive_path)
+                    st.success("✅ File also copied to your OneDrive folder.")
+                except PermissionError:
+                    st.warning("⚠️ No permission to write to OneDrive. Run locally on your Mac instead.")
+            else:
+                st.info("ℹ️ OneDrive folder not found — file saved locally only.")
 
             # --- Download button ---
             buffer = BytesIO()
