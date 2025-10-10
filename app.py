@@ -39,8 +39,8 @@ def find_col(df, names):
 
 
 # ===== Streamlit Config =====
-st.set_page_config(page_title="💼 Vendor Payment Reconciliation", layout="wide")
-st.title("💼 Vendor Payment Reconciliation — CN Deduction by Difference")
+st.set_page_config(page_title="💼 The Remitator", layout="wide")
+st.title("💼 The Remitator")
 
 # ===== Uploads =====
 pay_file = st.file_uploader("📂 Upload Payment Excel", type=["xlsx"])
