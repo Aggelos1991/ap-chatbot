@@ -26,7 +26,7 @@ MODEL = "gpt-4o-mini"
 # Streamlit setup
 # =============================================
 st.set_page_config(page_title="📄 Vendor Statement Extractor", layout="wide")
-st.title("📄 Vendor Statement → Excel Extractor (Debit / Credit / Balance Fix)")
+st.title("📄 Vendor Statement → Excel Extractor (Decimal Fix)")
 
 # =============================================
 # Helper functions
@@ -43,12 +43,25 @@ def clean_text(text):
     return " ".join(text.replace("\xa0", " ").replace("€", " EUR").split())
 
 def normalize_number(value):
-    """Normalize Spanish or EU formatted numbers to consistent float-like strings."""
+    """Normalize Spanish/EU formatted numbers like 1.234,56 or 1,234.56 into 1234.56"""
     if not value:
         return ""
-    value = str(value).replace(".", "").replace(",", ".")
-    value = re.sub(r"[^\d.]", "", value)
-    return value
+    s = str(value).strip()
+
+    # Case 1: European format 1.234,56 → 1234.56
+    if re.match(r"^\d{1,3}(\.\d{3})*,\d{2}$", s):
+        s = s.replace(".", "").replace(",", ".")
+    # Case 2: US format 1,234.56 → 1234.56
+    elif re.match(r"^\d{1,3}(,\d{3})*\.\d{2}$", s):
+        s = s.replace(",", "")
+    # Case 3: Simple 150,00 → 150.00
+    elif re.match(r"^\d+,\d{2}$", s):
+        s = s.replace(",", ".")
+    # Case 4: Already normalized or other → clean stray symbols
+    else:
+        s = re.sub(r"[^\d.]", "", s)
+
+    return s
 
 def extract_with_llm(raw_text):
     """Send cleaned text to GPT and return structured JSON with correct columns."""
@@ -140,7 +153,7 @@ if uploaded_pdf:
 
         if data:
             df = pd.DataFrame(data)
-            st.success("✅ Extraction complete (columns corrected)!")
+            st.success("✅ Extraction complete (decimal fix)!")
             st.dataframe(df)
 
             excel_bytes = to_excel_bytes(data)
