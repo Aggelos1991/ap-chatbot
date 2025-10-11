@@ -30,21 +30,22 @@ def normalize_columns(df, source="ven"):
 
 
 # ============================================================
-# Matching Logic
+# Matching Logic (safe & flexible)
 # ============================================================
 def match_invoices(erp_df, ven_df):
     matched = []
     erp_missing = []
-    ven_missing = ven_df.copy()
+    ven_missing = ven_df.copy().reset_index(drop=True)
 
     for _, erp_row in erp_df.iterrows():
         erp_trn = str(erp_row.get("trn_erp", "")).strip()
         erp_invoice = str(erp_row.get("invoice_erp", "")).strip()
         erp_balance = float(erp_row.get("balance_erp", 0))
 
-        # Find vendor in vendor dataframe
-        ven_subset = ven_df[ven_df["trn_ven"] == erp_trn]
+        # Filter vendor rows with same TRN
+        ven_subset = ven_missing[ven_missing["trn_ven"] == erp_trn]
         found = False
+
         for _, ven_row in ven_subset.iterrows():
             ven_invoice = str(ven_row.get("invoice_ven", "")).strip()
             ven_balance = float(ven_row.get("balance_ven", 0))
@@ -67,14 +68,17 @@ def match_invoices(erp_df, ven_df):
                     "Difference": diff,
                     "Status": status
                 })
-                ven_missing = ven_missing.drop(ven_row.name)
+
+                # ✅ Safe removal to avoid KeyError
+                if ven_row.name in ven_missing.index:
+                    ven_missing = ven_missing.drop(index=ven_row.name)
                 found = True
                 break
 
         if not found:
             erp_missing.append(erp_row)
 
-    return pd.DataFrame(matched), pd.DataFrame(erp_missing), ven_missing
+    return pd.DataFrame(matched), pd.DataFrame(erp_missing), ven_missing.reset_index(drop=True)
 
 
 # ============================================================
@@ -87,11 +91,11 @@ if uploaded_erp and uploaded_vendor:
     erp_df = pd.read_excel(uploaded_erp)
     ven_df = pd.read_excel(uploaded_vendor)
 
-    # Normalize column names
+    # Normalize column names for both
     erp_df = normalize_columns(erp_df, source="erp")
     ven_df = normalize_columns(ven_df, source="ven")
 
-    # Check if required columns exist
+    # Check for required columns
     required_cols = ["trn_erp", "invoice_erp", "balance_erp", "vendor_erp", "trn_ven", "invoice_ven", "balance_ven"]
     missing_cols = [c for c in required_cols if c not in erp_df.columns and c not in ven_df.columns]
 
@@ -103,6 +107,9 @@ if uploaded_erp and uploaded_vendor:
 
     st.success("✅ Reconciliation complete!")
 
+    # ===========================
+    # RESULTS DISPLAY
+    # ===========================
     st.subheader("📊 Matched / Differences")
     st.dataframe(matched)
 
@@ -112,7 +119,15 @@ if uploaded_erp and uploaded_vendor:
     st.subheader("❌ In Vendor but Missing in ERP")
     st.dataframe(ven_missing)
 
-    st.download_button("⬇️ Download Matched", matched.to_csv(index=False).encode("utf-8"), "matched.csv", "text/csv")
+    # ===========================
+    # DOWNLOAD
+    # ===========================
+    st.download_button(
+        "⬇️ Download Matched Results",
+        matched.to_csv(index=False).encode("utf-8"),
+        "matched_results.csv",
+        "text/csv"
+    )
 
 else:
     st.info("Please upload both ERP Export and Vendor Statement files to begin.")
