@@ -106,6 +106,11 @@ def match_invoices(erp_df, ven_df):
             v_debit = normalize_number(v_row.get("debit_ven", 0))
             v_credit = normalize_number(v_row.get("credit_ven", 0))
             v_amt = v_credit if "abono" in desc or "credit" in desc else v_debit
+
+            # ✅ Fix: handle credit notes with opposite signs
+            if (e_amt < 0 and v_amt > 0) or (e_amt > 0 and v_amt < 0):
+                v_amt = -v_amt  # flip vendor amount to align with ERP
+
             diff = round(e_amt - v_amt, 2)
             status = "Match" if abs(diff) < 0.05 else "Difference"
 
