@@ -4,7 +4,7 @@ from fuzzywuzzy import fuzz
 import re
 
 st.set_page_config(page_title="⚙️ ReconRaptor", layout="wide")
-st.title("🦖 ReconRaptor — Vendor Reconciliation Intelligence")
+st.title("🦖 ReconRaptor — Vendor Reconciliation (Invoices & Credit Notes Only)")
 
 # ============================================================
 # Helper: Normalize numeric strings (EU/US formats)
@@ -60,6 +60,17 @@ def match_invoices(erp_df, ven_df):
     erp_df = erp_df.reset_index().rename(columns={"index": "_id_erp"})
     ven_df = ven_df.reset_index().rename(columns={"index": "_id_ven"})
 
+    # 🧹 Clean vendor data: drop payments, transfers, etc.
+    skip_words = [
+        "pago", "transferencia", "payment", "paid", "bank",
+        "deposit", "wire", "transf", "πληρωμή"
+    ]
+    ven_df = ven_df[
+        ~ven_df["description_ven"].astype(str).str.lower().apply(
+            lambda x: any(w in x for w in skip_words)
+        )
+    ].reset_index(drop=True)
+
     matched = []
     matched_erp, matched_ven = set(), set()
 
@@ -84,17 +95,13 @@ def match_invoices(erp_df, ven_df):
             d_val = normalize_number(v_row.get("debit_ven", 0))
             c_val = normalize_number(v_row.get("credit_ven", 0))
 
-            # ❌ Skip payments or transfers — only invoices & credit notes matter
-            if any(w in desc for w in ["pago", "transferencia", "payment", "πληρωμή"]):
-                continue
-
             # Vendor debit = invoice, credit = credit note
             if any(w in desc for w in ["abono", "credit"]):
                 v_amt = c_val
             else:
                 v_amt = d_val
 
-            # Flexible invoice match (by last digits or fuzzy)
+            # Flexible invoice match (by last digits or fuzzy ratio)
             if (
                 e_inv[-4:] in v_inv
                 or v_inv[-4:] in e_inv
@@ -118,7 +125,7 @@ def match_invoices(erp_df, ven_df):
                 matched_ven.add(v_id)
                 break
 
-    # ✅ Improved missing logic — avoid double flagging
+    # ✅ Avoid double-flagging
     df_matched = pd.DataFrame(matched)
     matched_invoices = df_matched["ERP Invoice"].unique().tolist()
     matched_vendor_invoices = df_matched["Vendor Invoice"].unique().tolist()
@@ -138,7 +145,7 @@ if uploaded_erp and uploaded_vendor:
     erp_df = normalize_columns(pd.read_excel(uploaded_erp), "erp")
     ven_df = normalize_columns(pd.read_excel(uploaded_vendor), "ven")
 
-    with st.spinner("ReconRaptor is scanning for matches... 🦖"):
+    with st.spinner("ReconRaptor scanning invoices... 🦖"):
         matched, erp_missing, ven_missing = match_invoices(erp_df, ven_df)
 
     total_m = len(matched)
