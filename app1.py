@@ -1,3 +1,7 @@
+# =============================================
+# app.py — Vendor Statement → Excel Extractor
+# =============================================
+
 import os
 import json
 from io import BytesIO
@@ -5,28 +9,30 @@ import fitz  # PyMuPDF
 import pandas as pd
 import streamlit as st
 from openai import OpenAI
+from dotenv import load_dotenv
 
-# ==========================
-# STREAMLIT CONFIG
-# ==========================
+# =============================================
+# 1️⃣  Load environment variables safely
+# =============================================
+load_dotenv()  # Loads your .env file
+api_key = os.getenv("OPENAI_API_KEY")
+
+if not api_key:
+    st.error("❌ No OpenAI API key found. Create a .env file with: OPENAI_API_KEY=your_key_here")
+    st.stop()
+
+client = OpenAI(api_key=api_key)
+MODEL = "gpt-4.1-mini"
+
+# =============================================
+# 2️⃣  Streamlit setup
+# =============================================
 st.set_page_config(page_title="📄 Vendor Statement Extractor", layout="wide")
 st.title("📄 Vendor Statement → Excel Extractor (Spanish PDFs)")
 
-# ==========================
-# LOAD OPENAI API KEY SAFELY
-# ==========================
-API_KEY = os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY")
-
-if not API_KEY:
-    st.error("❌ OpenAI API key not found. Please set it as an environment variable or in Streamlit Secrets.")
-    st.stop()
-
-client = OpenAI(api_key=API_KEY)
-MODEL = "gpt-4.1-mini"
-
-# ==========================
-# HELPER FUNCTIONS
-# ==========================
+# =============================================
+# 3️⃣  Helper functions
+# =============================================
 def extract_text_from_pdf(file):
     """Extract text from all PDF pages."""
     text = ""
@@ -35,11 +41,13 @@ def extract_text_from_pdf(file):
             text += page.get_text("text") + "\n"
     return text
 
+
 def clean_text(text):
-    """Normalize spaces and symbols."""
+    """Normalize spaces and currency symbols."""
     text = text.replace("\xa0", " ").replace("€", " EUR")
     text = " ".join(text.split())
     return text
+
 
 def extract_with_llm(raw_text):
     """Send text to GPT and return structured JSON."""
@@ -62,22 +70,23 @@ def extract_with_llm(raw_text):
     try:
         data = json.loads(content)
     except Exception:
-        # Fallback in case GPT adds extra markdown fences
         content = content.split("```")[-1]
         data = json.loads(content)
     return data
 
+
 def to_excel_bytes(records):
-    """Return Excel file in memory."""
+    """Return Excel file as bytes."""
     df = pd.DataFrame(records)
     output = BytesIO()
     df.to_excel(output, index=False)
     output.seek(0)
     return output
 
-# ==========================
-# STREAMLIT INTERFACE
-# ==========================
+
+# =============================================
+# 4️⃣  Streamlit UI
+# =============================================
 uploaded_pdf = st.file_uploader("📂 Upload a vendor statement (PDF)", type=["pdf"])
 
 if uploaded_pdf:
