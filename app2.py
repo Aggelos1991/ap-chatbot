@@ -184,23 +184,29 @@ if uploaded_erp and uploaded_vendor:
     st.subheader("❌ Missing in Vendor")
     st.dataframe(ven_missing.style.applymap(lambda _: "background-color: #c62828; color: white"))
 
-    # ✅ Combine all results for CSV export
-    matched["Category"] = "Matched/Differences"
-    erp_missing["Category"] = "Missing in ERP"
-    ven_missing["Category"] = "Missing in Vendor"
-
-    common_cols = list(set(matched.columns) | set(erp_missing.columns) | set(ven_missing.columns))
-    matched = matched.reindex(columns=common_cols, fill_value="")
-    erp_missing = erp_missing.reindex(columns=common_cols, fill_value="")
-    ven_missing = ven_missing.reindex(columns=common_cols, fill_value="")
-
-    full_export = pd.concat([matched, erp_missing, ven_missing], ignore_index=True)
-
+    # ==========================
+    # 🔽 Separate CSV downloads (as requested)
+    # ==========================
     st.download_button(
-        "⬇️ Download Full Reconciliation CSV",
-        full_export.to_csv(index=False).encode("utf-8"),
-        "ReconRaptor_Full_Reconciliation.csv",
+        "⬇️ Download Matched/Differences CSV",
+        matched.to_csv(index=False).encode("utf-8"),
+        "ReconRaptor_Matched.csv",
         "text/csv"
     )
+
+    st.download_button(
+        "⬇️ Download Missing in ERP CSV",
+        erp_missing.to_csv(index=False).encode("utf-8"),
+        "ReconRaptor_Missing_in_ERP.csv",
+        "text/csv"
+    )
+
+    st.download_button(
+        "⬇️ Download Missing in Vendor CSV",
+        ven_missing.to_csv(index=False).encode("utf-8"),
+        "ReconRaptor_Missing_in_Vendor.csv",
+        "text/csv"
+    )
+
 else:
     st.info("🦖 Please upload both ERP and Vendor Statement files to begin.")
