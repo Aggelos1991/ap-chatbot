@@ -1,136 +1,117 @@
-def match_invoices(erp_df, ven_df):
-    import re
-    from fuzzywuzzy import fuzz
+import streamlit as st
+import pandas as pd
+from fuzzywuzzy import fuzz
+import re
 
-    # === Safe reset of indexes ===
-    erp_df = erp_df.reset_index(drop=True).reset_index().rename(columns={"index": "_id_erp"})
-    ven_df = ven_df.reset_index(drop=True).reset_index().rename(columns={"index": "_id_ven"})
+# === APP SETUP ===
+st.set_page_config(page_title="🦖 ReconRaptor", layout="wide")
+st.title("🦖 ReconRaptor")
 
-    # === Guard: must have columns ===
-    for df, name in [(erp_df, "ERP"), (ven_df, "Vendor")]:
-        if not any("invoice" in c.lower() for c in df.columns):
-            st.error(f"❌ Missing invoice column in {name} file")
-            return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+st.markdown("""
+Upload both your **ERP Export** and **Vendor Statement** Excel files below.  
+ReconRaptor will automatically match invoices and credit notes by TRN and amount.
+""")
 
-    # === Step 1: Identify TRN to reconcile ===
-    selected_trn = None
-    if "trn_ven" in ven_df.columns and not ven_df["trn_ven"].dropna().empty:
-        selected_trn = str(ven_df["trn_ven"].dropna().iloc[0]).strip()
+# === FILE UPLOADS ===
+uploaded_erp = st.file_uploader("📂 Upload ERP Export", type=["xlsx"])
+uploaded_vendor = st.file_uploader("📂 Upload Vendor Statement", type=["xlsx"])
 
-    if selected_trn:
-        erp_df = erp_df[erp_df.get("trn_erp", "").astype(str).str.strip() == selected_trn]
-        ven_df = ven_df[ven_df.get("trn_ven", "").astype(str).str.strip() == selected_trn]
-    else:
-        st.warning("⚠️ No TRN detected — reconciling entire dataset.")
-
-    # === Step 2: Ignore payments ===
-    skip_words = ["pago", "transferencia", "payment", "paid", "bank", "deposit", "wire", "transf", "πληρωμή"]
-    if "description_ven" in ven_df.columns:
-        ven_df = ven_df[
-            ~ven_df["description_ven"].astype(str).str.lower().apply(
-                lambda x: any(w in x for w in skip_words)
-            )
-        ].reset_index(drop=True)
-
-    # === Step 3: Helpers ===
-    def normalize_number(v):
-        if pd.isna(v):
-            return 0.0
-        s = re.sub(r"[^\d,.\-]", "", str(v))
-        if "," in s and "." in s:
-            if s.rfind(",") > s.rfind("."):
-                s = s.replace(".", "").replace(",", ".")
-            else:
-                s = s.replace(",", "")
-        elif "," in s:
-            s = s.replace(",", ".")
-        try:
-            return float(s)
-        except:
-            return 0.0
-
-    def is_cn_vendor(row):
-        desc = str(row.get("description_ven", "")).lower()
-        return "abono" in desc or "credit" in desc or normalize_number(row.get("credit_ven", 0)) > 0
-
-    def is_cn_erp(row):
-        amt = normalize_number(row.get("amount_erp", row.get("credit_erp", 0)))
-        return amt < 0
-
-    def vendor_amount(row):
-        if is_cn_vendor(row):
-            return abs(normalize_number(row.get("credit_ven", 0)))
-        return abs(normalize_number(row.get("debit_ven", 0)))
-
-    def erp_amount(row):
-        return abs(normalize_number(row.get("amount_erp", row.get("credit_erp", 0))))
-
-    def last_digits(s, k=6):
-        s = "".join(re.findall(r"\d+", str(s)))
-        return s[-k:] if s else ""
-
-    def invoice_match(a, b):
-        ta, tb = last_digits(a), last_digits(b)
-        if ta and tb:
-            for n in (6, 5, 4, 3):
-                if ta[-n:] == tb[-n:]:
-                    return True
-        return fuzz.ratio(str(a), str(b)) >= 90
-
-    # === Step 4: Separate invoice / CN pools ===
+# === SAFE READER ===
+def safe_read(file, label):
     try:
-        erp_inv = erp_df[~erp_df.apply(is_cn_erp, axis=1)].copy()
-        erp_cn = erp_df[erp_df.apply(is_cn_erp, axis=1)].copy()
-        ven_inv = ven_df[~ven_df.apply(is_cn_vendor, axis=1)].copy()
-        ven_cn = ven_df[ven_df.apply(is_cn_vendor, axis=1)].copy()
-    except Exception:
-        st.error("❌ Error while classifying CN vs Invoice. Check file columns.")
-        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+        df = pd.read_excel(file)
+        st.success(f"✅ {label} file loaded ({len(df)} rows)")
+        st.write(df.head())
+        return df
+    except Exception as e:
+        st.error(f"❌ Failed to read {label} file: {e}")
+        return pd.DataFrame()
 
-    # === Step 5: Matching logic ===
-    def perform_match(erp_pool, ven_pool, trn):
+# === HELPER FUNCTIONS ===
+def normalize_number(value):
+    if pd.isna(value):
+        return 0.0
+    s = re.sub(r"[^\d,.\-]", "", str(value))
+    if "," in s and "." in s:
+        if s.rfind(",") > s.rfind("."):
+            s = s.replace(".", "").replace(",", ".")
+        else:
+            s = s.replace(",", "")
+    elif "," in s:
+        s = s.replace(",", ".")
+    try:
+        return float(s)
+    except:
+        return 0.0
+
+# === MATCHING FUNCTION ===
+def match_invoices(erp_df, ven_df):
+    try:
+        # Reset
+        erp_df = erp_df.reset_index().rename(columns={"index": "_id_erp"})
+        ven_df = ven_df.reset_index().rename(columns={"index": "_id_ven"})
+
+        # Guess TRN if present
+        selected_trn = None
+        if "trn_ven" in ven_df.columns and not ven_df["trn_ven"].dropna().empty:
+            selected_trn = str(ven_df["trn_ven"].dropna().iloc[0]).strip()
+
+        # Filter ERP by same TRN
+        if selected_trn and "trn_erp" in erp_df.columns:
+            erp_df = erp_df[erp_df["trn_erp"].astype(str).str.strip() == selected_trn]
+
+        # Simple match logic
         matches = []
-        used_e, used_v = set(), set()
-
-        for _, e in erp_pool.iterrows():
-            e_id, e_inv = e["_id_erp"], str(e.get("invoice_erp", "")).strip()
-            e_amt = erp_amount(e)
-
-            for _, v in ven_pool.iterrows():
-                v_id, v_inv = v["_id_ven"], str(v.get("invoice_ven", "")).strip()
-                v_amt = vendor_amount(v)
-                if invoice_match(e_inv, v_inv):
+        for _, e in erp_df.iterrows():
+            e_inv = str(e.get("invoice_erp", "")).strip()
+            e_amt = normalize_number(e.get("amount_erp", 0))
+            for _, v in ven_df.iterrows():
+                v_inv = str(v.get("invoice_ven", "")).strip()
+                v_amt = normalize_number(v.get("debit_ven", 0) or v.get("credit_ven", 0))
+                if e_inv[-5:] in v_inv or fuzz.ratio(e_inv, v_inv) > 85:
                     diff = round(e_amt - v_amt, 2)
                     matches.append({
-                        "Vendor/Supplier": e.get("vendor_erp", ""),
-                        "TRN/AFM": trn or "N/A",
                         "ERP Invoice": e_inv,
                         "Vendor Invoice": v_inv,
                         "ERP Amount": e_amt,
                         "Vendor Amount": v_amt,
                         "Difference": diff,
-                        "Status": "Match" if abs(diff) <= 0.01 else "Difference",
-                        "Description": str(v.get("description_ven", "")),
+                        "Status": "Match" if abs(diff) < 0.05 else "Difference"
                     })
-                    used_e.add(e_id)
-                    used_v.add(v_id)
                     break
 
-        matched_erp = erp_pool.loc[erp_pool["_id_erp"].isin(used_e)]
-        matched_ven = ven_pool.loc[ven_pool["_id_ven"].isin(used_v)]
-        return matches, matched_erp, matched_ven
+        matched_df = pd.DataFrame(matches)
+        matched_invoices = matched_df["ERP Invoice"].tolist()
+        erp_missing = erp_df[~erp_df["invoice_erp"].astype(str).isin(matched_invoices)]
+        ven_missing = ven_df[~ven_df["invoice_ven"].astype(str).isin(matched_df["Vendor Invoice"].tolist())]
 
-    # === Step 6: Perform reconciliation ===
-    inv_matches, inv_e, inv_v = perform_match(erp_inv, ven_inv, selected_trn)
-    cn_matches, cn_e, cn_v = perform_match(erp_cn, ven_cn, selected_trn)
+        return matched_df, erp_missing, ven_missing
+    except Exception as e:
+        st.error(f"❌ Matching error: {e}")
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-    matched = pd.DataFrame(inv_matches + cn_matches)
+# === RUN LOGIC ===
+if uploaded_erp and uploaded_vendor:
+    erp_df = safe_read(uploaded_erp, "ERP Export")
+    ven_df = safe_read(uploaded_vendor, "Vendor Statement")
 
-    # === Step 7: Identify missing ===
-    erp_used = pd.concat([inv_e, cn_e], ignore_index=True)
-    ven_used = pd.concat([inv_v, cn_v], ignore_index=True)
+    if not erp_df.empty and not ven_df.empty:
+        with st.spinner("Reconciling invoices..."):
+            matched, erp_missing, ven_missing = match_invoices(erp_df, ven_df)
 
-    erp_missing = erp_df[~erp_df["_id_erp"].isin(erp_used["_id_erp"])].reset_index(drop=True)
-    ven_missing = ven_df[~ven_df["_id_ven"].isin(ven_used["_id_ven"])].reset_index(drop=True)
+        if matched.empty and erp_missing.empty and ven_missing.empty:
+            st.warning("⚠️ No matches found. Please check your column names.")
+        else:
+            st.success(f"✅ Recon complete: {len(matched)} matched, {len(erp_missing)} missing in ERP, {len(ven_missing)} missing in Vendor")
 
-    return matched, erp_missing, ven_missing
+            st.subheader("📊 Matched Invoices")
+            st.dataframe(matched, use_container_width=True)
+
+            st.subheader("❌ Missing in ERP")
+            st.dataframe(erp_missing, use_container_width=True)
+
+            st.subheader("❌ Missing in Vendor")
+            st.dataframe(ven_missing, use_container_width=True)
+
+else:
+    st.info("Please upload both Excel files to begin.")
