@@ -3,10 +3,10 @@ import pandas as pd
 import re
 
 # ==========================
-# ReconRaptor setup 🦖
+# 🦖 ReconRaptor setup
 # ==========================
 st.set_page_config(page_title="🦖 ReconRaptor", layout="wide")
-st.title("🦖 ReconRaptor")
+st.title("🦖 ReconRaptor — Vendor Invoice Reconciliation (AP Logic)")
 
 # ==========================
 # Helper functions
@@ -60,7 +60,7 @@ def normalize_invoice_num(s):
 
 
 # ==========================
-# Core reconciliation
+# Core reconciliation logic
 # ==========================
 def match_invoices(erp_df, ven_df):
     matched_rows = []
@@ -141,8 +141,6 @@ def match_invoices(erp_df, ven_df):
     matched = pd.DataFrame(matched_rows)
 
     # ✅ Correct missing logic
-    # → If it's in vendor but not ERP → Missing in ERP
-    # → If it's in ERP but not vendor → Missing in Vendor
     erp_missing = ven_df[~ven_df["__inv"].isin(matched_erp_invoices)].reset_index(drop=True)
     ven_missing = erp_df[~erp_df["__inv"].isin(matched_ven_invoices)].reset_index(drop=True)
 
@@ -186,10 +184,22 @@ if uploaded_erp and uploaded_vendor:
     st.subheader("❌ Missing in Vendor")
     st.dataframe(ven_missing.style.applymap(lambda _: "background-color: #c62828; color: white"))
 
+    # ✅ Combine all results for CSV export
+    matched["Category"] = "Matched/Differences"
+    erp_missing["Category"] = "Missing in ERP"
+    ven_missing["Category"] = "Missing in Vendor"
+
+    common_cols = list(set(matched.columns) | set(erp_missing.columns) | set(ven_missing.columns))
+    matched = matched.reindex(columns=common_cols, fill_value="")
+    erp_missing = erp_missing.reindex(columns=common_cols, fill_value="")
+    ven_missing = ven_missing.reindex(columns=common_cols, fill_value="")
+
+    full_export = pd.concat([matched, erp_missing, ven_missing], ignore_index=True)
+
     st.download_button(
-        "⬇️ Download Matched CSV",
-        matched.to_csv(index=False).encode("utf-8"),
-        "ReconRaptor_Results.csv",
+        "⬇️ Download Full Reconciliation CSV",
+        full_export.to_csv(index=False).encode("utf-8"),
+        "ReconRaptor_Full_Reconciliation.csv",
         "text/csv"
     )
 else:
