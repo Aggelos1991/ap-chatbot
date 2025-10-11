@@ -6,7 +6,7 @@ st.set_page_config(page_title="🤝 Vendor Reconciliation", layout="wide")
 st.title("🧾 Universal Vendor Reconciliation App (AP Accurate)")
 
 # ============================================================
-# Column normalization (EN/ES/GR)
+# Column normalization (multilingual)
 # ============================================================
 def normalize_columns(df, source="ven"):
     colmap = {
@@ -34,41 +34,41 @@ def normalize_columns(df, source="ven"):
 
 
 # ============================================================
-# Matching Logic (Invoices + CN only, accurate AP treatment)
+# Matching Logic (Invoices + CN only, true reconciliation)
 # ============================================================
 def match_invoices(erp_df, ven_df):
-    matched, erp_missing = [], []
-    ven_missing = ven_df.copy().reset_index(drop=True)
+    matched = []
+    matched_erp_indexes = set()
+    matched_ven_indexes = set()
 
-    # Filter ERP to same vendor TRN
+    # Vendor TRN to restrict scope
     vendor_trn = str(ven_df["trn_ven"].iloc[0]) if "trn_ven" in ven_df.columns else None
     if vendor_trn:
         erp_df = erp_df[erp_df["trn_erp"] == vendor_trn]
 
-    for _, erp_row in erp_df.iterrows():
+    for erp_idx, erp_row in erp_df.iterrows():
         erp_trn = str(erp_row.get("trn_erp", "")).strip()
         erp_invoice = str(erp_row.get("invoice_erp", "")).strip()
 
-        # ✅ Use Amount or Credit for invoice value, ignore Balance
+        # ✅ Use Amount or Credit from ERP, ignore Balance
         erp_amount = float(
             erp_row.get("amount_erp", erp_row.get("credit_erp", 0)) or 0
         )
 
-        ven_subset = ven_missing[ven_missing["trn_ven"] == erp_trn]
-        found = False
+        ven_subset = ven_df[ven_df["trn_ven"] == erp_trn]
 
-        for _, ven_row in ven_subset.iterrows():
+        for ven_idx, ven_row in ven_subset.iterrows():
             ven_invoice = str(ven_row.get("invoice_ven", "")).strip()
             desc = str(ven_row.get("description_ven", "")).lower()
 
             debit_val = float(ven_row.get("debit_ven", 0) or 0)
             credit_val = float(ven_row.get("credit_ven", 0) or 0)
 
-            # ✅ Vendor side: invoice = Debit; CN = Credit if "abono"
+            # ✅ Vendor logic: Debit = invoice, Credit = CN (if Abono/Credit), skip payments
             if "abono" in desc or "credit" in desc:
                 ven_amount = credit_val
             elif any(w in desc for w in ["pago", "transferencia", "payment", "πληρωμή"]):
-                continue  # 🚫 Skip payments
+                continue
             else:
                 ven_amount = debit_val
 
@@ -93,15 +93,15 @@ def match_invoices(erp_df, ven_df):
                     "Description": desc
                 })
 
-                if ven_row.name in ven_missing.index:
-                    ven_missing = ven_missing.drop(index=ven_row.name)
-                found = True
-                break
+                matched_erp_indexes.add(erp_idx)
+                matched_ven_indexes.add(ven_idx)
+                break  # Stop searching once a match is found
 
-        if not found:
-            erp_missing.append(erp_row)
+    # --- Build correct "missing" datasets
+    erp_missing = erp_df.loc[~erp_df.index.isin(matched_erp_indexes)].reset_index(drop=True)
+    ven_missing = ven_df.loc[~ven_df.index.isin(matched_ven_indexes)].reset_index(drop=True)
 
-    return pd.DataFrame(matched), pd.DataFrame(erp_missing), ven_missing.reset_index(drop=True)
+    return pd.DataFrame(matched), erp_missing, ven_missing
 
 
 # ============================================================
