@@ -4,10 +4,10 @@ from fuzzywuzzy import fuzz
 import re
 
 st.set_page_config(page_title="🤝 Vendor Reconciliation", layout="wide")
-st.title("🧾 Vendor Reconciliation — Accurate Differences")
+st.title("🧾 Vendor Reconciliation — Color-Coded & Accurate")
 
 # ============================================================
-# Helper: Normalize numbers (EU, US formats)
+# Helper: Normalize numbers
 # ============================================================
 def normalize_number(value):
     if pd.isna(value):
@@ -28,9 +28,8 @@ def normalize_number(value):
     except:
         return 0.0
 
-
 # ============================================================
-# Column mapping — multilingual
+# Column normalization
 # ============================================================
 def normalize_columns(df, source="ven"):
     colmap = {
@@ -41,6 +40,7 @@ def normalize_columns(df, source="ven"):
         "debit": ["debit", "debe", "χρέωση"],
         "credit": ["credit", "haber", "πίστωση"],
         "amount": ["amount", "importe", "valor"],
+        "balance": ["balance", "saldo", "υπόλοιπο"],
     }
 
     rename_map = {}
@@ -52,12 +52,12 @@ def normalize_columns(df, source="ven"):
                 break
     return df.rename(columns=rename_map)
 
-
 # ============================================================
-# Matching Logic — clean version
+# Matching logic with no duplicates
 # ============================================================
 def match_invoices(erp_df, ven_df):
-    matched, matched_erp, matched_ven = [], set(), set()
+    matched = []
+    matched_erp, matched_ven = set(), set()
 
     vendor_trn = str(ven_df["trn_ven"].iloc[0]) if "trn_ven" in ven_df.columns else None
     if vendor_trn:
@@ -70,23 +70,33 @@ def match_invoices(erp_df, ven_df):
 
         ven_subset = ven_df[ven_df["trn_ven"] == e_trn]
         for v_idx, v_row in ven_subset.iterrows():
+            if v_idx in matched_ven:
+                continue  # don't reuse vendor rows
+
             v_inv = str(v_row.get("invoice_ven", "")).strip()
             desc = str(v_row.get("description_ven", "")).lower()
             d_val = normalize_number(v_row.get("debit_ven", 0))
             c_val = normalize_number(v_row.get("credit_ven", 0))
+            bal_val = normalize_number(v_row.get("balance", 0))
 
-            if "pago" in desc or "transferencia" in desc or "payment" in desc:
-                continue  # ignore payments
+            # Vendor logic: debit = invoice, credit = CN, skip payments
+            if any(w in desc for w in ["pago", "transferencia", "payment", "πληρωμή"]):
+                continue
+            elif "abono" in desc or "credit" in desc:
+                v_amt = c_val
+            elif d_val > 0:
+                v_amt = d_val
+            else:
+                v_amt = 0
 
-            v_amt = c_val if ("abono" in desc or "credit" in desc) else d_val
-
-            # flexible matching
             if (
                 e_inv[-4:] in v_inv
                 or v_inv[-4:] in e_inv
-                or fuzz.ratio(e_inv, v_inv) > 75
+                or fuzz.ratio(e_inv, v_inv) > 78
             ):
                 diff = round(e_amt - v_amt, 2)
+                status = "Match" if diff == 0 else "Difference"
+
                 matched.append({
                     "Vendor/Supplier": e_row.get("vendor_erp", ""),
                     "TRN/AFM": e_trn,
@@ -95,20 +105,20 @@ def match_invoices(erp_df, ven_df):
                     "ERP Amount": e_amt,
                     "Vendor Amount": v_amt,
                     "Difference": diff,
-                    "Status": "Match" if diff == 0 else "Difference",
+                    "Status": status,
                     "Description": desc
                 })
                 matched_erp.add(e_idx)
                 matched_ven.add(v_idx)
                 break
 
+    df_matched = pd.DataFrame(matched).drop_duplicates(subset=["ERP Invoice", "Vendor Invoice"])
     erp_missing = erp_df.loc[~erp_df.index.isin(matched_erp)].reset_index(drop=True)
     ven_missing = ven_df.loc[~ven_df.index.isin(matched_ven)].reset_index(drop=True)
-    return pd.DataFrame(matched), erp_missing, ven_missing
-
+    return df_matched, erp_missing, ven_missing
 
 # ============================================================
-# Streamlit Interface
+# Streamlit App
 # ============================================================
 uploaded_erp = st.file_uploader("📂 Upload ERP Export (Excel)", type=["xlsx"])
 uploaded_vendor = st.file_uploader("📂 Upload Vendor Statement (Excel)", type=["xlsx"])
@@ -121,18 +131,30 @@ if uploaded_erp and uploaded_vendor:
         matched, erp_missing, ven_missing = match_invoices(erp_df, ven_df)
 
     st.success("✅ Reconciliation complete!")
+
+    # Highlighting logic
+    def highlight_row(row):
+        if row["Status"] == "Match":
+            return ['background-color: #2e7d32; color: white'] * len(row)
+        elif row["Status"] == "Difference":
+            return ['background-color: #f9a825; color: black'] * len(row)
+        else:
+            return [''] * len(row)
+
     st.subheader("📊 Matched / Differences")
-    st.dataframe(matched)
+    st.dataframe(matched.style.apply(highlight_row, axis=1))
 
     st.subheader("❌ Missing in ERP")
-    st.dataframe(erp_missing)
+    st.dataframe(erp_missing.style.applymap(lambda _: "background-color: #c62828; color: white"))
 
     st.subheader("❌ Missing in Vendor")
-    st.dataframe(ven_missing)
+    st.dataframe(ven_missing.style.applymap(lambda _: "background-color: #c62828; color: white"))
 
-    st.download_button("⬇️ Download Matched CSV",
+    st.download_button(
+        "⬇️ Download Matched CSV",
         matched.to_csv(index=False).encode("utf-8"),
         "matched_results.csv",
-        "text/csv")
+        "text/csv"
+    )
 else:
     st.info("Please upload both ERP Export and Vendor Statement files to begin.")
