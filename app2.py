@@ -4,7 +4,7 @@ from fuzzywuzzy import fuzz
 import re
 
 st.set_page_config(page_title="🤝 Vendor Reconciliation", layout="wide")
-st.title("🧾 Vendor Reconciliation — Final (All Matches Green)")
+st.title("ReconRaptor ⚙️")
 
 # ============================================================
 # Helper: Normalize numeric strings (EU/US formats)
