@@ -1,20 +1,28 @@
+import os
+import json
+from io import BytesIO
 import fitz  # PyMuPDF
 import pandas as pd
-from openai import OpenAI
-import json
 import streamlit as st
-from io import BytesIO
+from openai import OpenAI
 
 # ==========================
-# CONFIGURATION
+# STREAMLIT CONFIG
 # ==========================
-API_KEY = "YOUR_OPENAI_API_KEY"
-MODEL = "gpt-4.1-mini"
-
-client = OpenAI(api_key=API_KEY)
-
 st.set_page_config(page_title="📄 Vendor Statement Extractor", layout="wide")
 st.title("📄 Vendor Statement → Excel Extractor (Spanish PDFs)")
+
+# ==========================
+# LOAD OPENAI API KEY SAFELY
+# ==========================
+API_KEY = os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY")
+
+if not API_KEY:
+    st.error("❌ OpenAI API key not found. Please set it as an environment variable or in Streamlit Secrets.")
+    st.stop()
+
+client = OpenAI(api_key=API_KEY)
+MODEL = "gpt-4.1-mini"
 
 # ==========================
 # HELPER FUNCTIONS
@@ -28,6 +36,7 @@ def extract_text_from_pdf(file):
     return text
 
 def clean_text(text):
+    """Normalize spaces and symbols."""
     text = text.replace("\xa0", " ").replace("€", " EUR")
     text = " ".join(text.split())
     return text
@@ -49,9 +58,11 @@ def extract_with_llm(raw_text):
     """
     response = client.responses.create(model=MODEL, input=prompt)
     content = response.output_text.strip()
+
     try:
         data = json.loads(content)
     except Exception:
+        # Fallback in case GPT adds extra markdown fences
         content = content.split("```")[-1]
         data = json.loads(content)
     return data
@@ -65,7 +76,7 @@ def to_excel_bytes(records):
     return output
 
 # ==========================
-# STREAMLIT UI
+# STREAMLIT INTERFACE
 # ==========================
 uploaded_pdf = st.file_uploader("📂 Upload a vendor statement (PDF)", type=["pdf"])
 
@@ -78,7 +89,11 @@ if uploaded_pdf:
 
     if st.button("🤖 Extract data to Excel"):
         with st.spinner("Analyzing with GPT... please wait..."):
-            data = extract_with_llm(cleaned)
+            try:
+                data = extract_with_llm(cleaned)
+            except Exception as e:
+                st.error(f"⚠️ LLM extraction failed: {e}")
+                st.stop()
 
         if data:
             df = pd.DataFrame(data)
@@ -93,4 +108,4 @@ if uploaded_pdf:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
         else:
-            st.error("⚠️ No structured data found. Try another page or PDF.")
+            st.warning("⚠️ No structured data found. Try another PDF or verify text extraction.")
