@@ -4,7 +4,7 @@ from fuzzywuzzy import fuzz
 import re
 
 st.set_page_config(page_title="🤝 Vendor Reconciliation", layout="wide")
-st.title("🧾 Vendor Reconciliation — Final Version (with Payment Recognition)")
+st.title("🧾 Vendor Reconciliation — Final (All Matches Green)")
 
 # ============================================================
 # Helper: Normalize numeric strings (EU/US formats)
@@ -54,10 +54,9 @@ def normalize_columns(df, source="ven"):
     return df.rename(columns=rename_map)
 
 # ============================================================
-# Core Matching Logic (with informational payment handling)
+# Core Matching Logic
 # ============================================================
 def match_invoices(erp_df, ven_df):
-    # Assign persistent IDs
     erp_df = erp_df.reset_index().rename(columns={"index": "_id_erp"})
     ven_df = ven_df.reset_index().rename(columns={"index": "_id_ven"})
 
@@ -85,25 +84,19 @@ def match_invoices(erp_df, ven_df):
             d_val = normalize_number(v_row.get("debit_ven", 0))
             c_val = normalize_number(v_row.get("credit_ven", 0))
 
-            # Vendor logic
             if any(w in desc for w in ["abono", "credit"]):
                 v_amt = c_val
             else:
                 v_amt = d_val
 
-            # --- Flexible invoice match
+            # Flexible invoice matching
             if (
                 e_inv[-4:] in v_inv
                 or v_inv[-4:] in e_inv
                 or fuzz.ratio(e_inv, v_inv) > 78
             ):
-                # Handle payments as informational
-                if any(w in desc for w in ["pago", "transferencia", "payment", "πληρωμή"]):
-                    status = "Paid / Informational"
-                    diff = 0
-                else:
-                    diff = round(e_amt - v_amt, 2)
-                    status = "Match" if diff == 0 else "Difference"
+                diff = round(e_amt - v_amt, 2)
+                status = "Match" if diff == 0 else "Difference"
 
                 matched.append({
                     "Vendor/Supplier": e_row.get("vendor_erp", ""),
@@ -116,14 +109,17 @@ def match_invoices(erp_df, ven_df):
                     "Status": status,
                     "Description": desc
                 })
-
                 matched_erp.add(e_id)
                 matched_ven.add(v_id)
                 break
 
-    df_matched = pd.DataFrame(matched).drop_duplicates(subset=["ERP Invoice", "Vendor Invoice"])
-    erp_missing = erp_df[~erp_df["_id_erp"].isin(matched_erp)].reset_index(drop=True)
-    ven_missing = ven_df[~ven_df["_id_ven"].isin(matched_ven)].reset_index(drop=True)
+    # ✅ Improved missing logic — avoid double flagging same ERP invoice
+    df_matched = pd.DataFrame(matched)
+    matched_invoices = df_matched["ERP Invoice"].unique().tolist()
+    matched_vendor_invoices = df_matched["Vendor Invoice"].unique().tolist()
+
+    erp_missing = erp_df[~erp_df["invoice_erp"].astype(str).isin(matched_invoices)].reset_index(drop=True)
+    ven_missing = ven_df[~ven_df["invoice_ven"].astype(str).isin(matched_vendor_invoices)].reset_index(drop=True)
 
     return df_matched, erp_missing, ven_missing
 
@@ -140,25 +136,21 @@ if uploaded_erp and uploaded_vendor:
     with st.spinner("Reconciling invoices... please wait"):
         matched, erp_missing, ven_missing = match_invoices(erp_df, ven_df)
 
-    # --- Summary
     total_m = len(matched)
     total_d = len(matched[matched["Status"] == "Difference"])
-    total_info = len(matched[matched["Status"] == "Paid / Informational"])
     total_miss = len(erp_missing) + len(ven_missing)
-    st.success(f"✅ Reconciliation complete: {total_m} Matches · {total_d} Differences · {total_info} Informational · {total_miss} Missing")
+    st.success(f"✅ Reconciliation complete: {total_m} Matches · {total_d} Differences · {total_miss} Missing")
 
     # --- Highlighting
     def highlight_row(row):
         if row["Status"] == "Match":
-            return ['background-color: #2e7d32; color: white'] * len(row)   # green
+            return ['background-color: #2e7d32; color: white'] * len(row)  # green
         elif row["Status"] == "Difference":
-            return ['background-color: #f9a825; color: black'] * len(row)   # yellow
-        elif row["Status"] == "Paid / Informational":
-            return ['background-color: #0277bd; color: white'] * len(row)   # blue
+            return ['background-color: #f9a825; color: black'] * len(row)  # yellow
         else:
             return [''] * len(row)
 
-    st.subheader("📊 Matched / Differences / Payments")
+    st.subheader("📊 Matched / Differences")
     st.dataframe(matched.style.apply(highlight_row, axis=1))
 
     st.subheader("❌ Missing in ERP")
