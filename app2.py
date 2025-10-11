@@ -4,7 +4,7 @@ from fuzzywuzzy import fuzz
 import re
 
 st.set_page_config(page_title="🦅 ReconRaptor — Vendor Reconciliation", layout="wide")
-st.title("🦖 ReconRaptor")
+st.title("🦅 ReconRaptor — Vendor Invoice Reconciliation")
 
 # ==========================
 # Helper functions
@@ -92,9 +92,11 @@ def match_invoices(erp_df, ven_df):
             c_val = normalize_number(v_row.get("credit_ven", 0))
             v_amt = c_val if "abono" in desc or "credit" in desc else d_val
 
+            # ✅ Strict matching: only match identical or 92%+ similar invoice numbers
             if (
-                e_inv[-4:] == v_inv[-4:]
-                or fuzz.ratio(e_inv, v_inv) > 80
+                e_inv == v_inv
+                or fuzz.ratio(e_inv, v_inv) > 92
+                or e_inv.replace(".", "").replace("-", "") == v_inv.replace(".", "").replace("-", "")
             ):
                 diff = round(e_amt - v_amt, 2)
                 status = "Match" if abs(diff) < 0.05 else "Difference"
