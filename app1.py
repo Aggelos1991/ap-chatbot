@@ -1,167 +1,187 @@
-import os, json, re
-from io import BytesIO
-import fitz  # PyMuPDF
-import pandas as pd
 import streamlit as st
-from openai import OpenAI
+import pandas as pd
+import re
 
-# =============================================
-# Load environment variables safely
-# =============================================
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except ModuleNotFoundError:
-    st.warning("⚠️ 'python-dotenv' not installed — continuing without .env support.")
+st.set_page_config(page_title="🌍 Universal Vendor Reconciliation", layout="wide")
+st.title("🌍 Universal Vendor Reconciliation App")
 
-api_key = os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY")
-if not api_key:
-    st.error("❌ No OpenAI API key found. Add it to .env or Streamlit Secrets.")
-    st.stop()
+# ==========================================
+# TAX ID DETECTION (NEW)
+# ==========================================
+EU_TAX_COLUMNS = [
+    "TRN", "VAT", "AFM", "ΑΦΜ", "NIF", "CIF", "NIT", "RFC", "Tax ID", "TAXID"
+]
 
-client = OpenAI(api_key=api_key)
-MODEL = "gpt-4o-mini"
+def find_col(df, aliases):
+    """Find a column in df matching any alias."""
+    for col in df.columns:
+        if str(col).strip().lower() in [a.lower() for a in aliases]:
+            return col
+    return None
 
-# =============================================
-# Streamlit setup
-# =============================================
-st.set_page_config(page_title="🦅 DataFalcon", layout="wide")
-st.title("🦅 DataFalcon")
-
-# =============================================
-# Helper functions
-# =============================================
-def extract_text_from_pdf(file):
-    """Extract text from PDF pages."""
-    text = ""
-    with fitz.open(stream=file.read(), filetype="pdf") as doc:
-        for page in doc:
-            text += page.get_text("text") + "\n"
-    return text
-
-def clean_text(text):
-    return " ".join(text.replace("\xa0", " ").replace("€", " EUR").split())
-
-def normalize_number(value):
-    """Normalize Spanish/EU formatted numbers like 1.234,56 or 1,234.56 into 1234.56"""
-    if not value:
-        return ""
-    s = str(value).strip()
-
-    # Case 1: European format 1.234,56 → 1234.56
-    if re.match(r"^\d{1,3}(\.\d{3})*,\d{2}$", s):
-        s = s.replace(".", "").replace(",", ".")
-    # Case 2: US format 1,234.56 → 1234.56
-    elif re.match(r"^\d{1,3}(,\d{3})*\.\d{2}$", s):
-        s = s.replace(",", "")
-    # Case 3: Simple 150,00 → 150.00
-    elif re.match(r"^\d+,\d{2}$", s):
-        s = s.replace(",", ".")
-    # Case 4: Already normalized or other → clean stray symbols
+def ensure_tax_id(df):
+    """Ensure there's a Tax ID column in the file."""
+    found_col = find_col(df, EU_TAX_COLUMNS)
+    if found_col:
+        df.rename(columns={found_col: "Tax ID"}, inplace=True)
+        return df, True
     else:
-        s = re.sub(r"[^\d.]", "", s)
+        df["Tax ID (enter if missing)"] = ""
+        return df, False
 
-    return s
+# ==========================================
+# UNIVERSAL COLUMN DETECTION
+# ==========================================
+COLS = {
+    "vendor": ["Vendor", "Supplier", "Supplier Name", "Προμηθευτής"],
+    "trn": ["TRN", "AFM", "ΑΦΜ", "VAT", "CIF", "NIF", "NIT", "RFC", "Tax ID"],
+    "invoice": [
+        "Invoice", "Invoice No", "Inv No", "Alt Document",
+        "Alternative Document", "Αρ. Τιμολογίου", "Παραστατικό"
+    ],
+    "amount": ["Amount", "Value", "Invoice Value", "Ποσό"],
+    "balance": ["Balance", "Υπόλοιπο", "Saldo"],
+    "date": ["Date", "Ημερομηνία", "Fecha"]
+}
 
-def extract_with_llm(raw_text):
-    """Send cleaned text to GPT and return structured JSON with correct columns."""
-    prompt = f"""
-    You are an expert accountant AI.
+# ==========================================
+# SMART INVOICE NORMALIZATION & MATCHING
+# ==========================================
+def normalize_invoice(inv):
+    """Extracts the final numeric part of an invoice (smart mode)."""
+    s = str(inv).strip().upper()
+    nums = re.findall(r"\d+", s)
+    if not nums:
+        return s[-5:]
+    last = nums[-1]
+    return last.lstrip("0") or last
 
-    Extract all invoice lines from the following Spanish vendor statement.
-    Each line has: Invoice_Number, Date, Description, Debit (Debe), Credit (Haber), Balance (Saldo).
+def invoice_match(erp_inv, ven_inv):
+    """Super-flexible invoice matching for real-world formats."""
+    e = normalize_invoice(erp_inv)
+    v = normalize_invoice(ven_inv)
+    if not e or not v:
+        return False
 
-    Rules:
-    - "Debe" → Debit column.
-    - "Haber" → Credit column.
-    - Words like "Pago" or "Abono" mean Credit.
-    - Always include Balance as the rightmost value in each row.
-    - Only one of Debit or Credit can have a value.
-    - Return valid JSON array only.
+    if e == v:
+        return True
 
-    Example:
-    [
-      {{
-        "Invoice_Number": "2025.TPY.190.1856",
-        "Date": "12/09/2025",
-        "Description": "Factura de servicios",
-        "Debit": "3250.00",
-        "Credit": "",
-        "Balance": "3250.00"
-      }}
-    ]
+    e_noz, v_noz = e.lstrip("0"), v.lstrip("0")
 
-    Text:
-    \"\"\"{raw_text[:12000]}\"\"\"
-    """
+    if e_noz in v_noz or v_noz in e_noz:
+        return True
+    if e_noz.endswith(v_noz) or v_noz.endswith(e_noz):
+        return True
+    if len(e_noz) >= 3 and len(v_noz) >= 3 and e_noz[-3:] == v_noz[-3:]:
+        return True
 
-    response = client.responses.create(model=MODEL, input=prompt)
-    content = response.output_text.strip()
+    return False
 
+# ==========================================
+# LOAD FILE
+# ==========================================
+def load_excel(uploaded_file):
     try:
-        json_match = re.search(r'\[.*\]', content, re.DOTALL)
-        if json_match:
-            content = json_match.group(0)
-        data = json.loads(content)
+        df = pd.read_excel(uploaded_file)
+        return df
     except Exception as e:
-        st.error(f"⚠️ Could not parse GPT output: {e}")
-        st.text_area("🔍 Raw GPT Output", content[:2000], height=200)
-        return []
+        st.error(f"Error reading Excel: {e}")
+        return pd.DataFrame()
 
-    # --- Post-correction logic ---
-    for row in data:
-        for f in ["Debit", "Credit", "Balance"]:
-            row[f] = normalize_number(row.get(f, ""))
-        desc = row.get("Description", "").lower()
-        # Ensure "Pago" or "Abono" entries are Credit
-        if "pago" in desc or "abono" in desc:
-            if row.get("Debit") and not row.get("Credit"):
-                row["Credit"], row["Debit"] = row["Debit"], ""
-        # Ensure only one side has a value
-        if row.get("Debit") and row.get("Credit"):
-            try:
-                d, c = float(row["Debit"]), float(row["Credit"])
-                if "pago" in desc or "abono" in desc or c < d:
-                    row["Credit"], row["Debit"] = c, ""
-                else:
-                    row["Debit"], row["Credit"] = d, ""
-            except:
-                pass
-    return data
+# ==========================================
+# MATCHING LOGIC
+# ==========================================
+def match_invoices(erp_df, ven_df):
+    matched_rows = []
+    erp_unmatched, ven_unmatched = [], []
 
-def to_excel_bytes(records):
-    df = pd.DataFrame(records)
-    output = BytesIO()
-    df.to_excel(output, index=False)
-    output.seek(0)
-    return output
+    cols = {}
+    for key in COLS:
+        cols[key + "_erp"] = find_col(erp_df, COLS[key])
+        cols[key + "_ven"] = find_col(ven_df, COLS[key])
 
-# =============================================
-# Streamlit interface
-# =============================================
-uploaded_pdf = st.file_uploader("📂 Upload a vendor statement (PDF)", type=["pdf"])
+    missing_cols = [k for k, v in cols.items() if v is None and not k.startswith("amount")]
+    if missing_cols:
+        st.warning(f"⚠️ Missing columns detected: {missing_cols}. Matching might be incomplete.")
 
-if uploaded_pdf:
-    with st.spinner("📄 Extracting text from PDF..."):
-        text = clean_text(extract_text_from_pdf(uploaded_pdf))
+    for _, erp_row in erp_df.iterrows():
+        erp_trn = str(erp_row.get(cols["trn_erp"], "")).strip()
+        erp_inv = erp_row.get(cols["invoice_erp"], "")
+        erp_vendor = erp_row.get(cols["vendor_erp"], "Unknown")
+        erp_balance = float(erp_row.get(cols["balance_erp"], 0))
 
-    st.text_area("🔍 Extracted text preview", text[:2000], height=200)
+        candidates = ven_df[
+            ven_df[cols["trn_ven"]].astype(str).str.strip() == erp_trn
+        ] if cols["trn_ven"] else pd.DataFrame()
 
-    if st.button("🤖 Extract data to Excel"):
-        with st.spinner("Analyzing with GPT... please wait..."):
-            data = extract_with_llm(text)
+        found = False
 
-        if data:
-            df = pd.DataFrame(data)
-            st.success("✅ Extraction complete (decimal fix)!")
-            st.dataframe(df)
+        for _, ven_row in candidates.iterrows():
+            ven_inv = ven_row.get(cols["invoice_ven"], "")
+            if invoice_match(erp_inv, ven_inv):
+                ven_balance = float(ven_row.get(cols["balance_ven"], 0))
+                diff = round(erp_balance - ven_balance, 2)
+                status = "✅ Match" if abs(diff) < 0.05 else "⚠️ Balance Difference"
+                matched_rows.append({
+                    "Vendor/Supplier": erp_vendor,
+                    "TRN/AFM": erp_trn,
+                    "ERP Invoice": erp_inv,
+                    "Vendor Invoice": ven_inv,
+                    "ERP Balance": erp_balance,
+                    "Vendor Balance": ven_balance,
+                    "Difference": diff,
+                    "Status": status
+                })
+                found = True
+                break
 
-            excel_bytes = to_excel_bytes(data)
-            st.download_button(
-                "⬇️ Download Excel",
-                data=excel_bytes,
-                file_name="statement_output.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            )
-        else:
-            st.warning("⚠️ No structured data found. Try another PDF or verify text extraction.")
+        if not found:
+            erp_unmatched.append(erp_row)
+
+    for _, ven_row in ven_df.iterrows():
+        trn = str(ven_row.get(cols["trn_ven"], "")).strip()
+        inv = ven_row.get(cols["invoice_ven"], "")
+        in_erp = any(
+            invoice_match(x, inv) and (str(y).strip() == trn)
+            for x, y in zip(erp_df[cols["invoice_erp"]], erp_df[cols["trn_erp"]])
+        )
+        if not in_erp:
+            ven_unmatched.append(ven_row)
+
+    return pd.DataFrame(matched_rows), pd.DataFrame(erp_unmatched), pd.DataFrame(ven_unmatched)
+
+# ==========================================
+# STREAMLIT UI
+# ==========================================
+st.write("Upload your ERP export and Vendor statement below (any language or column names supported):")
+
+erp_file = st.file_uploader("📘 Upload ERP Export (Excel)", type=["xlsx"])
+vendor_file = st.file_uploader("📗 Upload Vendor Statement (Excel)", type=["xlsx"])
+
+if erp_file and vendor_file:
+    erp_df = load_excel(erp_file)
+    ven_df = load_excel(vendor_file)
+
+    # NEW TAX ID CHECK
+    erp_df, erp_has_tax = ensure_tax_id(erp_df)
+    ven_df, ven_has_tax = ensure_tax_id(ven_df)
+    if not erp_has_tax or not ven_has_tax:
+        st.warning("⚠️ Some files were missing a Tax ID column. A new one was added — please fill it in manually before matching.")
+
+    with st.spinner("Reconciling..."):
+        matched, erp_missing, ven_missing = match_invoices(erp_df, ven_df)
+
+    st.success("✅ Reconciliation complete!")
+
+    st.subheader("📊 Matched / Differences")
+    st.dataframe(matched)
+
+    st.subheader("❌ In ERP but Missing in Vendor")
+    st.dataframe(erp_missing)
+
+    st.subheader("❌ In Vendor but Missing in ERP")
+    st.dataframe(ven_missing)
+
+    st.download_button("⬇️ Download Matched", matched.to_csv(index=False).encode(), "matched.csv")
+    st.download_button("⬇️ Download Missing in ERP", ven_missing.to_csv(index=False).encode(), "missing_in_erp.csv")
+    st.download_button("⬇️ Download Missing in Vendor", erp_missing.to_csv(index=False).encode(), "missing_in_vendor.csv")
