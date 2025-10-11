@@ -59,9 +59,7 @@ def extract_core_invoice(inv):
     if not inv or pd.isna(inv):
         return ""
     s = str(inv).strip().upper()
-    # Remove separators and spaces
     s = re.sub(r"[^A-Z0-9]", "", s)
-    # Capture the last 3–5 digits or letters at the end
     match = re.search(r"([A-Z]*\d{2,5})$", s)
     return match.group(1) if match else s[-4:] if len(s) > 4 else s
 
@@ -73,12 +71,12 @@ def match_invoices(erp_df, ven_df):
     """Match invoices & credit notes — ignore all payments."""
     matched, matched_erp, matched_ven = [], set(), set()
 
-    # Detect TRN and limit scope to same vendor
+    # Detect TRN (VAT/CIF) and limit ERP scope to this vendor only
     trn_col_erp = next((c for c in erp_df.columns if "trn_" in c), None)
     trn_col_ven = next((c for c in ven_df.columns if "trn_" in c), None)
     if trn_col_erp and trn_col_ven:
-        vendor_trn = str(ven_df[trn_col_ven].dropna().iloc[0])
-        erp_df = erp_df[erp_df[trn_col_erp].astype(str) == vendor_trn]
+        vendor_trn = str(ven_df[trn_col_ven].dropna().iloc[0]).strip()
+        erp_df = erp_df[erp_df[trn_col_erp].astype(str).str.strip() == vendor_trn]
 
     # Remove payment/transfer lines
     payment_words = ["pago", "payment", "transfer", "bank", "liquidación", "partial"]
