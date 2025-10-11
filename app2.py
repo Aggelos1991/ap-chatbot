@@ -13,8 +13,12 @@ def normalize_columns(df, source="ven"):
         "vendor": ["supplier name", "vendor", "proveedor", "προμηθευτής"],
         "trn": ["tax id", "cif", "vat", "afm", "trn", "vat number", "tax number"],
         "invoice": ["invoice number", "alt document", "invoice", "παραστατικό", "factura"],
-        "balance": ["balance", "saldo", "υπόλοιπο", "amount", "importe", "valor"],
+        "description": ["description", "descripción", "περιγραφή"],
+        "debit": ["debit", "debe", "χρέωση"],
+        "credit": ["credit", "haber", "πίστωση"],
+        "balance": ["balance", "saldo", "υπόλοιπο"],
         "date": ["date", "fecha", "ημερομηνία"],
+        "amount": ["amount", "importe", "valor"]
     }
 
     rename_map = {}
@@ -30,46 +34,60 @@ def normalize_columns(df, source="ven"):
 
 
 # ============================================================
-# Matching Logic (safe & flexible)
+# Matching Logic (Invoices + Credit Notes only)
 # ============================================================
 def match_invoices(erp_df, ven_df):
-    matched = []
-    erp_missing = []
+    matched, erp_missing = [], []
     ven_missing = ven_df.copy().reset_index(drop=True)
+
+    # Filter ERP to same vendor (Tax ID)
+    vendor_trn = str(ven_df["trn_ven"].iloc[0]) if "trn_ven" in ven_df.columns else None
+    if vendor_trn:
+        erp_df = erp_df[erp_df["trn_erp"] == vendor_trn]
 
     for _, erp_row in erp_df.iterrows():
         erp_trn = str(erp_row.get("trn_erp", "")).strip()
         erp_invoice = str(erp_row.get("invoice_erp", "")).strip()
-        erp_balance = float(erp_row.get("balance_erp", 0))
+        erp_amount = float(erp_row.get("balance_erp", erp_row.get("amount_erp", 0)))
 
-        # Filter vendor rows with same TRN
+        # --- Filter vendor lines with same TRN
         ven_subset = ven_missing[ven_missing["trn_ven"] == erp_trn]
         found = False
 
         for _, ven_row in ven_subset.iterrows():
             ven_invoice = str(ven_row.get("invoice_ven", "")).strip()
-            ven_balance = float(ven_row.get("balance_ven", 0))
+            desc = str(ven_row.get("description_ven", "")).lower()
 
-            # Flexible matching (last digits, partials, fuzzy)
+            # ✅ Use Debit as invoice, Credit only if "Abono" or "Credit Note"
+            debit_val = float(ven_row.get("debit_ven", 0) or 0)
+            credit_val = float(ven_row.get("credit_ven", 0) or 0)
+            if "abono" in desc or "credit" in desc:
+                ven_amount = credit_val
+            elif any(word in desc for word in ["pago", "transferencia", "liquidación", "payment", "πληρωμή"]):
+                continue  # 🚫 Skip payments
+            else:
+                ven_amount = debit_val
+
+            # --- Flexible invoice match (last digits, fuzzy)
             if (
                 erp_invoice[-4:] in ven_invoice
                 or ven_invoice[-4:] in erp_invoice
                 or fuzz.ratio(erp_invoice, ven_invoice) > 75
             ):
-                diff = round(erp_balance - ven_balance, 2)
+                diff = round(erp_amount - ven_amount, 2)
                 status = "Match" if diff == 0 else "Difference"
                 matched.append({
                     "Vendor/Supplier": erp_row.get("vendor_erp", ""),
                     "TRN/AFM": erp_trn,
                     "ERP Invoice": erp_invoice,
                     "Vendor Invoice": ven_invoice,
-                    "ERP Balance": erp_balance,
-                    "Vendor Balance": ven_balance,
+                    "ERP Amount": erp_amount,
+                    "Vendor Amount": ven_amount,
                     "Difference": diff,
-                    "Status": status
+                    "Status": status,
+                    "Description": desc
                 })
 
-                # ✅ Safe removal to avoid KeyError
                 if ven_row.name in ven_missing.index:
                     ven_missing = ven_missing.drop(index=ven_row.name)
                 found = True
@@ -82,7 +100,7 @@ def match_invoices(erp_df, ven_df):
 
 
 # ============================================================
-# Streamlit interface
+# Streamlit Interface
 # ============================================================
 uploaded_erp = st.file_uploader("📂 Upload ERP Export (Excel)", type=["xlsx"])
 uploaded_vendor = st.file_uploader("📂 Upload Vendor Statement (Excel)", type=["xlsx"])
@@ -91,25 +109,14 @@ if uploaded_erp and uploaded_vendor:
     erp_df = pd.read_excel(uploaded_erp)
     ven_df = pd.read_excel(uploaded_vendor)
 
-    # Normalize column names for both
     erp_df = normalize_columns(erp_df, source="erp")
     ven_df = normalize_columns(ven_df, source="ven")
 
-    # Check for required columns
-    required_cols = ["trn_erp", "invoice_erp", "balance_erp", "vendor_erp", "trn_ven", "invoice_ven", "balance_ven"]
-    missing_cols = [c for c in required_cols if c not in erp_df.columns and c not in ven_df.columns]
-
-    if missing_cols:
-        st.warning(f"⚠️ Missing columns detected: {missing_cols}. Matching might be incomplete.")
-
-    with st.spinner("🔍 Reconciling... please wait..."):
+    with st.spinner("🔍 Reconciling invoices and credit notes..."):
         matched, erp_missing, ven_missing = match_invoices(erp_df, ven_df)
 
     st.success("✅ Reconciliation complete!")
 
-    # ===========================
-    # RESULTS DISPLAY
-    # ===========================
     st.subheader("📊 Matched / Differences")
     st.dataframe(matched)
 
@@ -119,15 +126,11 @@ if uploaded_erp and uploaded_vendor:
     st.subheader("❌ In Vendor but Missing in ERP")
     st.dataframe(ven_missing)
 
-    # ===========================
-    # DOWNLOAD
-    # ===========================
     st.download_button(
         "⬇️ Download Matched Results",
         matched.to_csv(index=False).encode("utf-8"),
         "matched_results.csv",
         "text/csv"
     )
-
 else:
     st.info("Please upload both ERP Export and Vendor Statement files to begin.")
