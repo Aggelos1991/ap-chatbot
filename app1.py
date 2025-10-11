@@ -25,7 +25,7 @@ MODEL = "gpt-4o-mini"
 # =============================================
 # Streamlit setup
 # =============================================
-st.set_page_config(page_title="📄 Vendor Statement Extractor", layout="wide")
+st.set_page_config(page_title="🦅 DataFalcon", layout="wide")
 st.title("DataFalcon"))
 
 # =============================================
