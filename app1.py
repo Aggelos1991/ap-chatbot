@@ -26,12 +26,13 @@ MODEL = "gpt-4o-mini"
 # Streamlit setup
 # =============================================
 st.set_page_config(page_title="📄 Vendor Statement Extractor", layout="wide")
-st.title("📄 Vendor Statement → Excel Extractor (Full Precision + Balance)")
+st.title("📄 Vendor Statement → Excel Extractor (Debit / Credit / Balance Fix)")
 
 # =============================================
 # Helper functions
 # =============================================
 def extract_text_from_pdf(file):
+    """Extract text from PDF pages."""
     text = ""
     with fitz.open(stream=file.read(), filetype="pdf") as doc:
         for page in doc:
@@ -41,43 +42,44 @@ def extract_text_from_pdf(file):
 def clean_text(text):
     return " ".join(text.replace("\xa0", " ").replace("€", " EUR").split())
 
-def parse_number(value):
-    """Normalize numeric strings to consistent float-like strings."""
+def normalize_number(value):
+    """Normalize Spanish or EU formatted numbers to consistent float-like strings."""
     if not value:
         return ""
-    value = str(value).replace(",", ".")
+    value = str(value).replace(".", "").replace(",", ".")
     value = re.sub(r"[^\d.]", "", value)
     return value
 
 def extract_with_llm(raw_text):
-    """Send text to GPT and return structured JSON with all columns preserved."""
+    """Send cleaned text to GPT and return structured JSON with correct columns."""
     prompt = f"""
-You are a precise financial data extractor.
+    You are an expert accountant AI.
 
-Read this Spanish vendor statement and extract every invoice line into JSON with exactly:
-Invoice_Number, Date, Description, Debit (Debe), Credit (Haber), Balance (Saldo).
+    Extract all invoice lines from the following Spanish vendor statement.
+    Each line has: Invoice_Number, Date, Description, Debit (Debe), Credit (Haber), Balance (Saldo).
 
-Rules:
-- If "Debe" (Debit) is filled, "Haber" (Credit) must be empty, and vice versa.
-- Always include "Balance" exactly as shown in the statement.
-- Return numeric values as strings using dot as decimal separator.
-- Do NOT omit or skip the Balance column.
-- Return ONLY valid JSON array, no text before or after.
+    Rules:
+    - "Debe" → Debit column.
+    - "Haber" → Credit column.
+    - Words like "Pago" or "Abono" mean Credit.
+    - Always include Balance as the rightmost value in each row.
+    - Only one of Debit or Credit can have a value.
+    - Return valid JSON array only.
 
-Example output:
-[
-  {{
-    "Invoice_Number": "2025.TPY.190.1856",
-    "Date": "12/09/2025",
-    "Description": "Factura de servicios",
-    "Debit": "3250.00",
-    "Credit": "",
-    "Balance": "3250.00"
-  }}
-]
+    Example:
+    [
+      {{
+        "Invoice_Number": "2025.TPY.190.1856",
+        "Date": "12/09/2025",
+        "Description": "Factura de servicios",
+        "Debit": "3250.00",
+        "Credit": "",
+        "Balance": "3250.00"
+      }}
+    ]
 
-Text:
-\"\"\"{raw_text[:12000]}\"\"\"
+    Text:
+    \"\"\"{raw_text[:12000]}\"\"\"
     """
 
     response = client.responses.create(model=MODEL, input=prompt)
@@ -93,23 +95,25 @@ Text:
         st.text_area("🔍 Raw GPT Output", content[:2000], height=200)
         return []
 
-    # --- post-correction layer ---
+    # --- Post-correction logic ---
     for row in data:
-        for field in ["Debit", "Credit", "Balance"]:
-            row[field] = parse_number(row.get(field, ""))
-        # If Debit and Credit both exist, fix based on smaller/larger logic
-        d, c = row.get("Debit", ""), row.get("Credit", "")
-        if d and c:
+        for f in ["Debit", "Credit", "Balance"]:
+            row[f] = normalize_number(row.get(f, ""))
+        desc = row.get("Description", "").lower()
+        # Ensure "Pago" or "Abono" entries are Credit
+        if "pago" in desc or "abono" in desc:
+            if row.get("Debit") and not row.get("Credit"):
+                row["Credit"], row["Debit"] = row["Debit"], ""
+        # Ensure only one side has a value
+        if row.get("Debit") and row.get("Credit"):
             try:
-                if float(c) < float(d):
+                d, c = float(row["Debit"]), float(row["Credit"])
+                if "pago" in desc or "abono" in desc or c < d:
                     row["Credit"], row["Debit"] = c, ""
                 else:
                     row["Debit"], row["Credit"] = d, ""
             except:
                 pass
-        # Ensure balance never disappears
-        if not row.get("Balance"):
-            row["Balance"] = row.get("Debit") or row.get("Credit") or ""
     return data
 
 def to_excel_bytes(records):
@@ -136,7 +140,7 @@ if uploaded_pdf:
 
         if data:
             df = pd.DataFrame(data)
-            st.success("✅ Extraction complete (Balance restored)!")
+            st.success("✅ Extraction complete (columns corrected)!")
             st.dataframe(df)
 
             excel_bytes = to_excel_bytes(data)
