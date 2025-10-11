@@ -5,7 +5,9 @@ import pandas as pd
 import streamlit as st
 from openai import OpenAI
 
-# ========== Load key ==========
+# =============================================
+# Load environment variables safely
+# =============================================
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -20,44 +22,64 @@ if not api_key:
 client = OpenAI(api_key=api_key)
 MODEL = "gpt-4o-mini"
 
-# ========== UI ==========
+# =============================================
+# Streamlit setup
+# =============================================
 st.set_page_config(page_title="📄 Vendor Statement Extractor", layout="wide")
-st.title("📄 Vendor Statement → Excel Extractor (High Precision)")
+st.title("📄 Vendor Statement → Excel Extractor (Full Precision + Balance)")
 
-# ========== Helpers ==========
+# =============================================
+# Helper functions
+# =============================================
 def extract_text_from_pdf(file):
     text = ""
     with fitz.open(stream=file.read(), filetype="pdf") as doc:
-        for p in doc:
-            text += p.get_text("text") + "\n"
+        for page in doc:
+            text += page.get_text("text") + "\n"
     return text
 
-def clean_text(t):
-    return " ".join(t.replace("\xa0", " ").replace("€", " EUR").split())
+def clean_text(text):
+    return " ".join(text.replace("\xa0", " ").replace("€", " EUR").split())
+
+def parse_number(value):
+    """Normalize numeric strings to consistent float-like strings."""
+    if not value:
+        return ""
+    value = str(value).replace(",", ".")
+    value = re.sub(r"[^\d.]", "", value)
+    return value
 
 def extract_with_llm(raw_text):
-    """
-    Ask GPT to extract clean JSON with strict financial field mapping.
-    Debe=Debit, Haber=Credit, keep numeric only, use dot as decimal.
-    """
+    """Send text to GPT and return structured JSON with all columns preserved."""
     prompt = f"""
-You are a meticulous accountant AI. 
-Read the Spanish vendor statement and extract all invoice lines.
+You are a precise financial data extractor.
+
+Read this Spanish vendor statement and extract every invoice line into JSON with exactly:
+Invoice_Number, Date, Description, Debit (Debe), Credit (Haber), Balance (Saldo).
 
 Rules:
-- Debe = Debit
-- Haber = Credit
-- Never put both values in the same column.
-- Use empty string if value missing.
-- Convert 1.234,56 or 1,234.56 → 1234.56
-- Return ONLY valid JSON array:
+- If "Debe" (Debit) is filled, "Haber" (Credit) must be empty, and vice versa.
+- Always include "Balance" exactly as shown in the statement.
+- Return numeric values as strings using dot as decimal separator.
+- Do NOT omit or skip the Balance column.
+- Return ONLY valid JSON array, no text before or after.
+
+Example output:
 [
-  {{"Invoice_Number":"...", "Date":"...", "Description":"...", "Debit":"...", "Credit":"...", "Balance":"..."}}
+  {{
+    "Invoice_Number": "2025.TPY.190.1856",
+    "Date": "12/09/2025",
+    "Description": "Factura de servicios",
+    "Debit": "3250.00",
+    "Credit": "",
+    "Balance": "3250.00"
+  }}
 ]
 
 Text:
 \"\"\"{raw_text[:12000]}\"\"\"
     """
+
     response = client.responses.create(model=MODEL, input=prompt)
     content = response.output_text.strip()
 
@@ -71,25 +93,23 @@ Text:
         st.text_area("🔍 Raw GPT Output", content[:2000], height=200)
         return []
 
-    # --- sanity check corrections ---
-    for r in data:
-        # normalize commas/periods
-        for f in ["Debit", "Credit", "Balance"]:
-            v = str(r.get(f, "")).replace(",", ".").replace(" ", "")
-            if v and not re.match(r"^[0-9.]+$", v):
-                v = re.sub(r"[^\d.]", "", v)
-            r[f] = v
-        # move numeric from Debit to Credit if both filled
-        d, c = r.get("Debit", ""), r.get("Credit", "")
+    # --- post-correction layer ---
+    for row in data:
+        for field in ["Debit", "Credit", "Balance"]:
+            row[field] = parse_number(row.get(field, ""))
+        # If Debit and Credit both exist, fix based on smaller/larger logic
+        d, c = row.get("Debit", ""), row.get("Credit", "")
         if d and c:
-            # choose smaller one as credit if typical pattern
             try:
                 if float(c) < float(d):
-                    r["Credit"], r["Debit"] = c, ""
+                    row["Credit"], row["Debit"] = c, ""
                 else:
-                    r["Debit"], r["Credit"] = d, ""
+                    row["Debit"], row["Credit"] = d, ""
             except:
                 pass
+        # Ensure balance never disappears
+        if not row.get("Balance"):
+            row["Balance"] = row.get("Debit") or row.get("Credit") or ""
     return data
 
 def to_excel_bytes(records):
@@ -99,7 +119,9 @@ def to_excel_bytes(records):
     output.seek(0)
     return output
 
-# ========== Streamlit logic ==========
+# =============================================
+# Streamlit interface
+# =============================================
 uploaded_pdf = st.file_uploader("📂 Upload a vendor statement (PDF)", type=["pdf"])
 
 if uploaded_pdf:
@@ -114,7 +136,7 @@ if uploaded_pdf:
 
         if data:
             df = pd.DataFrame(data)
-            st.success("✅ Extraction complete (high precision)!")
+            st.success("✅ Extraction complete (Balance restored)!")
             st.dataframe(df)
 
             excel_bytes = to_excel_bytes(data)
