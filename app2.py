@@ -1,16 +1,15 @@
 import streamlit as st
 import pandas as pd
-from fuzzywuzzy import fuzz
 import re
 
 st.set_page_config(page_title="🦅 ReconRaptor — Vendor Reconciliation", layout="wide")
 st.title("🦅 ReconRaptor — Vendor Invoice Reconciliation")
 
 # ==========================
-# Helper functions
+# Helpers
 # ==========================
 def normalize_number(v):
-    """Convert strings like '1.234,56' or '1,234.56' to float."""
+    """Convert formatted numbers to float safely."""
     if pd.isna(v):
         return 0.0
     s = str(v).strip()
@@ -29,97 +28,102 @@ def normalize_number(v):
     except:
         return 0.0
 
-
 def normalize_columns(df, tag):
-    """Unify multilingual headers (ERP/Vendor)."""
+    """Unify multilingual headers for ERP or Vendor."""
     mapping = {
-        "vendor": ["supplier", "proveedor", "vendor", "προμηθευτής"],
-        "trn": ["vat", "cif", "trn", "afm", "tax id"],
+        "vendor": ["supplier", "vendor", "proveedor", "προμηθευτής"],
+        "trn": ["vat", "cif", "afm", "trn", "tax id"],
         "invoice": ["invoice", "alt document", "factura", "παραστατικό"],
         "description": ["description", "descripción", "περιγραφή"],
         "debit": ["debit", "debe", "χρέωση"],
         "credit": ["credit", "haber", "πίστωση"],
         "amount": ["amount", "importe", "valor"],
         "balance": ["balance", "saldo", "υπόλοιπο"],
-        "date": ["date", "fecha", "ημερομηνία"],
+        "date": ["date", "fecha", "ημερομηνία"]
     }
+
     rename_map = {}
-    for k, vals in mapping.items():
+    for key, synonyms in mapping.items():
         for col in df.columns:
-            if any(v in str(col).lower() for v in vals):
-                rename_map[col] = f"{k}_{tag}"
+            c = str(col).strip().lower()
+            if any(word in c for word in synonyms):
+                rename_map[col] = f"{key}_{tag}"
     return df.rename(columns=rename_map)
 
+def normalize_invoice_num(s):
+    """Standardize invoice numbers for comparison."""
+    return re.sub(r"[^A-Za-z0-9]", "", str(s or "")).upper()
 
 # ==========================
-# Core reconciliation
+# Matching Logic
 # ==========================
 def match_invoices(erp_df, ven_df):
-    """Match invoices & credit notes — ignore all payments."""
-    matched, matched_erp, matched_ven = [], set(), set()
+    matched_rows = []
+    matched_erp_invoices = set()
+    matched_ven_invoices = set()
 
-    # Detect TRN and limit scope to same vendor
-    trn_col_erp = next((c for c in erp_df.columns if "trn_" in c), None)
-    trn_col_ven = next((c for c in ven_df.columns if "trn_" in c), None)
-    if trn_col_erp and trn_col_ven:
-        vendor_trn = str(ven_df[trn_col_ven].dropna().iloc[0])
-        erp_df = erp_df[erp_df[trn_col_erp].astype(str) == vendor_trn]
+    # ---- detect key columns ----
+    trn_erp = next((c for c in erp_df.columns if "trn_" in c), None)
+    trn_ven = next((c for c in ven_df.columns if "trn_" in c), None)
+    inv_erp = next((c for c in erp_df.columns if "invoice_" in c), None)
+    inv_ven = next((c for c in ven_df.columns if "invoice_" in c), None)
+    desc_ven = next((c for c in ven_df.columns if "description_" in c), None)
 
-    # Remove payment/transfer lines
-    payment_words = ["pago", "payment", "transfer", "bank", "liquidación", "partial"]
-    for df, desc_col in [(erp_df, "description_erp"), (ven_df, "description_ven")]:
-        if desc_col in df.columns:
-            df.drop(
-                df[df[desc_col].astype(str).str.lower().apply(
-                    lambda x: any(k in x for k in payment_words)
-                )].index,
-                inplace=True,
-            )
+    # safety guard
+    if not inv_erp or not inv_ven:
+        return pd.DataFrame(), erp_df, ven_df
 
-    # Match logic
+    # ---- normalize numbers ----
+    erp_df["__inv"] = erp_df[inv_erp].astype(str).map(normalize_invoice_num)
+    ven_df["__inv"] = ven_df[inv_ven].astype(str).map(normalize_invoice_num)
+
+    # restrict same TRN/vendor if available
+    if trn_erp and trn_ven and not ven_df[trn_ven].dropna().empty:
+        vendor_trn = str(ven_df[trn_ven].dropna().iloc[0])
+        erp_df = erp_df[erp_df[trn_erp].astype(str) == vendor_trn]
+
+    # remove payments from vendor
+    pay_words = ["pago", "payment", "transfer", "partial", "liquidación"]
+    if desc_ven and desc_ven in ven_df.columns:
+        ven_df = ven_df[~ven_df[desc_ven].astype(str).str.lower().apply(lambda x: any(w in x for w in pay_words))]
+
+    # ---- matching loop ----
     for _, e_row in erp_df.iterrows():
-        e_inv = str(e_row.get("invoice_erp", "")).strip()
-        if not e_inv:
-            continue
-        e_amt = normalize_number(e_row.get("amount_erp", 0))
+        e_inv = e_row["__inv"]
+        e_amt = normalize_number(e_row.get("amount_erp", e_row.get("debit_erp", e_row.get("credit_erp", 0))))
 
-        for _, v_row in ven_df.iterrows():
-            v_inv = str(v_row.get("invoice_ven", "")).strip()
-            if not v_inv:
-                continue
-            desc = str(v_row.get("description_ven", "")).lower()
-            d_val = normalize_number(v_row.get("debit_ven", 0))
-            c_val = normalize_number(v_row.get("credit_ven", 0))
-            v_amt = c_val if "abono" in desc or "credit" in desc else d_val
+        # match vendor invoice by number
+        match = ven_df[ven_df["__inv"] == e_inv]
+        if not match.empty:
+            v_row = match.iloc[0]
+            desc = str(v_row.get(desc_ven, "")).lower()
+            v_debit = normalize_number(v_row.get("debit_ven", 0))
+            v_credit = normalize_number(v_row.get("credit_ven", 0))
+            v_amt = v_credit if "abono" in desc or "credit" in desc else v_debit
+            diff = round(e_amt - v_amt, 2)
+            status = "Match" if abs(diff) < 0.05 else "Difference"
 
-            # ✅ Strict matching: only match identical or 92%+ similar invoice numbers
-            if (
-                e_inv == v_inv
-                or fuzz.ratio(e_inv, v_inv) > 92
-                or e_inv.replace(".", "").replace("-", "") == v_inv.replace(".", "").replace("-", "")
-            ):
-                diff = round(e_amt - v_amt, 2)
-                status = "Match" if abs(diff) < 0.05 else "Difference"
-                matched.append({
-                    "Vendor/Supplier": e_row.get("vendor_erp", ""),
-                    "TRN/AFM": e_row.get("trn_erp", ""),
-                    "ERP Invoice": e_inv,
-                    "Vendor Invoice": v_inv,
-                    "ERP Amount": e_amt,
-                    "Vendor Amount": v_amt,
-                    "Difference": diff,
-                    "Status": status,
-                    "Description": desc
-                })
-                matched_erp.add(e_inv)
-                matched_ven.add(v_inv)
-                break
+            matched_rows.append({
+                "Vendor/Supplier": e_row.get("vendor_erp", ""),
+                "TRN/AFM": e_row.get(trn_erp, ""),
+                "ERP Invoice": e_row.get(inv_erp, ""),
+                "Vendor Invoice": v_row.get(inv_ven, ""),
+                "ERP Amount": e_amt,
+                "Vendor Amount": v_amt,
+                "Difference": diff,
+                "Status": status,
+                "Description": v_row.get(desc_ven, "")
+            })
+            matched_erp_invoices.add(e_inv)
+            matched_ven_invoices.add(e_inv)
 
-    df_matched = pd.DataFrame(matched)
-    erp_missing = erp_df[~erp_df["invoice_erp"].isin(matched_erp)].reset_index(drop=True)
-    ven_missing = ven_df[~ven_df["invoice_ven"].isin(matched_ven)].reset_index(drop=True)
-    return df_matched, erp_missing, ven_missing
+    matched = pd.DataFrame(matched_rows)
 
+    # ---- find missing ----
+    erp_missing = erp_df[~erp_df["__inv"].isin(matched_erp_invoices)].reset_index(drop=True)
+    ven_missing = ven_df[~ven_df["__inv"].isin(matched_ven_invoices)].reset_index(drop=True)
+
+    return matched, erp_missing, ven_missing
 
 # ==========================
 # Streamlit UI
@@ -141,7 +145,6 @@ if uploaded_erp and uploaded_vendor:
     total_missing = len(erp_missing) + len(ven_missing)
     st.success(f"✅ Recon complete: {total_match} matched, {total_diff} differences, {total_missing} missing")
 
-    # Highlight rows
     def highlight_row(row):
         if row["Status"] == "Match":
             return ['background-color: #2e7d32; color: white'] * len(row)
@@ -166,4 +169,4 @@ if uploaded_erp and uploaded_vendor:
         "text/csv"
     )
 else:
-    st.info("Please upload both ERP and Vendor files to begin.")
+    st.info("Please upload both ERP Export and Vendor Statement to begin.")
