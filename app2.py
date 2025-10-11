@@ -6,7 +6,7 @@ import re
 # ReconRaptor setup 🦖
 # ==========================
 st.set_page_config(page_title="🦖 ReconRaptor", layout="wide")
-st.title("🦖 ReconRaptor — Vendor Invoice Reconciliation")
+st.title("🦖 ReconRaptor")
 
 # ==========================
 # Helper functions
@@ -37,11 +37,10 @@ def normalize_columns(df, tag):
     mapping = {
         "vendor": ["supplier", "vendor", "proveedor", "προμηθευτής"],
         "trn": ["vat", "cif", "afm", "trn", "tax id"],
-        "invoice": ["invoice", "alt document", "factura", "παραστατικό"],
+        "invoice": ["alternative document", "alt document", "factura", "invoice", "παραστατικό"],
         "description": ["description", "descripción", "περιγραφή"],
         "debit": ["debit", "debe", "χρέωση"],
         "credit": ["credit", "haber", "πίστωση"],
-        "amount": ["amount", "importe", "valor"],
         "balance": ["balance", "saldo", "υπόλοιπο"],
         "date": ["date", "fecha", "ημερομηνία"],
     }
@@ -96,7 +95,18 @@ def match_invoices(erp_df, ven_df):
     # ---- matching loop ----
     for _, e_row in erp_df.iterrows():
         e_inv = e_row["__inv"]
-        e_amt = normalize_number(e_row.get("amount_erp", e_row.get("debit_erp", e_row.get("credit_erp", 0))))
+
+        # ✅ AP logic: Credit = invoices, Debit = credit notes
+        e_credit = normalize_number(e_row.get("credit_erp", 0))
+        e_debit = normalize_number(e_row.get("debit_erp", 0))
+
+        # determine ERP-side amount
+        if e_credit < 0:  # negative credit value = CN case
+            e_amt = e_credit
+        elif e_debit > 0:
+            e_amt = -e_debit  # debit means credit note (reduces payable)
+        else:
+            e_amt = e_credit  # normal invoice
 
         # match vendor invoice by number
         match = ven_df[ven_df["__inv"] == e_inv]
@@ -107,9 +117,9 @@ def match_invoices(erp_df, ven_df):
             v_credit = normalize_number(v_row.get("credit_ven", 0))
             v_amt = v_credit if "abono" in desc or "credit" in desc else v_debit
 
-            # ✅ Fix: handle credit notes with opposite signs
+            # ✅ Handle opposite sign alignment
             if (e_amt < 0 and v_amt > 0) or (e_amt > 0 and v_amt < 0):
-                v_amt = -v_amt  # flip vendor amount to align with ERP
+                v_amt = -v_amt
 
             diff = round(e_amt - v_amt, 2)
             status = "Match" if abs(diff) < 0.05 else "Difference"
@@ -117,9 +127,9 @@ def match_invoices(erp_df, ven_df):
             matched_rows.append({
                 "Vendor/Supplier": e_row.get("vendor_erp", ""),
                 "TRN/AFM": e_row.get("trn_erp", ""),
-                "ERP Invoice": e_row.get(inv_erp, ""),
+                "ERP Alternative Document": e_row.get(inv_erp, ""),
                 "Vendor Invoice": v_row.get(inv_ven, ""),
-                "ERP Amount": e_amt,
+                "ERP Amount (AP logic)": e_amt,
                 "Vendor Amount": v_amt,
                 "Difference": diff,
                 "Status": status,
