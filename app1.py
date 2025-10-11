@@ -48,20 +48,32 @@ def normalize_number(value):
         return ""
     s = str(value).strip()
 
-    # Case 1: European format 1.234,56 → 1234.56
-    if re.match(r"^\d{1,3}(\.\d{3})*,\d{2}$", s):
+    if re.match(r"^\d{1,3}(\.\d{3})*,\d{2}$", s):  # EU format
         s = s.replace(".", "").replace(",", ".")
-    # Case 2: US format 1,234.56 → 1234.56
-    elif re.match(r"^\d{1,3}(,\d{3})*\.\d{2}$", s):
+    elif re.match(r"^\d{1,3}(,\d{3})*\.\d{2}$", s):  # US format
         s = s.replace(",", "")
-    # Case 3: Simple 150,00 → 150.00
-    elif re.match(r"^\d+,\d{2}$", s):
+    elif re.match(r"^\d+,\d{2}$", s):  # simple EU 150,00
         s = s.replace(",", ".")
-    # Case 4: Already normalized or other → clean stray symbols
     else:
         s = re.sub(r"[^\d.]", "", s)
-
     return s
+
+def extract_tax_id(raw_text):
+    """
+    Detect Spanish CIF/NIF or European VAT/AFM patterns in the raw text.
+    If found, return the first match; otherwise return None.
+    """
+    patterns = [
+        r"\b[A-Z]{1}\d{7}[A-Z0-9]{1}\b",        # Spanish CIF/NIF (e.g. B12345678)
+        r"\bES\d{9}\b",                         # Spanish VAT with ES prefix
+        r"\bEL\d{9}\b",                         # Greek VAT
+        r"\b[A-Z]{2}\d{8,12}\b",                # Generic EU VAT (DE123456789, etc.)
+    ]
+    for pat in patterns:
+        match = re.search(pat, raw_text)
+        if match:
+            return match.group(0)
+    return None
 
 def extract_with_llm(raw_text):
     """Send cleaned text to GPT and return structured JSON with correct columns."""
@@ -151,9 +163,14 @@ if uploaded_pdf:
         with st.spinner("Analyzing with GPT... please wait..."):
             data = extract_with_llm(text)
 
+        # --- NEW: Detect or add Tax ID ---
+        tax_id = extract_tax_id(text)
+        for row in data:
+            row["Tax ID"] = tax_id if tax_id else "Missing TAX ID"
+
         if data:
             df = pd.DataFrame(data)
-            st.success("✅ Extraction complete (decimal fix)!")
+            st.success("✅ Extraction complete (with Tax ID detection)!")
             st.dataframe(df)
 
             excel_bytes = to_excel_bytes(data)
