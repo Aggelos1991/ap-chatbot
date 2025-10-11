@@ -26,7 +26,7 @@ MODEL = "gpt-4o-mini"
 # Streamlit setup
 # =============================================
 st.set_page_config(page_title="🦅 DataFalcon", layout="wide")
-st.title("DataFalcon")
+st.title("🦅 DataFalcon")
 
 # =============================================
 # Helper functions
