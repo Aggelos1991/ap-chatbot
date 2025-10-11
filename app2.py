@@ -27,11 +27,21 @@ def find_col(df, aliases):
     return None
 
 # ==========================================
-# INVOICE NORMALIZATION (last digits logic)
+# SMART INVOICE NORMALIZATION & MATCHING
 # ==========================================
 def normalize_invoice(inv):
-    digits = re.sub(r"\D", "", str(inv))
-    return digits[-4:] if len(digits) >= 3 else digits
+    """Extracts the numeric core of an invoice for fuzzy comparison."""
+    s = str(inv).strip().upper()
+    digits = re.sub(r"\D", "", s)
+    return digits or s[-5:]  # fallback to last few chars if no digits
+
+def invoice_match(erp_inv, ven_inv):
+    """Smart comparison: matches if numbers overlap or end with same digits."""
+    e = normalize_invoice(erp_inv)
+    v = normalize_invoice(ven_inv)
+    if not e or not v:
+        return False
+    return e == v or e.endswith(v) or v.endswith(e)
 
 # ==========================================
 # LOAD FILE
@@ -63,7 +73,7 @@ def match_invoices(erp_df, ven_df):
 
     for _, erp_row in erp_df.iterrows():
         erp_trn = str(erp_row.get(cols["trn_erp"], "")).strip()
-        erp_inv = normalize_invoice(erp_row.get(cols["invoice_erp"], ""))
+        erp_inv = erp_row.get(cols["invoice_erp"], "")
         erp_vendor = erp_row.get(cols["vendor_erp"], "Unknown")
         erp_balance = float(erp_row.get(cols["balance_erp"], 0))
 
@@ -75,16 +85,16 @@ def match_invoices(erp_df, ven_df):
         found = False
 
         for _, ven_row in candidates.iterrows():
-            ven_inv = normalize_invoice(ven_row.get(cols["invoice_ven"], ""))
-            if erp_inv == ven_inv:
+            ven_inv = ven_row.get(cols["invoice_ven"], "")
+            if invoice_match(erp_inv, ven_inv):
                 ven_balance = float(ven_row.get(cols["balance_ven"], 0))
                 diff = round(erp_balance - ven_balance, 2)
                 status = "✅ Match" if abs(diff) < 0.05 else "⚠️ Balance Difference"
                 matched_rows.append({
                     "Vendor/Supplier": erp_vendor,
                     "TRN/AFM": erp_trn,
-                    "ERP Invoice": erp_row.get(cols["invoice_erp"]),
-                    "Vendor Invoice": ven_row.get(cols["invoice_ven"]),
+                    "ERP Invoice": erp_inv,
+                    "Vendor Invoice": ven_inv,
                     "ERP Balance": erp_balance,
                     "Vendor Balance": ven_balance,
                     "Difference": diff,
@@ -99,9 +109,9 @@ def match_invoices(erp_df, ven_df):
     # vendor unmatched
     for _, ven_row in ven_df.iterrows():
         trn = str(ven_row.get(cols["trn_ven"], "")).strip()
-        inv = normalize_invoice(ven_row.get(cols["invoice_ven"], ""))
+        inv = ven_row.get(cols["invoice_ven"], "")
         in_erp = any(
-            (normalize_invoice(x) == inv) and (str(y).strip() == trn)
+            invoice_match(x, inv) and (str(y).strip() == trn)
             for x, y in zip(erp_df[cols["invoice_erp"]], erp_df[cols["trn_erp"]])
         )
         if not in_erp:
