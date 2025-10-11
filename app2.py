@@ -3,8 +3,8 @@ import pandas as pd
 from fuzzywuzzy import fuzz
 import re
 
-st.set_page_config(page_title="🤝 Vendor Reconciliation", layout="wide")
-st.title("ReconRaptor ⚙️")
+st.set_page_config(page_title="⚙️ ReconRaptor", layout="wide")
+st.title("🦖 ReconRaptor — Vendor Reconciliation Intelligence")
 
 # ============================================================
 # Helper: Normalize numeric strings (EU/US formats)
@@ -84,26 +84,24 @@ def match_invoices(erp_df, ven_df):
             d_val = normalize_number(v_row.get("debit_ven", 0))
             c_val = normalize_number(v_row.get("credit_ven", 0))
 
+            # ❌ Skip payments or transfers — only invoices & credit notes matter
+            if any(w in desc for w in ["pago", "transferencia", "payment", "πληρωμή"]):
+                continue
+
             # Vendor debit = invoice, credit = credit note
             if any(w in desc for w in ["abono", "credit"]):
                 v_amt = c_val
             else:
                 v_amt = d_val
 
-            # Flexible invoice match
+            # Flexible invoice match (by last digits or fuzzy)
             if (
                 e_inv[-4:] in v_inv
                 or v_inv[-4:] in e_inv
                 or fuzz.ratio(e_inv, v_inv) > 78
             ):
                 diff = round(e_amt - v_amt, 2)
-
-                # ✅ Treat pago parcial, payment, transfer as Match
-                if diff == 0 or any(w in desc for w in ["pago", "transferencia", "payment", "πληρωμή"]):
-                    status = "Match"
-                    diff = 0.0
-                else:
-                    status = "Difference"
+                status = "Match" if diff == 0 else "Difference"
 
                 matched.append({
                     "Vendor/Supplier": e_row.get("vendor_erp", ""),
@@ -120,7 +118,7 @@ def match_invoices(erp_df, ven_df):
                 matched_ven.add(v_id)
                 break
 
-    # ✅ Improved missing logic — avoid double flagging same ERP invoice
+    # ✅ Improved missing logic — avoid double flagging
     df_matched = pd.DataFrame(matched)
     matched_invoices = df_matched["ERP Invoice"].unique().tolist()
     matched_vendor_invoices = df_matched["Vendor Invoice"].unique().tolist()
@@ -140,13 +138,13 @@ if uploaded_erp and uploaded_vendor:
     erp_df = normalize_columns(pd.read_excel(uploaded_erp), "erp")
     ven_df = normalize_columns(pd.read_excel(uploaded_vendor), "ven")
 
-    with st.spinner("Reconciling invoices... please wait"):
+    with st.spinner("ReconRaptor is scanning for matches... 🦖"):
         matched, erp_missing, ven_missing = match_invoices(erp_df, ven_df)
 
     total_m = len(matched)
     total_d = len(matched[matched["Status"] == "Difference"])
     total_miss = len(erp_missing) + len(ven_missing)
-    st.success(f"✅ Reconciliation complete: {total_m} Matches · {total_d} Differences · {total_miss} Missing")
+    st.success(f"✅ Recon complete: {total_m} Matches · {total_d} Differences · {total_miss} Missing")
 
     # --- Highlighting
     def highlight_row(row):
@@ -169,8 +167,9 @@ if uploaded_erp and uploaded_vendor:
     st.download_button(
         "⬇️ Download Matched CSV",
         matched.to_csv(index=False).encode("utf-8"),
-        "matched_results.csv",
+        "ReconRaptor_Results.csv",
         "text/csv"
     )
+
 else:
-    st.info("Please upload both ERP Export and Vendor Statement files to begin.")
+    st.info("Please upload both ERP Export and Vendor Statement files to begin the hunt. 🦖")
