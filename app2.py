@@ -84,19 +84,26 @@ def match_invoices(erp_df, ven_df):
             d_val = normalize_number(v_row.get("debit_ven", 0))
             c_val = normalize_number(v_row.get("credit_ven", 0))
 
+            # Vendor debit = invoice, credit = credit note
             if any(w in desc for w in ["abono", "credit"]):
                 v_amt = c_val
             else:
                 v_amt = d_val
 
-            # Flexible invoice matching
+            # Flexible invoice match
             if (
                 e_inv[-4:] in v_inv
                 or v_inv[-4:] in e_inv
                 or fuzz.ratio(e_inv, v_inv) > 78
             ):
                 diff = round(e_amt - v_amt, 2)
-                status = "Match" if diff == 0 else "Difference"
+
+                # ✅ Treat pago parcial, payment, transfer as Match
+                if diff == 0 or any(w in desc for w in ["pago", "transferencia", "payment", "πληρωμή"]):
+                    status = "Match"
+                    diff = 0.0
+                else:
+                    status = "Difference"
 
                 matched.append({
                     "Vendor/Supplier": e_row.get("vendor_erp", ""),
