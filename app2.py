@@ -2,11 +2,14 @@ import streamlit as st
 import pandas as pd
 import re
 
-st.set_page_config(page_title="🦅 ReconRaptor — Vendor Reconciliation", layout="wide")
-st.title("🦅 ReconRaptor — Vendor Invoice Reconciliation")
+# ==========================
+# ReconRaptor setup 🦖
+# ==========================
+st.set_page_config(page_title="🦖 ReconRaptor", layout="wide")
+st.title("🦖 ReconRaptor — Vendor Invoice Reconciliation")
 
 # ==========================
-# Helpers
+# Helper functions
 # ==========================
 def normalize_number(v):
     """Convert formatted numbers to float safely."""
@@ -28,6 +31,7 @@ def normalize_number(v):
     except:
         return 0.0
 
+
 def normalize_columns(df, tag):
     """Unify multilingual headers for ERP or Vendor."""
     mapping = {
@@ -39,7 +43,7 @@ def normalize_columns(df, tag):
         "credit": ["credit", "haber", "πίστωση"],
         "amount": ["amount", "importe", "valor"],
         "balance": ["balance", "saldo", "υπόλοιπο"],
-        "date": ["date", "fecha", "ημερομηνία"]
+        "date": ["date", "fecha", "ημερομηνία"],
     }
 
     rename_map = {}
@@ -50,12 +54,14 @@ def normalize_columns(df, tag):
                 rename_map[col] = f"{key}_{tag}"
     return df.rename(columns=rename_map)
 
+
 def normalize_invoice_num(s):
     """Standardize invoice numbers for comparison."""
     return re.sub(r"[^A-Za-z0-9]", "", str(s or "")).upper()
 
+
 # ==========================
-# Matching Logic
+# Core reconciliation
 # ==========================
 def match_invoices(erp_df, ven_df):
     matched_rows = []
@@ -73,11 +79,11 @@ def match_invoices(erp_df, ven_df):
     if not inv_erp or not inv_ven:
         return pd.DataFrame(), erp_df, ven_df
 
-    # ---- normalize numbers ----
+    # ---- normalize invoice numbers ----
     erp_df["__inv"] = erp_df[inv_erp].astype(str).map(normalize_invoice_num)
     ven_df["__inv"] = ven_df[inv_ven].astype(str).map(normalize_invoice_num)
 
-    # restrict same TRN/vendor if available
+    # restrict to same TRN/vendor if available
     if trn_erp and trn_ven and not ven_df[trn_ven].dropna().empty:
         vendor_trn = str(ven_df[trn_ven].dropna().iloc[0])
         erp_df = erp_df[erp_df[trn_erp].astype(str) == vendor_trn]
@@ -105,7 +111,7 @@ def match_invoices(erp_df, ven_df):
 
             matched_rows.append({
                 "Vendor/Supplier": e_row.get("vendor_erp", ""),
-                "TRN/AFM": e_row.get(trn_erp, ""),
+                "TRN/AFM": e_row.get("trn_erp", ""),
                 "ERP Invoice": e_row.get(inv_erp, ""),
                 "Vendor Invoice": v_row.get(inv_ven, ""),
                 "ERP Amount": e_amt,
@@ -119,14 +125,17 @@ def match_invoices(erp_df, ven_df):
 
     matched = pd.DataFrame(matched_rows)
 
-    # ---- find missing ----
-    erp_missing = erp_df[~erp_df["__inv"].isin(matched_erp_invoices)].reset_index(drop=True)
-    ven_missing = ven_df[~ven_df["__inv"].isin(matched_ven_invoices)].reset_index(drop=True)
+    # ✅ Correct missing logic
+    # → If it's in vendor but not ERP → Missing in ERP
+    # → If it's in ERP but not vendor → Missing in Vendor
+    erp_missing = ven_df[~ven_df["__inv"].isin(matched_erp_invoices)].reset_index(drop=True)
+    ven_missing = erp_df[~erp_df["__inv"].isin(matched_ven_invoices)].reset_index(drop=True)
 
     return matched, erp_missing, ven_missing
 
+
 # ==========================
-# Streamlit UI
+# Streamlit UI 🦖
 # ==========================
 st.write("Upload your ERP Export and Vendor Statement for reconciliation:")
 
@@ -137,7 +146,7 @@ if uploaded_erp and uploaded_vendor:
     erp_df = normalize_columns(pd.read_excel(uploaded_erp), "erp")
     ven_df = normalize_columns(pd.read_excel(uploaded_vendor), "ven")
 
-    with st.spinner("Reconciling invoices..."):
+    with st.spinner("🦖 ReconRaptor is reconciling your invoices..."):
         matched, erp_missing, ven_missing = match_invoices(erp_df, ven_df)
 
     total_match = len(matched[matched["Status"] == "Match"]) if not matched.empty else 0
@@ -165,8 +174,8 @@ if uploaded_erp and uploaded_vendor:
     st.download_button(
         "⬇️ Download Matched CSV",
         matched.to_csv(index=False).encode("utf-8"),
-        "reconciliation_results.csv",
+        "ReconRaptor_Results.csv",
         "text/csv"
     )
 else:
-    st.info("Please upload both ERP Export and Vendor Statement to begin.")
+    st.info("🦖 Please upload both ERP and Vendor Statement files to begin.")
