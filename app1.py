@@ -1,5 +1,5 @@
 # =============================================
-# app.py — Vendor Statement → Excel Extractor
+# app1.py — Vendor Statement → Excel Extractor
 # =============================================
 
 import os
@@ -9,29 +9,45 @@ import fitz  # PyMuPDF
 import pandas as pd
 import streamlit as st
 from openai import OpenAI
-from dotenv import load_dotenv
 
 # =============================================
-# 1️⃣  Load environment variables safely
+# 1️⃣  Try to load .env (optional)
 # =============================================
-load_dotenv()  # Loads your .env file
-api_key = os.getenv("OPENAI_API_KEY")
+try:
+    from dotenv import load_dotenv
+    load_dotenv()  # Load .env if exists
+except ModuleNotFoundError:
+    st.warning("⚠️ 'python-dotenv' not installed — continuing without .env support.")
+
+# =============================================
+# 2️⃣  Secure API key loading (supports local + Streamlit Cloud)
+# =============================================
+api_key = (
+    os.getenv("OPENAI_API_KEY")
+    or st.secrets.get("OPENAI_API_KEY", None)
+)
 
 if not api_key:
-    st.error("❌ No OpenAI API key found. Create a .env file with: OPENAI_API_KEY=your_key_here")
+    st.error(
+        "❌ No OpenAI API key found.\n\n"
+        "Please add it in one of these ways:\n"
+        "1️⃣  Create a `.env` file with line: `OPENAI_API_KEY=your_key_here`\n"
+        "2️⃣  Or, in Streamlit Cloud → Settings → Secrets → add the same line."
+    )
     st.stop()
 
+# Initialize OpenAI client
 client = OpenAI(api_key=api_key)
 MODEL = "gpt-4.1-mini"
 
 # =============================================
-# 2️⃣  Streamlit setup
+# 3️⃣  Streamlit setup
 # =============================================
 st.set_page_config(page_title="📄 Vendor Statement Extractor", layout="wide")
 st.title("📄 Vendor Statement → Excel Extractor (Spanish PDFs)")
 
 # =============================================
-# 3️⃣  Helper functions
+# 4️⃣  Helper functions
 # =============================================
 def extract_text_from_pdf(file):
     """Extract text from all PDF pages."""
@@ -43,7 +59,7 @@ def extract_text_from_pdf(file):
 
 
 def clean_text(text):
-    """Normalize spaces and currency symbols."""
+    """Normalize spaces and symbols."""
     text = text.replace("\xa0", " ").replace("€", " EUR")
     text = " ".join(text.split())
     return text
@@ -76,16 +92,15 @@ def extract_with_llm(raw_text):
 
 
 def to_excel_bytes(records):
-    """Return Excel file as bytes."""
+    """Return Excel file in memory."""
     df = pd.DataFrame(records)
     output = BytesIO()
     df.to_excel(output, index=False)
     output.seek(0)
     return output
 
-
 # =============================================
-# 4️⃣  Streamlit UI
+# 5️⃣  Streamlit interface
 # =============================================
 uploaded_pdf = st.file_uploader("📂 Upload a vendor statement (PDF)", type=["pdf"])
 
