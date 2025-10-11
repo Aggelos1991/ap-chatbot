@@ -30,18 +30,38 @@ def find_col(df, aliases):
 # SMART INVOICE NORMALIZATION & MATCHING
 # ==========================================
 def normalize_invoice(inv):
-    """Extracts the numeric core of an invoice for fuzzy comparison."""
+    """Extracts the final numeric part of an invoice (smart mode)."""
     s = str(inv).strip().upper()
-    digits = re.sub(r"\D", "", s)
-    return digits or s[-5:]  # fallback to last few chars if no digits
+    # Find all numeric sequences (e.g., ['25', '232'])
+    nums = re.findall(r"\d+", s)
+    if not nums:
+        # fallback to alphanumeric tail if no digits
+        return s[-5:]
+    # take the LAST numeric block — it's usually the actual invoice number
+    last = nums[-1]
+    # remove leading zeros for matching
+    return last.lstrip("0") or last
 
 def invoice_match(erp_inv, ven_inv):
-    """Smart comparison: matches if numbers overlap or end with same digits."""
+    """Super-flexible invoice matching for real-world formats."""
     e = normalize_invoice(erp_inv)
     v = normalize_invoice(ven_inv)
     if not e or not v:
         return False
-    return e == v or e.endswith(v) or v.endswith(e)
+
+    if e == v:
+        return True
+
+    e_noz, v_noz = e.lstrip("0"), v.lstrip("0")
+
+    if e_noz in v_noz or v_noz in e_noz:
+        return True
+    if e_noz.endswith(v_noz) or v_noz.endswith(e_noz):
+        return True
+    if len(e_noz) >= 3 and len(v_noz) >= 3 and e_noz[-3:] == v_noz[-3:]:
+        return True
+
+    return False
 
 # ==========================================
 # LOAD FILE
