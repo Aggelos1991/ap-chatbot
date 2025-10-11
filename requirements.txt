@@ -4,3 +4,5 @@ PyMuPDF
 pandas
 openpyxl
 python-dotenv
+fuzzywuzzy
+python-Levenshtein
