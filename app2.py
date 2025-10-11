@@ -1,156 +1,104 @@
 import streamlit as st
 import pandas as pd
-import re
+from fuzzywuzzy import fuzz
 
-st.set_page_config(page_title="🌍 Universal Vendor Reconciliation", layout="wide")
-st.title("🌍 Universal Vendor Reconciliation App")
+st.set_page_config(page_title="🤝 Vendor Reconciliation", layout="wide")
+st.title("🧾 Universal Vendor Reconciliation App")
 
-# ==========================================
-# UNIVERSAL COLUMN DETECTION
-# ==========================================
-COLS = {
-    "vendor": ["Vendor", "Supplier", "Supplier Name", "Προμηθευτής"],
-    "trn": ["TRN", "AFM", "ΑΦΜ", "VAT", "CIF", "Tax ID"],
-    "invoice": [
-        "Invoice", "Invoice No", "Inv No", "Alt Document",
-        "Alternative Document", "Αρ. Τιμολογίου", "Παραστατικό"
-    ],
-    "amount": ["Amount", "Value", "Invoice Value", "Ποσό"],
-    "balance": ["Balance", "Υπόλοιπο", "Saldo"],
-    "date": ["Date", "Ημερομηνία", "Fecha"]
-}
+# ============================================================
+# Universal Column Mapping — multilingual support (EN/ES/GR)
+# ============================================================
+def normalize_columns(df, source="ven"):
+    colmap = {
+        "vendor": ["supplier name", "vendor", "proveedor", "προμηθευτής"],
+        "trn": ["tax id", "cif", "vat", "afm", "trn", "vat number", "tax number"],
+        "invoice": ["invoice number", "alt document", "invoice", "παραστατικό", "factura"],
+        "balance": ["balance", "saldo", "υπόλοιπο", "amount", "importe", "valor"],
+        "date": ["date", "fecha", "ημερομηνία"],
+    }
 
-def find_col(df, aliases):
-    for col in df.columns:
-        if str(col).strip().lower() in [a.lower() for a in aliases]:
-            return col
-    return None
+    rename_map = {}
+    for key, variants in colmap.items():
+        for col in df.columns:
+            col_low = str(col).strip().lower()
+            if any(v in col_low for v in variants):
+                rename_map[col] = f"{key}_{source}"
+                break
 
-# ==========================================
-# SMART INVOICE NORMALIZATION & MATCHING
-# ==========================================
-def normalize_invoice(inv):
-    """Extracts the final numeric part of an invoice (smart mode)."""
-    s = str(inv).strip().upper()
-    # Find all numeric sequences (e.g., ['25', '232'])
-    nums = re.findall(r"\d+", s)
-    if not nums:
-        # fallback to alphanumeric tail if no digits
-        return s[-5:]
-    # take the LAST numeric block — it's usually the actual invoice number
-    last = nums[-1]
-    # remove leading zeros for matching
-    return last.lstrip("0") or last
+    df = df.rename(columns=rename_map)
+    return df
 
-def invoice_match(erp_inv, ven_inv):
-    """Super-flexible invoice matching for real-world formats."""
-    e = normalize_invoice(erp_inv)
-    v = normalize_invoice(ven_inv)
-    if not e or not v:
-        return False
 
-    if e == v:
-        return True
-
-    e_noz, v_noz = e.lstrip("0"), v.lstrip("0")
-
-    if e_noz in v_noz or v_noz in e_noz:
-        return True
-    if e_noz.endswith(v_noz) or v_noz.endswith(e_noz):
-        return True
-    if len(e_noz) >= 3 and len(v_noz) >= 3 and e_noz[-3:] == v_noz[-3:]:
-        return True
-
-    return False
-
-# ==========================================
-# LOAD FILE
-# ==========================================
-def load_excel(uploaded_file):
-    try:
-        df = pd.read_excel(uploaded_file)
-        return df
-    except Exception as e:
-        st.error(f"Error reading Excel: {e}")
-        return pd.DataFrame()
-
-# ==========================================
-# MATCHING LOGIC
-# ==========================================
+# ============================================================
+# Matching Logic
+# ============================================================
 def match_invoices(erp_df, ven_df):
-    matched_rows = []
-    erp_unmatched, ven_unmatched = [], []
-
-    # Detect universal columns in both dataframes
-    cols = {}
-    for key in COLS:
-        cols[key + "_erp"] = find_col(erp_df, COLS[key])
-        cols[key + "_ven"] = find_col(ven_df, COLS[key])
-
-    missing_cols = [k for k, v in cols.items() if v is None and not k.startswith("amount")]
-    if missing_cols:
-        st.warning(f"⚠️ Missing columns detected: {missing_cols}. Matching might be incomplete.")
+    matched = []
+    erp_missing = []
+    ven_missing = ven_df.copy()
 
     for _, erp_row in erp_df.iterrows():
-        erp_trn = str(erp_row.get(cols["trn_erp"], "")).strip()
-        erp_inv = erp_row.get(cols["invoice_erp"], "")
-        erp_vendor = erp_row.get(cols["vendor_erp"], "Unknown")
-        erp_balance = float(erp_row.get(cols["balance_erp"], 0))
+        erp_trn = str(erp_row.get("trn_erp", "")).strip()
+        erp_invoice = str(erp_row.get("invoice_erp", "")).strip()
+        erp_balance = float(erp_row.get("balance_erp", 0))
 
-        # Find vendor matches by TRN/AFM/VAT
-        candidates = ven_df[
-            ven_df[cols["trn_ven"]].astype(str).str.strip() == erp_trn
-        ] if cols["trn_ven"] else pd.DataFrame()
-
+        # Find vendor in vendor dataframe
+        ven_subset = ven_df[ven_df["trn_ven"] == erp_trn]
         found = False
+        for _, ven_row in ven_subset.iterrows():
+            ven_invoice = str(ven_row.get("invoice_ven", "")).strip()
+            ven_balance = float(ven_row.get("balance_ven", 0))
 
-        for _, ven_row in candidates.iterrows():
-            ven_inv = ven_row.get(cols["invoice_ven"], "")
-            if invoice_match(erp_inv, ven_inv):
-                ven_balance = float(ven_row.get(cols["balance_ven"], 0))
+            # Flexible matching (last digits, partials, fuzzy)
+            if (
+                erp_invoice[-4:] in ven_invoice
+                or ven_invoice[-4:] in erp_invoice
+                or fuzz.ratio(erp_invoice, ven_invoice) > 75
+            ):
                 diff = round(erp_balance - ven_balance, 2)
-                status = "✅ Match" if abs(diff) < 0.05 else "⚠️ Balance Difference"
-                matched_rows.append({
-                    "Vendor/Supplier": erp_vendor,
+                status = "Match" if diff == 0 else "Difference"
+                matched.append({
+                    "Vendor/Supplier": erp_row.get("vendor_erp", ""),
                     "TRN/AFM": erp_trn,
-                    "ERP Invoice": erp_inv,
-                    "Vendor Invoice": ven_inv,
+                    "ERP Invoice": erp_invoice,
+                    "Vendor Invoice": ven_invoice,
                     "ERP Balance": erp_balance,
                     "Vendor Balance": ven_balance,
                     "Difference": diff,
                     "Status": status
                 })
+                ven_missing = ven_missing.drop(ven_row.name)
                 found = True
                 break
 
         if not found:
-            erp_unmatched.append(erp_row)
+            erp_missing.append(erp_row)
 
-    # vendor unmatched
-    for _, ven_row in ven_df.iterrows():
-        trn = str(ven_row.get(cols["trn_ven"], "")).strip()
-        inv = ven_row.get(cols["invoice_ven"], "")
-        in_erp = any(
-            invoice_match(x, inv) and (str(y).strip() == trn)
-            for x, y in zip(erp_df[cols["invoice_erp"]], erp_df[cols["trn_erp"]])
-        )
-        if not in_erp:
-            ven_unmatched.append(ven_row)
+    return pd.DataFrame(matched), pd.DataFrame(erp_missing), ven_missing
 
-    return pd.DataFrame(matched_rows), pd.DataFrame(erp_unmatched), pd.DataFrame(ven_unmatched)
 
-# ==========================================
-# STREAMLIT UI
-# ==========================================
-st.write("Upload your ERP export and Vendor statement below (any language or column names supported):")
+# ============================================================
+# Streamlit interface
+# ============================================================
+uploaded_erp = st.file_uploader("📂 Upload ERP Export (Excel)", type=["xlsx"])
+uploaded_vendor = st.file_uploader("📂 Upload Vendor Statement (Excel)", type=["xlsx"])
 
-erp_file = st.file_uploader("📘 Upload ERP Export (Excel)", type=["xlsx"])
-vendor_file = st.file_uploader("📗 Upload Vendor Statement (Excel)", type=["xlsx"])
+if uploaded_erp and uploaded_vendor:
+    erp_df = pd.read_excel(uploaded_erp)
+    ven_df = pd.read_excel(uploaded_vendor)
 
-if erp_file and vendor_file:
-    erp_df = load_excel(erp_file)
-    ven_df = load_excel(vendor_file)
-    with st.spinner("Reconciling..."):
+    # Normalize column names
+    erp_df = normalize_columns(erp_df, source="erp")
+    ven_df = normalize_columns(ven_df, source="ven")
+
+    # Check if required columns exist
+    required_cols = ["trn_erp", "invoice_erp", "balance_erp", "vendor_erp", "trn_ven", "invoice_ven", "balance_ven"]
+    missing_cols = [c for c in required_cols if c not in erp_df.columns and c not in ven_df.columns]
+
+    if missing_cols:
+        st.warning(f"⚠️ Missing columns detected: {missing_cols}. Matching might be incomplete.")
+
+    with st.spinner("🔍 Reconciling... please wait..."):
         matched, erp_missing, ven_missing = match_invoices(erp_df, ven_df)
 
     st.success("✅ Reconciliation complete!")
@@ -164,7 +112,7 @@ if erp_file and vendor_file:
     st.subheader("❌ In Vendor but Missing in ERP")
     st.dataframe(ven_missing)
 
-    # Downloads
-    st.download_button("⬇️ Download Matched", matched.to_csv(index=False).encode(), "matched.csv")
-    st.download_button("⬇️ Download Missing in ERP", ven_missing.to_csv(index=False).encode(), "missing_in_erp.csv")
-    st.download_button("⬇️ Download Missing in Vendor", erp_missing.to_csv(index=False).encode(), "missing_in_vendor.csv")
+    st.download_button("⬇️ Download Matched", matched.to_csv(index=False).encode("utf-8"), "matched.csv", "text/csv")
+
+else:
+    st.info("Please upload both ERP Export and Vendor Statement files to begin.")
