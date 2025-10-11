@@ -4,7 +4,7 @@ from fuzzywuzzy import fuzz
 import re
 
 st.set_page_config(page_title="🦅 ReconRaptor — Vendor Reconciliation", layout="wide")
-st.title("🦅 ReconRaptor — Vendor Invoice Reconciliation")
+st.title("🦖 ReconRaptor")
 
 # ==========================
 # Helper functions
