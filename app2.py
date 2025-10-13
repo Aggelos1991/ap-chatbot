@@ -68,22 +68,44 @@ def classify_erp_doc(reason_text, credit, charge):
 
 
 def normalize_columns(df, tag):
-    """Map multilingual headers to unified names."""
+    """Map multilingual headers to unified names (robust, with diagnostics)."""
     mapping = {
-        "invoice": ["alternative document", "alt document", "invoice", "factura", "nº factura", "no", "nro", "num", "numero", "document", "doc", "παραστατικό"],
+        "invoice": [
+            "alternative document", "alt document", "invoice", "factura",
+            "nº factura", "no", "nro", "num", "numero", "document", "doc", "παραστατικό"
+        ],
         "credit": ["credit", "haber", "crédito", "credito"],
-        "debit": ["debit", "debe", "cargo", "importe", "valor", "total", "totale", "amount", "importe total", "document value"],
+        "debit": [
+            "debit", "debe", "cargo", "importe", "valor", "total", "totale",
+            "amount", "importe total", "document value", "charge", "charges"
+        ],
         "reason": ["reason", "motivo", "concepto", "descripcion", "glosa", "observaciones"],
         "cif": ["cif", "nif", "vat", "tax", "vat number", "tax id", "afm", "vat id", "num. identificacion fiscal"],
         "date": ["date", "fecha", "fech", "ημερομηνία", "data"],
     }
+
     rename_map = {}
     cols_lower = {c: str(c).strip().lower() for c in df.columns}
+
     for k, vals in mapping.items():
         for col, low in cols_lower.items():
             if any(v in low for v in vals):
                 rename_map[col] = f"{k}_{tag}"
+
     out = df.rename(columns=rename_map)
+
+    # Fallback creation if still missing key columns
+    required = ["debit", "credit"]
+    for coltype in required:
+        cname = f"{coltype}_{tag}"
+        if cname not in out.columns:
+            out[cname] = 0.0
+
+    # ✅ Debug info: show what was mapped
+    with st.expander(f"🧩 Column mapping detected for {tag.upper()} file"):
+        st.write({k: v for k, v in rename_map.items()})
+        st.write("✅ Columns after normalization:", list(out.columns))
+
     return out
 
 
