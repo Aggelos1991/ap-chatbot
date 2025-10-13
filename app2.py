@@ -192,16 +192,32 @@ def match_invoices(erp_df, ven_df):
             ven_missing_list.append(row)
 
     # --- Create clean DataFrames ---
+    # --- Create clean DataFrames (remove NaN/None rows) ---
     if ven_missing_list:
-        missing_erp_final = pd.DataFrame(ven_missing_list)[["date_ven" if "date_ven" in ven_use.columns else "date_erp",
-                                                            "invoice_ven" if "invoice_ven" in ven_use.columns else "invoice_erp",
-                                                            "__amt"]].rename(
-            columns={"date_ven": "Date", "invoice_ven": "Invoice", "date_erp": "Date", "invoice_erp": "Invoice", "__amt": "Amount"}
-        )
+        combined_rows = []
+        for r in ven_missing_list:
+            rec = {}
+            # unify column names whether it came from ERP or Vendor
+            rec["Date"] = r.get("date_ven") or r.get("date_erp")
+            rec["Invoice"] = r.get("invoice_ven") or r.get("invoice_erp")
+            rec["Amount"] = r.get("__amt")
+            # skip completely empty or None rows
+            if rec["Invoice"] and str(rec["Invoice"]).lower() != "none":
+                combined_rows.append(rec)
+        missing_erp_final = pd.DataFrame(combined_rows)
     else:
         missing_erp_final = pd.DataFrame(columns=["Date", "Invoice", "Amount"])
 
-    # Missing in Vendor now stays always empty
+    # Remove any accidental blank or duplicate rows
+    if not missing_erp_final.empty:
+        missing_erp_final = (
+            missing_erp_final.dropna(subset=["Invoice"])
+            .query("Invoice != 'None'")
+            .drop_duplicates(subset=["Invoice"])
+            .reset_index(drop=True)
+        )
+
+    # Missing in Vendor now always empty
     missing_vendor_final = pd.DataFrame(columns=["Date", "Invoice", "Amount"])
 
     return pd.DataFrame(matched), missing_erp_final, missing_vendor_final
