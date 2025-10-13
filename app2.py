@@ -14,15 +14,8 @@ st.title("🦖 ReconRaptor — Vendor Invoice Reconciliation")
 # ======================================
 def normalize_number(v):
     """Convert numeric strings like '1.234,56' or '1,234.56' safely to float."""
-    if isinstance(v, (pd.Series, list)):
-        v = v.iloc[0] if isinstance(v, pd.Series) else v[0]
     if v is None:
         return 0.0
-    try:
-        if isinstance(v, float) and pd.isna(v):
-            return 0.0
-    except Exception:
-        pass
     s = str(v).strip()
     s = re.sub(r"[^\d,.\-]", "", s)
     if s.count(",") == 1 and s.count(".") == 1:
@@ -38,33 +31,6 @@ def normalize_number(v):
         return float(s)
     except:
         return 0.0
-
-
-SPANISH_REASON_MAP = {
-    "invoice": ["factura", "fact", "fac", "doc", "documento", "invoice", "παραστατικό"],
-    "credit_note": ["abono", "nota de crédito", "nota credito", "nc", "avoir", "πιστωτικό"],
-    "payment": ["pago", "transferencia", "remesa", "domiciliación", "cobro", "recepción", "payment", "κατάθεση"],
-}
-
-def classify_erp_doc(reason_text, credit, charge):
-    """Return INV / CN / PAYMENT / UNKNOWN using Reason + amount columns."""
-    r = (str(reason_text) if reason_text is not None else "").strip().lower()
-    def has_any(words): 
-        return any(w in r for w in words)
-    if has_any(SPANISH_REASON_MAP["credit_note"]):
-        return "CN"
-    if has_any(SPANISH_REASON_MAP["invoice"]):
-        return "INV"
-    if has_any(SPANISH_REASON_MAP["payment"]):
-        return "PAYMENT"
-    # Fallback by amounts
-    c = normalize_number(credit)
-    ch = normalize_number(charge)
-    if c > 0 and ch == 0:
-        return "INV"
-    if ch > 0 and c == 0:
-        return "PAYMENT"
-    return "UNKNOWN"
 
 
 def normalize_columns(df, tag):
@@ -101,7 +67,7 @@ def normalize_columns(df, tag):
         if cname not in out.columns:
             out[cname] = 0.0
 
-    # ✅ Debug info: show what was mapped
+    # ✅ Debug info
     with st.expander(f"🧩 Column mapping detected for {tag.upper()} file"):
         st.write({k: v for k, v in rename_map.items()})
         st.write("✅ Columns after normalization:", list(out.columns))
@@ -109,45 +75,17 @@ def normalize_columns(df, tag):
     return out
 
 
-def extract_core_invoice(inv):
-    """Extract a meaningful invoice tail key."""
-    if isinstance(inv, (pd.Series, list)):
-        inv = inv.iloc[0] if isinstance(inv, pd.Series) else inv[0]
-    if inv is None or (isinstance(inv, float) and pd.isna(inv)):
-        return ""
-    s = re.sub(r"[^A-Za-z0-9]", "", str(inv).upper())
-    m = re.search(r"([A-Z]*\d{2,6})$", s)
-    return m.group(1) if m else (s[-4:] if len(s) > 4 else s)
+_digit_seq = re.compile(r"\d{3,}")  # any 3+ continuous digits
 
 
-# ============================================================
-# ✅ FINAL VERSION — Robust 3+ Digit Invoice Matcher
-# ============================================================
 def share_3plus_digits(a, b):
-    """
-    Determine if two invoice references share any 3+ consecutive digits,
-    ignoring prefixes, letters, and special characters (e.g. PF, DS, /, --, etc.).
-    Never matches between Invoice and Credit Note (INV vs CN).
-    """
-    a = str(a).upper().strip()
-    b = str(b).upper().strip()
-
-    # Skip matching between Invoice and Credit Note types
-    if (a.startswith("CN") and not b.startswith("CN")) or (b.startswith("CN") and not a.startswith("CN")):
+    """True if a and b share any continuous 3+ digit substring."""
+    A = set(m.group(0) for m in _digit_seq.finditer(str(a)))
+    if not A:
         return False
-
-    # Keep only digits
-    a_digits = re.sub(r"\D", "", a)
-    b_digits = re.sub(r"\D", "", b)
-    if not a_digits or not b_digits:
-        return False
-
-    # Check all possible overlapping numeric substrings of length ≥3
-    for i in range(len(a_digits) - 2):
-        for length in range(6, 2, -1):  # 6,5,4,3
-            seq = a_digits[i:i + length]
-            if len(seq) >= 3 and seq in b_digits:
-                return True
+    for m in _digit_seq.finditer(str(b)):
+        if m.group(0) in A:
+            return True
     return False
 
 
@@ -157,34 +95,30 @@ def share_3plus_digits(a, b):
 def match_invoices(erp_df, ven_df):
     matched, matched_erp, matched_ven = [], set(), set()
 
-    req_erp = ["invoice_erp", "credit_erp", "debit_erp", "reason_erp", "date_erp", "cif_erp"]
-    req_ven = ["invoice_ven", "debit_ven", "date_ven", "cif_ven"]
-    for c in req_erp:
-        if c not in erp_df.columns:
-            st.error(f"❌ ERP file missing column: {c}")
-            return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
-    for c in req_ven:
-        if c not in ven_df.columns:
-            st.error(f"❌ Vendor file missing column: {c}")
-            return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
-
-    erp_df["__core"] = erp_df["invoice_erp"].astype(str).apply(extract_core_invoice)
-    ven_df["__core"] = ven_df["invoice_ven"].astype(str).apply(extract_core_invoice)
-
-    erp_df["__doctype"] = erp_df.apply(lambda r: classify_erp_doc(r.get("reason_erp"), r.get("credit_erp"), r.get("debit_erp")), axis=1)
-    erp_df["__amt"] = erp_df.apply(
-        lambda r: normalize_number(r["credit_erp"]) if r["__doctype"] == "INV"
-                  else (-normalize_number(r["debit_erp"]) if r["__doctype"] == "CN" else 0.0),
+    # Pre-compute ERP doc types + amounts (Credit = invoice, Debit = CN)
+    erp_df["__doctype"] = erp_df.apply(
+        lambda r: "CN" if normalize_number(r.get("debit_erp")) > 0 else "INV"
+        if normalize_number(r.get("credit_erp")) > 0 else "UNKNOWN",
         axis=1
     )
-    ven_df["__amt"] = ven_df.apply(lambda r: normalize_number(r.get("debit_ven", 0.0)), axis=1)
+    erp_df["__amt"] = erp_df.apply(
+        lambda r: normalize_number(r["credit_erp"]) if r["__doctype"] == "INV"
+        else (-normalize_number(r["debit_erp"]) if r["__doctype"] == "CN" else 0.0),
+        axis=1
+    )
+
+    # Vendor side: positive = Invoice, negative = Credit Note
+    ven_df["__doctype"] = ven_df.apply(
+        lambda r: "CN" if normalize_number(r.get("debit_ven")) < 0 else "INV",
+        axis=1
+    )
+    ven_df["__amt"] = ven_df.apply(lambda r: abs(normalize_number(r.get("debit_ven"))), axis=1)
 
     erp_use = erp_df[erp_df["__doctype"].isin(["INV", "CN"])].copy()
-    ven_use = ven_df.copy()
+    ven_use = ven_df[ven_df["__doctype"].isin(["INV", "CN"])].copy()
 
     for _, e_row in erp_use.iterrows():
         e_inv = str(e_row["invoice_erp"]).strip()
-        e_core = e_row["__core"]
         e_amt = round(float(e_row["__amt"]), 2)
         e_date = e_row.get("date_erp")
 
@@ -199,18 +133,15 @@ def match_invoices(erp_df, ven_df):
             if v_inv in matched_ven:
                 continue
 
-            # 3-digit overlap rule (the key update)
+            # Matching rules
             digits3 = share_3plus_digits(e_inv, v_inv)
             fuzzy = fuzz.ratio(e_inv, v_inv) if e_inv and v_inv else 0
-
-            if not digits3 and fuzzy < 90:
-                continue
-
             amt_close = abs(e_amt - v_amt) < 0.05
-            score = (70 if digits3 else 0) + fuzzy + (60 if amt_close else 0)
-            if score > best_score:
-                best_score = score
-                best_v = (v_inv, v_amt, v_date)
+            if digits3 or fuzzy > 90 or (e_inv == v_inv):
+                score = fuzzy + (60 if amt_close else 0) + (100 if digits3 else 0)
+                if score > best_score:
+                    best_score = score
+                    best_v = (v_inv, v_amt, v_date)
 
         if best_v:
             v_inv, v_amt, v_date = best_v
@@ -229,33 +160,30 @@ def match_invoices(erp_df, ven_df):
             matched_erp.add(e_inv)
             matched_ven.add(v_inv)
 
-    erp_use["__clean_inv"] = erp_use["invoice_erp"].str.replace(r"[^A-Z0-9]", "", regex=True)
-    ven_use["__clean_inv"] = ven_use["invoice_ven"].str.replace(r"[^A-Z0-9]", "", regex=True)
-    matched_erp_clean = {i.upper() for i in matched_erp}
-    matched_ven_clean = {i.upper() for i in matched_ven}
+    # Missing detection using same 3-digit rule
+    def is_missing(target_df, compare_df, col_from, col_to):
+        missing_rows = []
+        for _, row in target_df.iterrows():
+            ref = str(row[col_from])
+            if not any(share_3plus_digits(ref, str(x)) for x in compare_df[col_to].astype(str)):
+                missing_rows.append(row)
+        return pd.DataFrame(missing_rows)
 
-    erp_missing = (
-        erp_use[~erp_use["__clean_inv"].isin(matched_erp_clean)]
-        .loc[:, ["date_erp", "invoice_erp", "__amt"]]
-        .rename(columns={"date_erp": "Date", "invoice_erp": "Invoice", "__amt": "Amount"})
-        .reset_index(drop=True)
-    )
+    erp_missing = is_missing(erp_use, ven_use, "invoice_erp", "invoice_ven")
+    ven_missing = is_missing(ven_use, erp_use, "invoice_ven", "invoice_erp")
 
-    ven_missing = (
-        ven_use[~ven_use["__clean_inv"].isin(matched_ven_clean)]
-        .loc[:, ["date_ven", "invoice_ven", "__amt"]]
-        .rename(columns={"date_ven": "Date", "invoice_ven": "Invoice", "__amt": "Amount"})
-        .reset_index(drop=True)
-    )
+    erp_missing = erp_missing.loc[:, ["date_erp", "invoice_erp", "__amt"]].rename(
+        columns={"date_erp": "Date", "invoice_erp": "Invoice", "__amt": "Amount"}).reset_index(drop=True)
+    ven_missing = ven_missing.loc[:, ["date_ven", "invoice_ven", "__amt"]].rename(
+        columns={"date_ven": "Date", "invoice_ven": "Invoice", "__amt": "Amount"}).reset_index(drop=True)
 
-    df_matched = pd.DataFrame(matched)
-    return df_matched, erp_missing, ven_missing
+    return pd.DataFrame(matched), erp_missing, ven_missing
 
 
 # ======================================
 # STREAMLIT UI
 # ======================================
-st.write("Upload your ERP Export and Vendor Statement to reconcile invoices automatically.")
+st.write("Upload your ERP Export (Credit = Invoice / Charge = Credit Note) and Vendor Statement (Document Value).")
 
 uploaded_erp = st.file_uploader("📂 Upload ERP Export (Excel)", type=["xlsx"])
 uploaded_vendor = st.file_uploader("📂 Upload Vendor Statement (Excel)", type=["xlsx"])
@@ -274,16 +202,15 @@ if uploaded_erp and uploaded_vendor:
     vendor_cifs = sorted({str(x).strip().upper() for x in ven_df["cif_ven"].dropna().unique() if str(x).strip()})
     selected_cif = vendor_cifs[0] if len(vendor_cifs) == 1 else st.selectbox("Select Vendor CIF:", vendor_cifs)
 
-    erp_df = erp_df[erp_df["cif_erp"].astype(str).str.strip().str.upper() == selected_cif].copy()
-    ven_df = ven_df[ven_df["cif_ven"].astype(str).str.strip().str.upper() == selected_cif].copy()
+    erp_df = erp_df[erp_df["cif_erp"].astype(str).str.strip().str.upper() == selected_cif]
+    ven_df = ven_df[ven_df["cif_ven"].astype(str).str.strip().str.upper() == selected_cif]
 
     with st.spinner("Reconciling invoices..."):
         matched, erp_missing, ven_missing = match_invoices(erp_df, ven_df)
 
     total_match = len(matched[matched["Status"] == "Match"]) if not matched.empty else 0
     total_diff = len(matched[matched["Status"] == "Difference"]) if not matched.empty else 0
-    total_missing = len(erp_missing) + len(ven_missing)
-    st.success(f"✅ Recon complete for CIF {selected_cif}: {total_match} matched, {total_diff} differences, {total_missing} missing")
+    st.success(f"✅ Recon complete for CIF {selected_cif}: {total_match} matched, {total_diff} differences")
 
     def highlight_row(row):
         if row.get("Status") == "Match":
@@ -294,16 +221,27 @@ if uploaded_erp and uploaded_vendor:
             return [''] * len(row)
 
     st.subheader("📊 Matched / Differences")
-    st.dataframe(matched.style.apply(highlight_row, axis=1), use_container_width=True)
+    if not matched.empty:
+        st.dataframe(matched.style.apply(highlight_row, axis=1), use_container_width=True)
+    else:
+        st.info("No matches found.")
 
-    st.subheader("❌ Missing in ERP")
-    st.dataframe(erp_missing.style.applymap(lambda _: "background-color: #c62828; color: white"), use_container_width=True)
+    st.subheader("❌ Missing in ERP (invoices found in vendor but not ERP)")
+    if not erp_missing.empty:
+        st.dataframe(erp_missing.style.applymap(lambda _: "background-color: #c62828; color: white"),
+                     use_container_width=True)
+    else:
+        st.success("✅ No missing invoices in ERP.")
 
-    st.subheader("❌ Missing in Vendor")
-    st.dataframe(ven_missing.style.applymap(lambda _: "background-color: #c62828; color: white"), use_container_width=True)
+    st.subheader("❌ Missing in Vendor (invoices found in ERP but not vendor)")
+    if not ven_missing.empty:
+        st.dataframe(ven_missing.style.applymap(lambda _: "background-color: #c62828; color: white"),
+                     use_container_width=True)
+    else:
+        st.success("✅ No missing invoices in Vendor file.")
 
     st.download_button("⬇️ Matched CSV", matched.to_csv(index=False).encode("utf-8"), "matched.csv", "text/csv")
-    st.download_button("⬇️ Missing in ERP CSV", erp_missing.to_csv(index=False).encode("utf-8"), "missing_erp.csv", "text/csv")
-    st.download_button("⬇️ Missing in Vendor CSV", ven_missing.to_csv(index=False).encode("utf-8"), "missing_vendor.csv", "text/csv")
+    st.download_button("⬇️ Missing ERP CSV", erp_missing.to_csv(index=False).encode("utf-8"), "missing_erp.csv", "text/csv")
+    st.download_button("⬇️ Missing Vendor CSV", ven_missing.to_csv(index=False).encode("utf-8"), "missing_vendor.csv", "text/csv")
 else:
-    st.info("Please upload both ERP and Vendor Excel files to begin.")
+    st.info("Please upload both ERP and Vendor files to begin.")
