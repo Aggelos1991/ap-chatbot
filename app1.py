@@ -79,47 +79,38 @@ def extract_tax_id(raw_text):
 # =============================================
 def extract_with_llm(raw_text):
     """
-    Extract invoice & credit note data from Spanish vendor statements.
-    Avoids taking SALDO/BALANCE as 'Document Value'.
+    Hybrid extraction: GPT for semantic context + regex fallback for missed DEBE lines.
     """
+    # ---------- GPT extraction ----------
     prompt = f"""
     You are an expert accountant AI.
 
-    The following text is a Spanish vendor statement. 
-    Columns are typically: ASIENTO | FECHA | DOCUMENTO | DEBE | HABER | SALDO.
+    The following text is a Spanish vendor statement with columns:
+    ASIENTO | FECHA | DOC | DEBE | HABER | SALDO
 
-    Your task:
-    Extract ONLY the real document lines (invoices or credit notes).
+    Each line may look like:
+    6--483 24/01/25 Fra. emitida nº 70000000 CREADA POR IMPORTADOR 322,27 386,16 708,43
 
-    Each record must include:
-    - Alternative Document → invoice/document number (Factura, Documento, Doc, No, Nº, Num, Número, Nro, Invoice)
-    - Date → from "Fecha"
-    - Reason → "Invoice" or "Credit Note"
-    - Document Value → amount from DEBE column (or Debit/Importe/Cargo/Total/Valor)
-        ⚠️ NEVER use values from SALDO, BALANCE, ACUMULADO, or RESTANTE.
-        ⚠️ SALDO is running balance — NOT document amount.
-    - Tax ID → CIF/NIF/VAT if found in text.
-
-    Ignore:
-    - HABER unless it contains "Abono", "Nota de crédito", or "Devolución".
-    - Lines with words like "Pago", "Transferencia", "Banco", "Remesa", "Cobro", "Domiciliación".
-    - SALDO/BALANCE values entirely.
-
-    Output valid JSON array with:
-    ["Alternative Document", "Date", "Reason", "Document Value", "Tax ID"]
+    Instructions:
+    - Extract all document lines (Factura / Credit Note) using DEBE as Document Value.
+    - The DEBE value is always the number appearing **before HABER and SALDO**.
+    - Ignore "Saldo", "Balance", "Acumulado", "Restante" values.
+    - Ignore payments ("Pago", "Transferencia", "Banco", "Cobro Efecto", "Remesa", "Domiciliación").
+    - Keep all Factura lines, even if repeated pattern.
+    - Output valid JSON with: ["Alternative Document", "Date", "Reason", "Document Value", "Tax ID"]
 
     Example:
     [
       {{
-        "Alternative Document": "6-483",
-        "Date": "24/01/2025",
+        "Alternative Document": "6--483",
+        "Date": "24/01/25",
         "Reason": "Invoice",
         "Document Value": "322.27",
         "Tax ID": "B12345678"
       }},
       {{
-        "Alternative Document": "6-2322",
-        "Date": "12/03/2025",
+        "Alternative Document": "6--2322",
+        "Date": "12/03/25",
         "Reason": "Invoice",
         "Document Value": "132.57",
         "Tax ID": "B12345678"
@@ -127,7 +118,7 @@ def extract_with_llm(raw_text):
     ]
 
     Text:
-    \"\"\"{raw_text[:12000]}\"\"\"
+    \"\"\"{raw_text[:24000]}\"\"\"
     """
 
     response = client.responses.create(model=MODEL, input=prompt)
@@ -140,56 +131,56 @@ def extract_with_llm(raw_text):
         data = json.loads(content)
     except Exception as e:
         st.error(f"⚠️ Could not parse GPT output: {e}")
-        st.text_area("🔍 Raw GPT Output", content[:2000], height=200)
-        return []
+        data = []
 
-    # --- Post-processing & filtering ---
+    # ---------- Post-cleanup ----------
     tax_id = extract_tax_id(raw_text)
     filtered = []
-    prev_value = None
 
     for row in data:
-        reason = str(row.get("Reason", "")).lower()
         val = normalize_number(row.get("Document Value", ""))
-
         if not val:
             continue
 
         try:
             amount = float(val)
         except:
-            amount = 0.0
-
-        # Skip SALDO/BALANCE/ACCUMULATED
-        if any(word in reason for word in ["saldo", "balance", "acumulad", "restante"]):
             continue
 
-        # If sequential increasing values (running total), ignore
-        if prev_value and amount > prev_value * 1.5:
-            # Sudden jump likely a running balance
+        # ignore large / invalid / SALDO / account codes
+        if amount <= 0 or amount > 100000:
             continue
 
-        prev_value = amount
-
-        # Skip payment-type lines
-        if any(w in reason for w in ["pago", "transferencia", "remesa", "domiciliacion", "banco", "cobro"]):
+        reason = str(row.get("Reason", "")).lower()
+        if any(w in reason for w in ["saldo", "balance", "acumulad", "restante", "pago", "transferencia", "banco", "remesa", "cobro"]):
             continue
 
-        # Detect credit notes (negative)
         if any(w in reason for w in ["abono", "nota de crédito", "nota credito", "devolucion"]):
             amount = -abs(amount)
             row["Reason"] = "Credit Note"
-        elif any(w in reason for w in ["factura", "invoice", "servicio", "mantenimiento", "documento", "doc"]):
-            row["Reason"] = "Invoice"
         else:
-            row["Reason"] = "Invoice" if amount > 0 else "Credit Note"
+            row["Reason"] = "Invoice"
 
         row["Document Value"] = f"{amount:.2f}"
         row["Tax ID"] = tax_id if tax_id else "Missing TAX ID"
         filtered.append(row)
 
-    return filtered
+    # ---------- Regex fallback ----------
+    regex_matches = re.findall(r'(\d{1,2}/\d{1,2}/\d{2,4}).*?(6[-–]\d{1,4}).*?\s(\d{1,3}[.,]\d{2})\s', raw_text)
+    for date, doc, val in regex_matches:
+        val = normalize_number(val)
+        if not val:
+            continue
+        if not any(doc == r.get("Alternative Document") for r in filtered):
+            filtered.append({
+                "Alternative Document": doc,
+                "Date": date,
+                "Reason": "Invoice",
+                "Document Value": val,
+                "Tax ID": tax_id if tax_id else "Missing TAX ID"
+            })
 
+    return filtered
 # =============================================
 # EXCEL EXPORT
 # =============================================
