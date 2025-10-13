@@ -38,8 +38,15 @@ def normalize_columns(df, tag):
     mapping = {
         "invoice": ["invoice", "factura", "document", "doc", "nº", "num"],
         "credit": ["credit", "haber", "credito"],
-        "debit": ["debit", "debe", "cargo", "importe", "valor", "amount", "document value", "charge"],
-        "reason": ["reason", "motivo", "concepto", "descripcion"],
+        "debit": [
+            "debit", "debe", "cargo", "importe", "valor",
+            "amount", "document value", "charge",
+            "total", "totale", "totales", "totals"
+        ],
+        "reason": [
+            "reason", "motivo", "concepto", "descripcion", "descripción",
+            "descriptivo", "detalle", "razon"
+        ],
         "cif": ["cif", "nif", "vat", "tax"],
         "date": ["date", "fecha", "data"],
     }
