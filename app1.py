@@ -42,7 +42,7 @@ def extract_text_from_pdf(file):
 
 
 def normalize_number(value):
-    """Normalize all decimal formats like 1.234,56 → 1234.56."""
+    """Normalize decimals like 1.234,56 → 1234.56."""
     if not value:
         return ""
     s = str(value).strip().replace(" ", "")
@@ -66,14 +66,14 @@ def extract_tax_id(text):
 
 
 # ==========================================================
-# PRE-FILTER ENGINE
+# PREFILTER ENGINE (FIXED)
 # ==========================================================
 def preprocess_text_for_ai(raw_text):
     """
-    Preprocess vendor statement text:
-    - Keeps only DEBE (second-to-last numeric value per line)
-    - Ignores SALDO/HABER automatically
-    - Tags credit notes explicitly
+    Clean vendor statement lines:
+    - Keep only DEBE (second-to-last numeric value per line)
+    - Ignore SALDO/HABER automatically
+    - Tag Credit Notes explicitly
     """
     txt = raw_text
     txt = re.sub(r"[ \t]+", " ", txt)
@@ -93,7 +93,7 @@ def preprocess_text_for_ai(raw_text):
         # Extract numbers (Spanish/EU style)
         nums = re.findall(r"\d{1,3}(?:[.,]\d{3})*[.,]\d{2}", line)
 
-        # Keep only DEBE (second-to-last number)
+        # Keep only DEBE (second-to-last)
         if len(nums) >= 2:
             amount = nums[-2]
         elif len(nums) == 1:
@@ -101,12 +101,11 @@ def preprocess_text_for_ai(raw_text):
         else:
             continue
 
-        # Tag the DEBE amount
-        line = re.sub(re.escape(amount), f"[DEBE: {amount}]", line, count=1)
-
-        # Mark Credit Notes explicitly
+        # Tag DEBE or CREDIT
         if re.search(r"(?i)(ABONO|NOTA\s+DE\s+CR[EÉ]DITO|CREDIT\s+NOTE|C\.?N\.?)", line):
-            line = line.replace("[DEBE:", "[CREDIT:")
+            line = re.sub(re.escape(amount), f"[CREDIT: -{amount}]", line, count=1)
+        else:
+            line = re.sub(re.escape(amount), f"[DEBE: {amount}]", line, count=1)
 
         clean_lines.append(line)
 
@@ -117,25 +116,24 @@ def preprocess_text_for_ai(raw_text):
 # GPT EXTRACTOR
 # ==========================================================
 def extract_with_gpt(raw_text):
-    """Send preprocessed text to GPT-4o-mini to extract invoice lines."""
+    """Send preprocessed text to GPT-4o-mini."""
     preprocessed_text = preprocess_text_for_ai(raw_text)
 
     prompt = f"""
 You are an expert Spanish accountant.
 
-Extract all valid invoice or credit note entries.
+The text below contains cleaned vendor statement lines.
+Each line includes one tagged numeric value: [DEBE: ...] or [CREDIT: ...].
+Ignore any other numbers.
 
-Each record must include:
-- "Alternative Document": invoice/reference number (e.g. 6--483)
+Extract all valid invoices and credit notes as a JSON array, with keys:
+- "Alternative Document": invoice/reference number (e.g., 6--483)
 - "Date": dd/mm/yy or dd/mm/yyyy
 - "Reason": "Invoice" or "Credit Note"
-- "Document Value": number inside [DEBE: ...] or [CREDIT: ...] brackets only
+- "Document Value": the number inside [DEBE: ...] or [CREDIT: ...]
+  (use positive for DEBE, negative for CREDIT)
 
-Rules:
-- Use '.' for decimals.
-- Ignore all values from SALDO or HABER.
-- If you see [CREDIT: -value], reason = Credit Note and value = negative number.
-- Return only valid JSON array with these keys.
+Return valid JSON only — no text outside the array.
 
 Text:
 \"\"\"{preprocessed_text[:15000]}\"\"\"
@@ -157,7 +155,6 @@ Text:
         st.text_area("🔍 Raw GPT Output", content[:2000], height=200)
         return []
 
-    # Post-clean
     cleaned = []
     for row in data:
         val = normalize_number(row.get("Document Value") or row.get("DocumentValue"))
@@ -179,7 +176,7 @@ Text:
 
 
 # ==========================================================
-# TO EXCEL
+# EXPORT
 # ==========================================================
 def to_excel_bytes(records):
     df = pd.DataFrame(records)
@@ -201,6 +198,11 @@ if uploaded_pdf:
         except Exception as e:
             st.error(f"❌ PDF extraction failed: {e}")
             st.stop()
+
+    # ✅ Show preprocessing preview
+    pre_text = preprocess_text_for_ai(text)
+    st.subheader("🧩 Preview of Preprocessed Text")
+    st.text_area("Sample (first 1500 chars)", pre_text[:1500], height=200)
 
     if st.button("🤖 Extract Data"):
         with st.spinner("Analyzing with GPT-4o-mini... please wait..."):
