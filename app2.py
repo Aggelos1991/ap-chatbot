@@ -231,7 +231,6 @@ def match_invoices(erp_df, ven_df):
 # ======================================
 # STREAMLIT UI
 # ======================================
-st.write("Upload your ERP Export (Credit = Invoice / Charge = Credit Note) and Vendor Statement (Document Value).")
 
 uploaded_erp = st.file_uploader("📂 Upload ERP Export (Excel)", type=["xlsx"])
 uploaded_vendor = st.file_uploader("📂 Upload Vendor Statement (Excel)", type=["xlsx"])
