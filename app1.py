@@ -1,46 +1,112 @@
-def preprocess_text_for_ai(raw_text):
-    """
-    Preprocess vendor statement text:
-    - Keep original line context (document, date, concept)
-    - Tag only DEBE column values (the ones before SALDO)
-    - Ignore left-side numeric fields and 0,00 values
-    - Mark Credit Notes explicitly
-    """
-    txt = raw_text
-    txt = re.sub(r"[ \t]+", " ", txt)
-    txt = re.sub(r",\s+", ",", txt)
+import pdfplumber
+import pandas as pd
+import streamlit as st
+from io import BytesIO
+import re
 
-    lines = txt.split("\n")
-    clean_lines = []
+# ==========================================================
+# CONFIGURATION
+# ==========================================================
+st.set_page_config(page_title="🦅 DataFalcon Pro — Accurate DEBE Extractor", layout="wide")
+st.title("🦅 DataFalcon Pro — Vendor Statement Extractor (Structured PDF Mode)")
 
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-
-        # Skip irrelevant sections
-        if re.search(r"(?i)\b(SALDO\s+ANTERIOR|BANCO|COBRO|EFECTO|REME|PAGO)\b", line):
-            continue
-
-        # Extract numeric values (EU or US format)
-        nums = re.findall(r"\d{1,3}(?:[.,]\d{3})*[.,]\d{2}", line)
-        if len(nums) < 2:
-            continue
-
-        # DEBE is the SECOND number from the RIGHT (before HABER/SALDO)
-        amount = nums[-2]
-
-        # Skip 0,00 or 0.00 lines
-        if re.match(r"^0+[.,]0+$", amount):
-            continue
-
-        # Add credit note tagging
-        if re.search(r"(?i)(ABONO|NOTA\s+DE\s+CR[EÉ]DITO|CREDIT\s+NOTE|C\.?N\.?)", line):
-            line = re.sub(re.escape(amount), f"[CREDIT: -{amount}]", line, count=1)
+# ==========================================================
+# HELPERS
+# ==========================================================
+def normalize_number(value):
+    """Normalize decimals: 1.234,56 → 1234.56"""
+    if not value:
+        return ""
+    s = str(value).strip().replace(" ", "")
+    if "," in s and "." in s:
+        if s.rfind(",") > s.rfind("."):
+            s = s.replace(".", "").replace(",", ".")
         else:
-            line = re.sub(re.escape(amount), f"[DEBE: {amount}]", line, count=1)
+            s = s.replace(",", "")
+    elif "," in s:
+        s = s.replace(",", ".")
+    s = re.sub(r"[^\d.\-]", "", s)
+    try:
+        return round(float(s), 2)
+    except:
+        return ""
 
-        # Keep line context for GPT
-        clean_lines.append(line)
+def extract_table_data(uploaded_pdf):
+    """Extract DEBE column data from structured table layout."""
+    records = []
+    with pdfplumber.open(uploaded_pdf) as pdf:
+        for page in pdf.pages:
+            table = page.extract_table()
+            if not table:
+                continue
 
-    return "\n".join(clean_lines)
+            headers = [h.strip().upper() if h else "" for h in table[0]]
+            for row in table[1:]:
+                if not any(row):
+                    continue
+
+                # try to find DEBE, HABER, SALDO positions
+                try:
+                    debe_idx = next(i for i, h in enumerate(headers) if "DEBE" in h)
+                    haber_idx = next(i for i, h in enumerate(headers) if "HABER" in h)
+                    saldo_idx = next(i for i, h in enumerate(headers) if "SALDO" in h)
+                except StopIteration:
+                    continue
+
+                # extract core columns
+                date = next((x for x in row if re.match(r"\d{2}/\d{2}/\d{2,4}", str(x))), "")
+                doc = row[3] if len(row) > 3 else ""
+                debe = row[debe_idx] if len(row) > debe_idx else ""
+                haber = row[haber_idx] if len(row) > haber_idx else ""
+                saldo = row[saldo_idx] if len(row) > saldo_idx else ""
+
+                # ignore zeros and empty DEBE
+                if not debe or re.match(r"^0+[.,]0+$", str(debe)):
+                    continue
+
+                # detect credit notes
+                concept = " ".join(str(x) for x in row if x)
+                reason = "Credit Note" if re.search(r"(?i)(ABONO|CREDIT|NOTA\s+DE\s+CR[EÉ]DITO)", concept) else "Invoice"
+
+                records.append({
+                    "Alternative Document": doc,
+                    "Date": date,
+                    "Reason": reason,
+                    "Document Value": normalize_number(debe),
+                })
+    return records
+
+def to_excel_bytes(records):
+    df = pd.DataFrame(records)
+    buf = BytesIO()
+    df.to_excel(buf, index=False)
+    buf.seek(0)
+    return buf
+
+# ==========================================================
+# STREAMLIT APP
+# ==========================================================
+uploaded_pdf = st.file_uploader("📂 Upload Vendor Statement (PDF)", type=["pdf"])
+
+if uploaded_pdf:
+    with st.spinner("📄 Reading structured table data..."):
+        try:
+            data = extract_table_data(uploaded_pdf)
+        except Exception as e:
+            st.error(f"❌ PDF extraction failed: {e}")
+            st.stop()
+
+    if not data:
+        st.warning("⚠️ No DEBE records detected. Check if the PDF is tabular or scanned.")
+    else:
+        df = pd.DataFrame(data)
+        st.success(f"✅ Extraction complete — {len(df)} valid DEBE entries found.")
+        st.dataframe(df, use_container_width=True)
+        st.download_button(
+            "⬇️ Download Excel",
+            data=to_excel_bytes(data),
+            file_name="vendor_statement_structured.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+else:
+    st.info("Please upload a vendor statement PDF to begin.")
