@@ -14,7 +14,7 @@ st.title("🦅 DataFalcon — Vendor Statement Extractor (DEBE Accurate Edition)
 # HELPERS
 # =============================================
 def extract_text_from_pdf(file):
-    """Extract full text from PDF."""
+    """Extract text from PDF safely."""
     file_bytes = file.getvalue()
     if not file_bytes:
         raise ValueError("Uploaded file is empty.")
@@ -43,45 +43,46 @@ def extract_tax_id(text):
 
 def extract_invoice_lines(text):
     """
-    Extract invoice data from Spanish vendor statements like SELK format.
-    Rules:
-      - The 'Alternative Document' starts with digits + '--' (e.g. 6--878)
-      - The first number after description (Debe) is the invoice value
-      - Ignore SALDO, HABER, COBRO, BANCO
+    Extract invoice data from PDFs with or without line breaks.
+    Logic:
+      - Look for '6--xxx' or 'Fra. emitida nº:'
+      - Capture the nearest DEBE number (first numeric before next number)
+      - Ignore lines with SALDO, HABER, BANCO, COBRO, EFECTO
     """
-    lines = text.splitlines()
     records = []
 
-    for line in lines:
-        line = line.strip()
+    # Pre-clean
+    txt = text.replace("\n", " ").replace("\xa0", " ")
+    txt = re.sub(r"\s+", " ", txt)
 
-        # Skip irrelevant lines
-        if not line or any(skip in line.upper() for skip in ["SALDO", "HABER", "BANCO", "COBRO", "EFECTO"]):
+    # Find all potential invoice groups
+    pattern = re.compile(
+        r"(Fra\. emitida nº:\s*|Factura|SerieFactura.*?Num FactCliente\s*|Doc\s*:?|6--\d+)"
+        r".{0,80}?(\d{1,3}(?:[\.,]\d{3})*[\.,]\d{2})"   # first numeric value = DEBE
+        r".{0,20}?(\d{2}/\d{2}/\d{2,4})",              # date
+        re.IGNORECASE
+    )
+
+    for match in re.finditer(pattern, txt):
+        chunk = match.group(0)
+
+        # Skip payments or balances
+        if any(skip in chunk.upper() for skip in ["SALDO", "HABER", "BANCO", "COBRO", "EFECTO"]):
             continue
 
-        # Find invoice number patterns
-        inv_match = re.search(r"(\d+--\d+|\d{1,4}/\d{1,4})", line)
-        if not inv_match:
-            continue
-        inv_no = inv_match.group(1)
+        inv_match = re.search(r"(\d+--\d+|\d{1,4}/\d{1,4})", chunk)
+        inv_no = inv_match.group(1) if inv_match else ""
 
-        # Find a date (dd/mm/yy)
-        date_match = re.search(r"\b\d{2}/\d{2}/\d{2,4}\b", line)
+        date_match = re.search(r"\b\d{2}/\d{2}/\d{2,4}\b", chunk)
         date_val = date_match.group(0) if date_match else ""
 
-        # Find all numeric values (like 1.234,56 or 499,86)
-        nums = re.findall(r"\d{1,3}(?:[\.,]\d{3})*[\.,]\d{2}", line)
-
-        # Filter out small/irrelevant ones like 0,00
+        nums = re.findall(r"\d{1,3}(?:[\.,]\d{3})*[\.,]\d{2}", chunk)
         nums = [normalize_number(n) for n in nums if n not in ["0,00", "0.00"] and normalize_number(n)]
         if not nums:
             continue
 
-        # The FIRST valid number on the right side of the line is always DEBE
         doc_value = nums[0]
-
-        # Detect credit note keywords
-        reason = "Credit Note" if any(k in line.lower() for k in ["abono", "nota de crédito", "nc", "credit"]) else "Invoice"
+        reason = "Credit Note" if any(k in chunk.lower() for k in ["abono", "nota de crédito", "nc", "credit"]) else "Invoice"
 
         records.append({
             "Alternative Document": inv_no,
