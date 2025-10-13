@@ -9,7 +9,7 @@ from openai import OpenAI
 # CONFIGURATION
 # ==========================================================
 st.set_page_config(page_title="🦅 DataFalcon — GPT-4o-mini DEBE Extractor", layout="wide")
-st.title("🦅 DataFalcon — Vendor Statement Extractor (GPT-4o-mini Edition)")
+st.title("🦅 DataFalcon — Vendor Statement Extractor (GPT-4o-mini)")
 
 # Load API key
 try:
@@ -24,13 +24,12 @@ if not api_key:
     st.stop()
 
 client = OpenAI(api_key=api_key)
-MODEL = "gpt-4o-mini"  # ✅ fast, cheap, accurate for structured extraction
+MODEL = "gpt-4o-mini"
 
 # ==========================================================
 # HELPERS
 # ==========================================================
 def extract_text_from_pdf(file):
-    """Extract text from all PDF pages using PyMuPDF."""
     file_bytes = file.getvalue()
     if not file_bytes:
         raise ValueError("Uploaded file is empty.")
@@ -42,10 +41,18 @@ def extract_text_from_pdf(file):
 
 
 def normalize_number(value):
-    """Normalize numeric string (e.g., 1.234,56 → 1234.56)."""
+    """Normalize all decimal formats (e.g. 1.234,56 → 1234.56 or 1,234.56 → 1234.56)."""
     if not value:
         return ""
-    s = str(value).strip().replace(".", "").replace(",", ".")
+    s = str(value).strip()
+    s = s.replace(" ", "")
+    if "," in s and "." in s:
+        if s.rfind(",") > s.rfind("."):
+            s = s.replace(".", "").replace(",", ".")
+        else:
+            s = s.replace(",", "")
+    elif "," in s and not "." in s:
+        s = s.replace(",", ".")
     s = re.sub(r"[^\d.\-]", "", s)
     try:
         return round(float(s), 2)
@@ -54,45 +61,28 @@ def normalize_number(value):
 
 
 def extract_tax_id(text):
-    """Detect Spanish or EU VAT / CIF."""
     match = re.search(r"\b([A-Z]{1}\d{7}[A-Z0-9]{1}|ES\d{9}|EL\d{9}|[A-Z]{2}\d{8,12})\b", text)
     return match.group(0) if match else "Missing TAX ID"
 
 
 def extract_with_gpt(raw_text):
-    """Send PDF text to GPT-4o-mini to extract DEBE-only invoice lines."""
+    """Send PDF text to GPT-4o-mini and extract DEBE-only lines."""
     prompt = f"""
 You are an expert Spanish accountant.
 
-From the vendor statement text below, extract all valid invoice or credit note lines.
+From the following vendor statement, extract all valid invoice or credit note lines.
 
 Each record must include:
-- "Alternative Document": the invoice number or document reference (e.g. 6--483, 2434-1, SerieFactura-Precodigo-Num FactCliente)
-- "Date": the issue date in dd/mm/yy or dd/mm/yyyy format
+- "Alternative Document": invoice or reference (e.g. 6--483, 2434-1, SerieFactura-Precodigo-Num FactCliente)
+- "Date": dd/mm/yy or dd/mm/yyyy
 - "Reason": "Invoice" or "Credit Note"
-- "Document Value": numeric value from DEBE, IMPORTE, or TOTAL column (never SALDO or HABER)
+- "Document Value": DEBE / IMPORTE / TOTAL (never SALDO or HABER)
 
 Rules:
-- Ignore "Saldo anterior", "Banco", "Cobro", "Efecto", "Remesa", "Pago".
-- If the text mentions "Abono", "Nota de crédito" or "NC", mark it as a Credit Note and use a negative value.
-- Always output valid JSON array.
-- Do not include currency symbols or commas, only plain numbers (use . for decimals).
-
-Example output:
-[
-  {{
-    "Alternative Document": "6--483",
-    "Date": "24/01/2025",
-    "Reason": "Invoice",
-    "Document Value": 708.43
-  }},
-  {{
-    "Alternative Document": "6--2434",
-    "Date": "14/03/2025",
-    "Reason": "Invoice",
-    "Document Value": 107.34
-  }}
-]
+- Ignore 'Saldo anterior', 'Banco', 'Cobro', 'Efecto', 'Remesa', 'Pago'.
+- If the text mentions 'Abono', 'Nota de crédito', or 'NC', mark as Credit Note and make the amount negative.
+- Always output a valid JSON array.
+- Use '.' for decimals, no commas or €.
 
 Text:
 \"\"\"{raw_text[:15000]}\"\"\"
@@ -105,7 +95,6 @@ Text:
         st.error(f"❌ GPT call failed: {e}")
         return []
 
-    # Extract JSON safely
     try:
         json_match = re.search(r"\[.*\]", content, re.DOTALL)
         json_text = json_match.group(0) if json_match else content
@@ -115,7 +104,6 @@ Text:
         st.text_area("🔍 Raw GPT Output", content[:2000], height=200)
         return []
 
-    # Sanitize results
     cleaned = []
     for row in data:
         val = normalize_number(row.get("Document Value") or row.get("DocumentValue"))
@@ -156,11 +144,8 @@ if uploaded_pdf:
             st.error(f"❌ PDF extraction failed: {e}")
             st.stop()
 
-    st.text_area("🔍 Extracted Text Preview", text[:2000], height=200)
-
-    # Cost estimate
-    approx_tokens = len(text) / 4  # ~4 chars per token
-    est_cost = (approx_tokens / 1000) * (0.0006 + 0.0024)  # input + output token pricing for gpt-4o-mini
+    approx_tokens = len(text) / 4
+    est_cost = (approx_tokens / 1000) * (0.0006 + 0.0024)
     st.info(f"💲 Estimated cost for this extraction: **${est_cost:.4f} USD**")
 
     if st.button("🤖 Extract Data with GPT-4o-mini"):
