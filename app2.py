@@ -94,12 +94,15 @@ def match_invoices(erp_df, ven_df):
     erp_use["__core"] = erp_use["invoice_erp"].apply(clean_core)
     ven_use["__core"] = ven_use["invoice_ven"].apply(clean_core)
 
-    # ====== MATCHING ======
+    # ====== MATCHING (pick best vendor per ERP) ======
     for e_idx, e in erp_use.iterrows():
         e_inv = str(e["invoice_erp"]).strip()
         e_core = e["__core"]
         e_amt = round(float(e["__amt"]), 2)
         e_date = e.get("date_erp")
+
+        best_score = -1
+        best_v = None
 
         for v_idx, v in ven_use.iterrows():
             if v_idx in used_vendor_rows:
@@ -110,34 +113,36 @@ def match_invoices(erp_df, ven_df):
             v_amt = round(float(v["__amt"]), 2)
             v_date = v.get("date_ven")
 
-            # === 3-digit overlap rule ===
+            # === numeric overlap rule ===
             digits_erp = re.findall(r"\d{3,}", e_core)
             digits_ven = re.findall(r"\d{3,}", v_core)
-            three_match = any(
-                d in v_core or v_core.endswith(d) or e_core.endswith(d)
-                for d in digits_erp if len(d) >= 3
-            )
+            three_match = any(d in v_core or v_core.endswith(d) or e_core.endswith(d) for d in digits_erp if len(d) >= 3)
 
             fuzzy = fuzz.ratio(e_inv, v_inv)
             amt_close = abs(e_amt - v_amt) < 0.05
 
-            if three_match or e_core == v_core or fuzzy > 90:
-                diff = round(e_amt - v_amt, 2)
-                status = "Match" if abs(diff) < 0.05 else "Difference"
+            score = fuzzy + (80 if three_match or e_core == v_core else 0) + (50 if amt_close else 0)
 
-                matched.append({
-                    "Date (ERP)": e_date,
-                    "Date (Vendor)": v_date,
-                    "ERP Invoice": e_inv if e_inv else "(inferred)",
-                    "Vendor Invoice": v_inv,
-                    "ERP Amount": e_amt,
-                    "Vendor Amount": v_amt,
-                    "Difference": diff,
-                    "Status": status
-                })
+            if score > best_score:
+                best_score = score
+                best_v = (v_idx, v_inv, v_core, v_amt, v_date)
 
-                # ❗ DO NOT break — allow next vendor invoices to also match same pattern
-                used_vendor_rows.add(v_idx)
+        if best_v and best_score >= 120:  # threshold for confident match
+            v_idx, v_inv, v_core, v_amt, v_date = best_v
+            used_vendor_rows.add(v_idx)
+            diff = round(e_amt - v_amt, 2)
+            status = "Match" if abs(diff) < 0.05 else "Difference"
+
+            matched.append({
+                "Date (ERP)": e_date,
+                "Date (Vendor)": v_date,
+                "ERP Invoice": e_inv if e_inv else "(inferred)",
+                "Vendor Invoice": v_inv,
+                "ERP Amount": e_amt,
+                "Vendor Amount": v_amt,
+                "Difference": diff,
+                "Status": status
+            })
 
     # ====== BUILD MISSING TABLES ======
     matched_erp = {m["ERP Invoice"] for m in matched}
