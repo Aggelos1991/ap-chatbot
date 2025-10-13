@@ -161,23 +161,30 @@ def match_invoices(erp_df, ven_df):
             matched_ven.add(v_inv)
 
     # Missing detection using same 3-digit rule
-    def is_missing(target_df, compare_df, col_from, col_to):
+        # ✅ FIXED Missing detection (3-digit rule respected)
+    def clean_invoice(v):
+        return re.sub(r"[^A-Z0-9]", "", str(v).upper().strip())
+
+    erp_use["__clean_inv"] = erp_use["invoice_erp"].apply(clean_invoice)
+    ven_use["__clean_inv"] = ven_use["invoice_ven"].apply(clean_invoice)
+
+    def is_missing_robust(target_df, compare_df, target_col, compare_col):
         missing_rows = []
         for _, row in target_df.iterrows():
-            ref = str(row[col_from])
-            if not any(share_3plus_digits(ref, str(x)) for x in compare_df[col_to].astype(str)):
+            ref = str(row[target_col])
+            # If any invoice in compare_df shares 3 consecutive digits, it’s not missing
+            if not any(share_3plus_digits(ref, other) for other in compare_df[compare_col].astype(str)):
                 missing_rows.append(row)
         return pd.DataFrame(missing_rows)
 
-    erp_missing = is_missing(erp_use, ven_use, "invoice_erp", "invoice_ven")
-    ven_missing = is_missing(ven_use, erp_use, "invoice_ven", "invoice_erp")
+    erp_missing = is_missing_robust(erp_use, ven_use, "invoice_erp", "invoice_ven")
+    ven_missing = is_missing_robust(ven_use, erp_use, "invoice_ven", "invoice_erp")
 
     erp_missing = erp_missing.loc[:, ["date_erp", "invoice_erp", "__amt"]].rename(
         columns={"date_erp": "Date", "invoice_erp": "Invoice", "__amt": "Amount"}).reset_index(drop=True)
+
     ven_missing = ven_missing.loc[:, ["date_ven", "invoice_ven", "__amt"]].rename(
         columns={"date_ven": "Date", "invoice_ven": "Invoice", "__amt": "Amount"}).reset_index(drop=True)
-
-    return pd.DataFrame(matched), erp_missing, ven_missing
 
 
 # ======================================
