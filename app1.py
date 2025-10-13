@@ -26,15 +26,19 @@ MODEL = "gpt-4o-mini"
 # STREAMLIT CONFIG
 # =============================================
 st.set_page_config(page_title="🦅 DataFalcon — Vendor Statement Extractor", layout="wide")
-st.title("🦅 DataFalcon — Vendor Statement Extractor (Saldo-Proof Universal Edition)")
+st.title("🦅 DataFalcon — Vendor Statement Extractor (Saldo-Proof + Debug Edition)")
 
 # =============================================
 # HELPERS
 # =============================================
 def extract_text_from_pdf(file):
-    """Extract text from PDF."""
+    """Safely extract text from uploaded PDF."""
+    file_bytes = file.getvalue()
+    if not file_bytes:
+        raise ValueError("Uploaded file is empty or unreadable.")
+
     text = ""
-    with fitz.open(stream=file.read(), filetype="pdf") as doc:
+    with fitz.open(stream=file_bytes, filetype="pdf") as doc:
         for page in doc:
             text += page.get_text("text") + "\n"
     return text
@@ -46,7 +50,7 @@ def clean_text(text):
 
 
 def normalize_number(value):
-    """Normalize European-style numbers (e.g. 1.234,56)."""
+    """Normalize European/US number formats."""
     if not value:
         return ""
     s = str(value).strip()
@@ -64,10 +68,10 @@ def normalize_number(value):
 def extract_tax_id(raw_text):
     """Detect CIF/NIF/VAT from text."""
     patterns = [
-        r"\b[A-Z]{1}\d{7}[A-Z0-9]{1}\b",  # e.g. B12345678
-        r"\bES\d{9}\b",  # Spanish VAT
-        r"\bEL\d{9}\b",  # Greek VAT
-        r"\b[A-Z]{2}\d{8,12}\b",  # Generic EU VAT
+        r"\b[A-Z]{1}\d{7}[A-Z0-9]{1}\b",
+        r"\bES\d{9}\b",
+        r"\bEL\d{9}\b",
+        r"\b[A-Z]{2}\d{8,12}\b",
     ]
     for pat in patterns:
         match = re.search(pat, raw_text)
@@ -75,9 +79,8 @@ def extract_tax_id(raw_text):
             return match.group(0)
     return None
 
-
 # =============================================
-# CORE EXTRACTION (Saldo-proof + Totale support)
+# CORE EXTRACTION (Saldo-Proof + Totale support)
 # =============================================
 def extract_with_llm(raw_text):
     """
@@ -116,7 +119,8 @@ def extract_with_llm(raw_text):
         gpt_rows = []
 
     # ---------- 2️⃣ Regex extract numeric document values ----------
-    # Works even if "DEBE" not printed — captures DEBE or TOTAL equivalents.
+    # Captures DEBE, IMPORTE, VALOR, TOTAL, TOTALE, AMOUNT
+    # Ignores SALDO, HABER, BALANCE, PAGO, BANCO, COBRO, REMESA.
     pattern = re.compile(
         r"(?P<doc>(?:\b\d{1,3}[-–]\d{1,5}\b|\b6[-–]\d{1,5}\b)).{0,60}?"
         r"(?P<date>\d{1,2}/\d{1,2}/\d{2,4}).{0,80}?"
@@ -169,7 +173,6 @@ def extract_with_llm(raw_text):
     df = pd.DataFrame(merged).drop_duplicates(subset=["Alternative Document", "Date"])
     return df.to_dict(orient="records")
 
-
 # =============================================
 # EXCEL EXPORT
 # =============================================
@@ -180,7 +183,6 @@ def to_excel_bytes(records):
     buf.seek(0)
     return buf
 
-
 # =============================================
 # STREAMLIT UI
 # =============================================
@@ -188,19 +190,18 @@ uploaded_pdf = st.file_uploader("📂 Upload Vendor Statement (PDF)", type=["pdf
 
 if uploaded_pdf:
     with st.spinner("📄 Extracting text from PDF..."):
-        text = clean_text(extract_text_from_pdf(uploaded_pdf))
-if uploaded_pdf:
-    with st.spinner("📄 Extracting text from PDF..."):
-        text = clean_text(extract_text_from_pdf(uploaded_pdf))
+        try:
+            text = clean_text(extract_text_from_pdf(uploaded_pdf))
+        except Exception as e:
+            st.error(f"❌ Failed to read PDF: {e}")
+            st.stop()
 
-    # 👇 ADD THIS TEMPORARY DEBUG SECTION 👇
+    # 🧩 DEBUG SECTION (so we can calibrate)
     st.subheader("🧩 Debug: What the PDF text actually looks like")
     st.text_area("Raw Extracted Text (first 4000 chars)", text[:4000], height=300)
-    st.download_button("⬇️ Download full text", text.encode("utf-8"), "raw_text.txt")
-    # 👆 END DEBUG SECTION 👆
+    st.download_button("⬇️ Download full extracted text", text.encode("utf-8"), "raw_text.txt")
 
-    st.text_area("🔍 Extracted Text Preview", text[:2500], height=250)
-
+    # ---------- Extraction ----------
     if st.button("🤖 Extract Data to Excel"):
         with st.spinner("Analyzing with GPT + Regex..."):
             data = extract_with_llm(text)
@@ -221,7 +222,7 @@ if uploaded_pdf:
             )
         else:
             st.warning(
-                "⚠️ No valid document data found. Please verify your PDF layout or share a sample text line for calibration."
+                "⚠️ No valid document data found. Copy one or two lines from the debug text above and share them for calibration."
             )
 else:
     st.info("Please upload a vendor statement PDF to begin.")
