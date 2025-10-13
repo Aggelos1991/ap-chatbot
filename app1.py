@@ -189,6 +189,15 @@ uploaded_pdf = st.file_uploader("📂 Upload Vendor Statement (PDF)", type=["pdf
 if uploaded_pdf:
     with st.spinner("📄 Extracting text from PDF..."):
         text = clean_text(extract_text_from_pdf(uploaded_pdf))
+if uploaded_pdf:
+    with st.spinner("📄 Extracting text from PDF..."):
+        text = clean_text(extract_text_from_pdf(uploaded_pdf))
+
+    # 👇 ADD THIS TEMPORARY DEBUG SECTION 👇
+    st.subheader("🧩 Debug: What the PDF text actually looks like")
+    st.text_area("Raw Extracted Text (first 4000 chars)", text[:4000], height=300)
+    st.download_button("⬇️ Download full text", text.encode("utf-8"), "raw_text.txt")
+    # 👆 END DEBUG SECTION 👆
 
     st.text_area("🔍 Extracted Text Preview", text[:2500], height=250)
 
