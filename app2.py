@@ -72,44 +72,46 @@ def extract_core_invoice(inv):
 def match_invoices(erp_df, ven_df):
     matched, matched_erp, matched_ven = [], set(), set()
 
-    # Validate essential columns
+    # Confirm ERP structure
     if "invoice_erp" not in erp_df.columns:
-        st.error("❌ 'Alternative Document' not found in ERP file.")
+        st.error("❌ Column 'Alternative Document' not found in ERP file.")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-    if not ("credit_erp" in erp_df.columns or "debit_erp" in erp_df.columns):
-        st.error("❌ 'Credit' or 'Charge' column not found in ERP file.")
-        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
-
+    # Confirm Vendor structure
     if "invoice_ven" not in ven_df.columns:
-        st.error("❌ 'Invoice / Factura' not found in Vendor file.")
+        st.error("❌ Column 'Invoice / Factura' not found in Vendor file.")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-    # Extract simplified invoice codes
+    # Extract invoice cores
     erp_df["__core"] = erp_df["invoice_erp"].astype(str).apply(extract_core_invoice)
     ven_df["__core"] = ven_df["invoice_ven"].astype(str).apply(extract_core_invoice)
 
+    # --- MAIN MATCHING LOOP ---
     for _, e_row in erp_df.iterrows():
         e_inv = str(e_row["invoice_erp"]).strip()
         e_core = e_row["__core"]
-        e_amt = normalize_number(e_row.get("credit_erp", 0)) or -normalize_number(e_row.get("debit_erp", 0))
+
+        # ERP amount → Credit (prefer), else Charge
+        e_amt = normalize_number(e_row.get("credit_erp", 0))
+        if e_amt == 0:
+            e_amt = -normalize_number(e_row.get("debit_erp", 0))
 
         for _, v_row in ven_df.iterrows():
             v_inv = str(v_row["invoice_ven"]).strip()
             v_core = v_row["__core"]
 
-            # Vendor amount (priority: debit/debe/importe/total, fallback to credit)
+            # Vendor amount (prefer debit/debe/importe/total)
             v_amt = (
                 normalize_number(v_row.get("debit_ven", 0))
                 or normalize_number(v_row.get("credit_ven", 0))
             )
 
-            # Matching logic: exact, suffix, or fuzzy
+            # Matching logic
             if (
                 e_inv == v_inv
                 or e_core == v_core
-                or v_core.endswith(e_core)
                 or e_core.endswith(v_core)
+                or v_core.endswith(e_core)
                 or fuzz.ratio(e_inv, v_inv) > 90
             ):
                 diff = round(e_amt - v_amt, 2)
@@ -126,21 +128,24 @@ def match_invoices(erp_df, ven_df):
                 matched_ven.add(v_inv)
                 break
 
-    # Filter missing invoices (exclude already matched)
+    # --- HANDLE MISSING INVOICES ---
+    erp_cols = [c for c in ["invoice_erp", "credit_erp", "debit_erp"] if c in erp_df.columns]
+    ven_cols = [c for c in ["invoice_ven", "debit_ven", "credit_ven"] if c in ven_df.columns]
+
     erp_missing = (
         erp_df[~erp_df["invoice_erp"].isin(matched_erp)]
-        .loc[:, ["invoice_erp", "credit_erp", "debit_erp"]]
+        .loc[:, erp_cols]
         .rename(columns={
             "invoice_erp": "ERP Invoice",
             "credit_erp": "ERP Amount (Credit)",
-            "debit_erp": "ERP Amount (Debit)"
+            "debit_erp": "ERP Amount (Charge)"
         })
         .reset_index(drop=True)
     )
 
     ven_missing = (
         ven_df[~ven_df["invoice_ven"].isin(matched_ven)]
-        .loc[:, ["invoice_ven", "debit_ven", "credit_ven"]]
+        .loc[:, ven_cols]
         .rename(columns={
             "invoice_ven": "Vendor Invoice",
             "debit_ven": "Vendor Amount (Debit)",
