@@ -82,7 +82,8 @@ def normalize_columns(df, tag):
             "nº factura", "no", "nro", "num", "numero", "document", "doc", "παραστατικό"
         ],
         "credit": ["credit", "haber", "crédito", "credito"],
-        "debit": ["debit", "debe", "cargo", "importe", "valor", "total", "totale", "amount", "importe total"],
+        # 👇 here we treat “Charge” as equivalent to “Debit”
+        "debit": ["charge", "debit", "debe", "cargo", "importe", "valor", "total", "totale", "amount", "importe total"],
         "reason": ["reason", "motivo", "concepto", "descripcion", "glosa", "observaciones"],
         "cif": ["cif", "nif", "vat", "tax", "vat number", "tax id", "afm", "vat id", "num. identificacion fiscal"],
         "date": ["date", "fecha", "fech", "ημερομηνία", "data"],
@@ -98,12 +99,7 @@ def normalize_columns(df, tag):
 
 
 def extract_core_invoice(inv):
-    """
-    Extract a meaningful invoice tail key:
-    - keep alnum uppercase
-    - prefer last A* + 2-6 digits (e.g., PF006, AB1234)
-    - fallback last 4 chars
-    """
+    """Extract a meaningful invoice tail key."""
     if isinstance(inv, (pd.Series, list)):
         inv = inv.iloc[0] if isinstance(inv, pd.Series) else inv[0]
     if inv is None or (isinstance(inv, float) and pd.isna(inv)):
@@ -131,9 +127,10 @@ def share_3plus_digits(a, b):
 def match_invoices(erp_df, ven_df):
     matched, matched_erp, matched_ven = [], set(), set()
 
-    # Required columns check
     req_erp = ["invoice_erp", "credit_erp", "debit_erp", "reason_erp", "date_erp", "cif_erp"]
     req_ven = ["invoice_ven", "debit_ven", "credit_ven", "date_ven", "cif_ven"]
+
+    # Basic checks
     for c in req_erp:
         if c not in erp_df.columns:
             st.error(f"❌ ERP file missing column: {c}")
@@ -147,8 +144,7 @@ def match_invoices(erp_df, ven_df):
     erp_df["__core"] = erp_df["invoice_erp"].astype(str).apply(extract_core_invoice)
     ven_df["__core"] = ven_df["invoice_ven"].astype(str).apply(extract_core_invoice)
 
-    # Pre-compute doc types + effective amounts
-    # ERP amount: INV -> +Credit ; CN -> -Charge ; PAYMENT -> ignored
+    # Pre-compute doc types and ERP effective amounts
     erp_df["__doctype"] = erp_df.apply(
         lambda r: classify_erp_doc(r.get("reason_erp"), r.get("credit_erp"), r.get("debit_erp")),
         axis=1
@@ -159,14 +155,10 @@ def match_invoices(erp_df, ven_df):
         axis=1
     )
 
-    # Vendor amount: prefer debit_ven (Factura). Ignore credit_ven as payments (unless later extend to vendor CN)
-    # If only total without structure, normalize_columns already mapped to debit_ven via synonyms
-    ven_df["__amt"] = ven_df.apply(
-        lambda r: normalize_number(r.get("debit_ven", 0.0)),
-        axis=1
-    )
+    # Vendor amount = debit_ven (Factura)
+    ven_df["__amt"] = ven_df.apply(lambda r: normalize_number(r.get("debit_ven", 0.0)), axis=1)
 
-    # Filter: consider only INV and CN on ERP side
+    # Filter only invoices and CNs
     erp_use = erp_df[erp_df["__doctype"].isin(["INV", "CN"])].copy()
     ven_use = ven_df.copy()
 
@@ -176,33 +168,26 @@ def match_invoices(erp_df, ven_df):
         e_core = e_row["__core"]
         e_amt = round(float(e_row["__amt"]), 2)
         e_date = e_row.get("date_erp")
-        e_key = f"{e_core}|{e_amt}"
 
-        best_v = None
-        best_score = -1
-
+        best_v, best_score = None, -1
         for _, v_row in ven_use.iterrows():
             v_inv = str(v_row["invoice_ven"]).strip()
             v_core = v_row["__core"]
             v_amt = round(float(v_row["__amt"]), 2)
             v_date = v_row.get("date_ven")
 
-            # Skip if already matched this vendor invoice
             if v_inv in matched_ven:
                 continue
 
-            # Heuristics
-            exact = (e_inv == v_inv)
-            core_eq = (e_core == v_core) and e_core != ""
-            ends = (e_core.endswith(v_core) or v_core.endswith(e_core)) and e_core != "" and v_core != ""
+            exact = e_inv == v_inv
+            core_eq = e_core == v_core and e_core != ""
+            ends = (e_core.endswith(v_core) or v_core.endswith(e_core)) and e_core and v_core
             digits3 = share_3plus_digits(e_inv.upper(), v_inv.upper())
             fuzzy = fuzz.ratio(e_inv, v_inv) if e_inv and v_inv else 0
 
-            rule_hit = exact or core_eq or ends or digits3 or (fuzzy > 90)
-            if not rule_hit:
+            if not (exact or core_eq or ends or digits3 or fuzzy > 90):
                 continue
 
-            # Prefer same amount if multiple candidates
             amt_close = abs(e_amt - v_amt) < 0.05
             score = (100 if exact else 0) + (40 if core_eq else 0) + (30 if ends else 0) + (35 if digits3 else 0) + fuzzy + (60 if amt_close else 0)
             if score > best_score:
@@ -226,39 +211,28 @@ def match_invoices(erp_df, ven_df):
             matched_erp.add(e_inv)
             matched_ven.add(v_inv)
 
-    # Clean keys for exclusion in missing tables
-    def clean_invoice(v):
-        return re.sub(r"[^A-Z0-9]", "", str(v).strip().upper())
-    erp_use["__clean_inv"] = erp_use["invoice_erp"].apply(clean_invoice)
-    ven_use["__clean_inv"] = ven_use["invoice_ven"].apply(clean_invoice)
-    matched_erp_clean = {clean_invoice(i) for i in matched_erp}
-    matched_ven_clean = {clean_invoice(i) for i in matched_ven}
+    # Build missing tables
+    clean = lambda x: re.sub(r"[^A-Z0-9]", "", str(x).strip().upper())
+    erp_use["__clean_inv"] = erp_use["invoice_erp"].apply(clean)
+    ven_use["__clean_inv"] = ven_use["invoice_ven"].apply(clean)
+    matched_erp_clean = {clean(i) for i in matched_erp}
+    matched_ven_clean = {clean(i) for i in matched_ven}
 
-    # Build missing tables (only unmatched)
     erp_missing = (
         erp_use[~erp_use["__clean_inv"].isin(matched_erp_clean)]
         .loc[:, ["date_erp", "invoice_erp", "__amt"]]
-        .rename(columns={
-            "date_erp": "Date",
-            "invoice_erp": "Invoice",
-            "__amt": "Amount"
-        })
+        .rename(columns={"date_erp": "Date", "invoice_erp": "Invoice", "__amt": "Amount"})
         .reset_index(drop=True)
     )
 
     ven_missing = (
         ven_use[~ven_use["__clean_inv"].isin(matched_ven_clean)]
         .loc[:, ["date_ven", "invoice_ven", "__amt"]]
-        .rename(columns={
-            "date_ven": "Date",
-            "invoice_ven": "Invoice",
-            "__amt": "Amount"
-        })
+        .rename(columns={"date_ven": "Date", "invoice_ven": "Invoice", "__amt": "Amount"})
         .reset_index(drop=True)
     )
 
-    df_matched = pd.DataFrame(matched)
-    return df_matched, erp_missing, ven_missing
+    return pd.DataFrame(matched), erp_missing, ven_missing
 
 
 # ======================================
@@ -276,43 +250,33 @@ if uploaded_erp and uploaded_vendor:
     erp_df = normalize_columns(erp_raw, "erp")
     ven_df = normalize_columns(ven_raw, "ven")
 
-    # Ensure minimal columns exist for selection
-    if "cif_ven" not in ven_df.columns:
-        st.error("❌ Vendor file must contain a CIF/NIF/VAT column.")
-        st.stop()
-    if "cif_erp" not in erp_df.columns:
-        st.error("❌ ERP file must contain a CIF/NIF/VAT column.")
+    if "cif_ven" not in ven_df.columns or "cif_erp" not in erp_df.columns:
+        st.error("❌ Both ERP and Vendor files must contain CIF/NIF/VAT columns.")
         st.stop()
 
-    # Pick vendor CIF from Vendor file (one vendor at a time)
     vendor_cifs = sorted({str(x).strip().upper() for x in ven_df["cif_ven"].dropna().unique() if str(x).strip()})
     selected_cif = vendor_cifs[0] if len(vendor_cifs) == 1 else st.selectbox("Select Vendor CIF to reconcile:", vendor_cifs)
 
-    # Filter both sides by CIF
     erp_df = erp_df[erp_df["cif_erp"].astype(str).str.strip().str.upper() == selected_cif].copy()
     ven_df = ven_df[ven_df["cif_ven"].astype(str).str.strip().str.upper() == selected_cif].copy()
 
-    # Basic column presence for matching
     for needed in ["invoice_erp", "credit_erp", "debit_erp", "reason_erp", "date_erp"]:
         if needed not in erp_df.columns:
             st.error(f"❌ ERP missing column: {needed}")
             st.stop()
     for needed in ["invoice_ven", "debit_ven", "date_ven"]:
         if needed not in ven_df.columns:
-            # If vendor has only a generic total/amount column it should have been mapped to debit_ven already via synonyms
             st.error(f"❌ Vendor missing column: {needed}")
             st.stop()
 
     with st.spinner("Reconciling invoices..."):
         matched, erp_missing, ven_missing = match_invoices(erp_df, ven_df)
 
-    # --- Summary ---
     total_match = len(matched[matched["Status"] == "Match"]) if not matched.empty else 0
     total_diff = len(matched[matched["Status"] == "Difference"]) if not matched.empty else 0
     total_missing = len(erp_missing) + len(ven_missing)
     st.success(f"✅ Recon complete for CIF {selected_cif}: {total_match} matched, {total_diff} differences, {total_missing} missing")
 
-    # --- Styling helpers ---
     def highlight_row(row):
         if row.get("Status") == "Match":
             return ['background-color: #2e7d32; color: white'] * len(row)
@@ -321,7 +285,6 @@ if uploaded_erp and uploaded_vendor:
         else:
             return [''] * len(row)
 
-    # --- Display tables ---
     st.subheader("📊 Matched / Differences")
     if not matched.empty:
         st.dataframe(matched.style.apply(highlight_row, axis=1), use_container_width=True)
@@ -340,7 +303,6 @@ if uploaded_erp and uploaded_vendor:
     else:
         st.success("✅ No missing invoices in Vendor file for this vendor.")
 
-    # --- Downloads ---
     st.download_button("⬇️ Matched/Differences CSV", matched.to_csv(index=False).encode("utf-8"), "matched_results.csv", "text/csv")
     st.download_button("⬇️ Missing in ERP CSV", erp_missing.to_csv(index=False).encode("utf-8"), "missing_in_erp.csv", "text/csv")
     st.download_button("⬇️ Missing in Vendor CSV", ven_missing.to_csv(index=False).encode("utf-8"), "missing_in_vendor.csv", "text/csv")
