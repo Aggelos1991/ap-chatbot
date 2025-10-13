@@ -8,9 +8,10 @@ from openai import OpenAI
 # ==========================================================
 # CONFIGURATION
 # ==========================================================
-st.set_page_config(page_title="🦅 DataFalcon Pro — GPT-4o-mini (No-Saldo)", layout="wide")
-st.title("🦅 DataFalcon Pro — Vendor Statement Extractor (GPT-4o-mini, No-Saldo Engine)")
+st.set_page_config(page_title="🦅 DataFalcon Pro — GPT-4o-mini", layout="wide")
+st.title("🦅 DataFalcon Pro — Vendor Statement Extractor")
 
+# Load API key
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -29,6 +30,7 @@ MODEL = "gpt-4o-mini"
 # HELPERS
 # ==========================================================
 def extract_text_from_pdf(file):
+    """Extract text cleanly from PDF."""
     file_bytes = file.getvalue()
     if not file_bytes:
         raise ValueError("Uploaded file is empty.")
@@ -40,7 +42,7 @@ def extract_text_from_pdf(file):
 
 
 def normalize_number(value):
-    """Normalize decimals like 1.234,56 → 1234.56."""
+    """Normalize decimals: 1.234,56 → 1234.56 | 1,234.56 → 1234.56"""
     if not value:
         return ""
     s = str(value).strip().replace(" ", "")
@@ -64,52 +66,56 @@ def extract_tax_id(text):
 
 
 # ==========================================================
-# PREFILTER ENGINE — remove SALDO completely
+# PREFILTER ENGINE — KEEP RIGHTMOST (SALDO ACTUAL)
 # ==========================================================
 def preprocess_text_for_ai(raw_text):
     """
-    Clean and mark only meaningful financial values.
-    SALDO values are completely removed — GPT never sees them.
+    Keep only the final numeric value per line (Saldo actual = Document Value).
     """
     txt = raw_text
     txt = re.sub(r"[ \t]+", " ", txt)
     txt = re.sub(r",\s+", ",", txt)
 
-    # 1️⃣ Remove numeric pairs — keep only the first (DEBE)
-    txt = re.sub(
-        r"(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})\s+(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})",
-        r"\1",
-        txt
-    )
+    lines = txt.split("\n")
+    clean_lines = []
 
-    # 2️⃣ Remove any line explicitly mentioning SALDO
-    txt = re.sub(r"(?i)(SALDO\s*:?(\s*\d{1,3}(?:[.,]\d{3})*[.,]\d{2})?)", "", txt)
+    for line in lines:
+        if not line.strip():
+            continue
+        if re.search(r"(?i)\b(SALDO\s+ANTERIOR|BANCO|COBRO|EFECTO|REME|PAGO)\b", line):
+            continue
 
-    # 3️⃣ Tag DEBE/TOTAL/TOTALE/IMPORTE values
-    txt = re.sub(
-        r"(?i)(TOTALE|TOTAL|IMPORTE|DEBE)\s*[:\-]?\s*(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})",
-        r"[DEBE: \2]",
-        txt
-    )
+        numbers = re.findall(r"\d{1,3}(?:[.,]\d{3})*[.,]\d{2}", line)
 
-    # 4️⃣ Tag Credit Notes
-    txt = re.sub(
-        r"(?i)(ABONO|NOTA\s+DE\s+CR[EÉ]DITO|C\.?N\.?|CREDIT\s+NOTE)[^\d]*(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})",
-        r"[CREDIT: -\2]",
-        txt
-    )
+        # If multiple numbers, keep only the last (Saldo actual)
+        if len(numbers) >= 1:
+            value = numbers[-1]
+            line = re.sub(
+                re.escape(value),
+                f"[DEBE: {value}]",
+                line,
+                count=1
+            )
 
-    # 5️⃣ Mark standalone numbers as potential DEBE
-    txt = re.sub(
-        r"(?<!\[)(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})(?![\d\]])",
-        r"[DEBE: \1]",
-        txt
-    )
+        # Credit note detection
+        line = re.sub(
+            r"(?i)(ABONO|NOTA\s+DE\s+CR[EÉ]DITO|C\.?N\.?|CREDIT\s+NOTE)[^\d]*(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})",
+            r"[CREDIT: -\2]",
+            line
+        )
 
-    # 6️⃣ Cleanup brackets
+        # Totale / Importe
+        line = re.sub(
+            r"(?i)(TOTALE|TOTAL|IMPORTE)\s*[:\-]?\s*(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})",
+            r"[DEBE: \2]",
+            line
+        )
+
+        clean_lines.append(line)
+
+    txt = "\n".join(clean_lines)
     txt = re.sub(r"\[+", "[", txt)
     txt = re.sub(r"\]+", "]", txt)
-
     return txt
 
 
@@ -121,7 +127,8 @@ def extract_with_gpt(raw_text):
 
     prompt = f"""
 You are an expert accountant.
-Extract all valid invoice and credit note lines.
+
+Extract all valid invoice and credit note entries.
 
 Each record must include:
 - "Alternative Document"
@@ -130,10 +137,11 @@ Each record must include:
 - "Document Value": number inside [DEBE: ...] or [CREDIT: ...] only.
 
 Rules:
-- Ignore all SALDO values (they have already been removed).
+- The document amount is always the rightmost number on each line.
 - Ignore Banco, Cobro, Efecto, Remesa, Pago, or other payment lines.
 - If you see [CREDIT: -value], mark it as "Credit Note" with negative value.
 - Output only JSON array with these exact keys.
+- Use '.' for decimals.
 
 Example:
 [
@@ -215,12 +223,8 @@ if uploaded_pdf:
             st.error(f"❌ PDF extraction failed: {e}")
             st.stop()
 
-    approx_tokens = len(text) / 4
-    est_cost = (approx_tokens / 1000) * (0.0006 + 0.0024)
-    st.info(f"💲 Estimated cost for this extraction: **${est_cost:.4f} USD**")
-
-    if st.button("🤖 Extract Data with GPT-4o-mini"):
-        with st.spinner("Analyzing with GPT-4o-mini... please wait..."):
+    if st.button("🤖 Extract Data"):
+        with st.spinner("Analyzing file... please wait..."):
             data = extract_with_gpt(text)
 
         tax_id = extract_tax_id(text)
@@ -228,15 +232,15 @@ if uploaded_pdf:
             row["Tax ID"] = tax_id
 
         if not data:
-            st.warning("⚠️ No valid invoice data found. Verify the PDF format or retry.")
+            st.warning("⚠️ No valid invoice data found.")
         else:
             df = pd.DataFrame(data)
-            st.success(f"✅ Extraction complete — {len(df)} records (DEBE/TOTALE/CREDIT only, SALDO removed).")
+            st.success(f"✅ Extraction complete — {len(df)} records.")
             st.dataframe(df, use_container_width=True)
             st.download_button(
                 "⬇️ Download Excel",
                 data=to_excel_bytes(data),
-                file_name="vendor_statement_NoSaldo.xlsx",
+                file_name="vendor_statement.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
 else:
