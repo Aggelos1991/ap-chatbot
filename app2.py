@@ -89,11 +89,7 @@ def match_invoices(erp_df, ven_df):
     # ====== CLEAN NUMERIC CORE ======
     def clean_core(v):
         s = re.sub(r"[^0-9]", "", str(v or ""))
-        if len(s) >= 6:
-            return s[-6:]
-        elif len(s) >= 3:
-            return s
-        return ""
+        return s[-6:] if len(s) >= 6 else s
 
     erp_use["__core"] = erp_use["invoice_erp"].apply(clean_core)
     ven_use["__core"] = ven_use["invoice_ven"].apply(clean_core)
@@ -117,17 +113,18 @@ def match_invoices(erp_df, ven_df):
             # === 3-digit overlap rule ===
             digits_erp = re.findall(r"\d{3,}", e_core)
             digits_ven = re.findall(r"\d{3,}", v_core)
-            three_match = any(d in v_core for d in digits_erp if len(d) >= 3) or any(
-                d in e_core for d in digits_ven if len(d) >= 3
+            three_match = any(
+                d in v_core or v_core.endswith(d) or e_core.endswith(d)
+                for d in digits_erp if len(d) >= 3
             )
 
             fuzzy = fuzz.ratio(e_inv, v_inv)
             amt_close = abs(e_amt - v_amt) < 0.05
 
-            # --- decide match ---
             if three_match or e_core == v_core or fuzzy > 90:
                 diff = round(e_amt - v_amt, 2)
                 status = "Match" if abs(diff) < 0.05 else "Difference"
+
                 matched.append({
                     "Date (ERP)": e_date,
                     "Date (Vendor)": v_date,
@@ -138,14 +135,14 @@ def match_invoices(erp_df, ven_df):
                     "Difference": diff,
                     "Status": status
                 })
+
+                # ❗ DO NOT break — allow next vendor invoices to also match same pattern
                 used_vendor_rows.add(v_idx)
-                break  # move to next ERP invoice after one confirmed match
 
     # ====== BUILD MISSING TABLES ======
     matched_erp = {m["ERP Invoice"] for m in matched}
     matched_vendor = {m["Vendor Invoice"] for m in matched}
 
-    # Vendor-only → Missing in ERP
     ven_missing = (
         ven_use[~ven_use["invoice_ven"].isin(matched_vendor)]
         .loc[:, ["date_ven", "invoice_ven", "__amt"]]
@@ -153,7 +150,6 @@ def match_invoices(erp_df, ven_df):
         .reset_index(drop=True)
     )
 
-    # ERP-only → Missing in Vendor
     erp_missing = (
         erp_use[~erp_use["invoice_erp"].isin(matched_erp)]
         .loc[:, ["date_erp", "invoice_erp", "__amt"]]
@@ -162,8 +158,6 @@ def match_invoices(erp_df, ven_df):
     )
 
     return pd.DataFrame(matched), erp_missing, ven_missing
-
-
 # ======================================
 # STREAMLIT UI
 # ======================================
