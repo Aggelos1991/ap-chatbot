@@ -70,7 +70,9 @@ def extract_tax_id(text):
 # ==========================================================
 def preprocess_text_for_ai(raw_text):
     """
-    Keep only the final numeric value per line (Saldo actual = Document Value).
+    Extracts and tags the correct DEBE (document amount) per line.
+    In this layout, the DEBE is the second-to-last number per line,
+    while the last one is the running SALDO (balance) we ignore.
     """
     txt = raw_text
     txt = re.sub(r"[ \t]+", " ", txt)
@@ -87,9 +89,17 @@ def preprocess_text_for_ai(raw_text):
 
         numbers = re.findall(r"\d{1,3}(?:[.,]\d{3})*[.,]\d{2}", line)
 
-        # If multiple numbers, keep only the last (Saldo actual)
-        if len(numbers) >= 1:
-            value = numbers[-1]
+        if len(numbers) >= 2:
+            # keep second-to-last (DEBE)
+            value = numbers[-2]
+            line = re.sub(
+                re.escape(value),
+                f"[DEBE: {value}]",
+                line,
+                count=1
+            )
+        elif len(numbers) == 1:
+            value = numbers[0]
             line = re.sub(
                 re.escape(value),
                 f"[DEBE: {value}]",
@@ -97,14 +107,14 @@ def preprocess_text_for_ai(raw_text):
                 count=1
             )
 
-        # Credit note detection
+        # Credit notes (Abono, Nota de crédito)
         line = re.sub(
             r"(?i)(ABONO|NOTA\s+DE\s+CR[EÉ]DITO|C\.?N\.?|CREDIT\s+NOTE)[^\d]*(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})",
             r"[CREDIT: -\2]",
             line
         )
 
-        # Totale / Importe
+        # Totale / Importe / Total
         line = re.sub(
             r"(?i)(TOTALE|TOTAL|IMPORTE)\s*[:\-]?\s*(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})",
             r"[DEBE: \2]",
@@ -117,7 +127,6 @@ def preprocess_text_for_ai(raw_text):
     txt = re.sub(r"\[+", "[", txt)
     txt = re.sub(r"\]+", "]", txt)
     return txt
-
 
 # ==========================================================
 # GPT EXTRACTOR
