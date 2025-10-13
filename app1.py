@@ -1,20 +1,36 @@
+import os, re, json
 import pdfplumber
 import pandas as pd
 import streamlit as st
 from io import BytesIO
-import re
+from openai import OpenAI
 
 # ==========================================================
-# CONFIGURATION
+# CONFIG
 # ==========================================================
-st.set_page_config(page_title="🦅 DataFalcon Pro — Accurate DEBE Extractor", layout="wide")
-st.title("🦅 DataFalcon Pro — Vendor Statement Extractor (Structured PDF Mode)")
+st.set_page_config(page_title="🦅 DataFalcon Pro — Hybrid GPT Extractor", layout="wide")
+st.title("🦅 DataFalcon Pro — Hybrid Vendor Statement Extractor")
+
+# Load API key
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except:
+    pass
+
+api_key = os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY")
+if not api_key:
+    st.error("❌ No OpenAI API key found. Add it to .env or Streamlit Secrets.")
+    st.stop()
+
+client = OpenAI(api_key=api_key)
+MODEL = "gpt-4o-mini"
 
 # ==========================================================
 # HELPERS
 # ==========================================================
 def normalize_number(value):
-    """Normalize decimals: 1.234,56 → 1234.56"""
+    """Normalize decimals like 1.234,56 → 1234.56."""
     if not value:
         return ""
     s = str(value).strip().replace(" ", "")
@@ -31,50 +47,76 @@ def normalize_number(value):
     except:
         return ""
 
-def extract_table_data(uploaded_pdf):
-    """Extract DEBE column data from structured table layout."""
-    records = []
+def extract_raw_lines(uploaded_pdf):
+    """Extract readable text lines from PDF (even if not tabular)."""
+    lines = []
     with pdfplumber.open(uploaded_pdf) as pdf:
         for page in pdf.pages:
-            table = page.extract_table()
-            if not table:
+            text = page.extract_text()
+            if not text:
                 continue
+            for line in text.split("\n"):
+                if re.search(r"\d{1,3}(?:[.,]\d{3})*[.,]\d{2}", line):
+                    lines.append(line.strip())
+    return lines
 
-            headers = [h.strip().upper() if h else "" for h in table[0]]
-            for row in table[1:]:
-                if not any(row):
-                    continue
+# ==========================================================
+# GPT EXTRACTOR
+# ==========================================================
+def extract_with_gpt(lines):
+    """Send extracted lines to GPT for structured parsing."""
+    joined_text = "\n".join(lines[:200])  # limit for safety
 
-                # try to find DEBE, HABER, SALDO positions
-                try:
-                    debe_idx = next(i for i, h in enumerate(headers) if "DEBE" in h)
-                    haber_idx = next(i for i, h in enumerate(headers) if "HABER" in h)
-                    saldo_idx = next(i for i, h in enumerate(headers) if "SALDO" in h)
-                except StopIteration:
-                    continue
+    prompt = f"""
+You are an expert Spanish accountant.
 
-                # extract core columns
-                date = next((x for x in row if re.match(r"\d{2}/\d{2}/\d{2,4}", str(x))), "")
-                doc = row[3] if len(row) > 3 else ""
-                debe = row[debe_idx] if len(row) > debe_idx else ""
-                haber = row[haber_idx] if len(row) > haber_idx else ""
-                saldo = row[saldo_idx] if len(row) > saldo_idx else ""
+Below are text lines from a vendor statement.
+Each line may contain several numbers — typically a DEBE value (second-to-last) and a SALDO (last).
+Your job:
+1. Extract all invoice or credit note lines.
+2. For each, return:
+   - "Alternative Document": invoice or reference number (like 6--483)
+   - "Date": dd/mm/yy or dd/mm/yyyy
+   - "Reason": "Invoice" or "Credit Note"
+   - "Document Value": the second-to-last numeric value (DEBE)
+     - If the line mentions ABONO or NOTA DE CRÉDITO, make the value negative.
+3. Ignore SALDO and totals.
+4. Return valid JSON array only.
 
-                # ignore zeros and empty DEBE
-                if not debe or re.match(r"^0+[.,]0+$", str(debe)):
-                    continue
+Lines:
+\"\"\"{joined_text}\"\"\"
+"""
 
-                # detect credit notes
-                concept = " ".join(str(x) for x in row if x)
-                reason = "Credit Note" if re.search(r"(?i)(ABONO|CREDIT|NOTA\s+DE\s+CR[EÉ]DITO)", concept) else "Invoice"
+    try:
+        response = client.responses.create(model=MODEL, input=prompt)
+        content = response.output_text.strip()
+        json_match = re.search(r"\[.*\]", content, re.DOTALL)
+        json_text = json_match.group(0) if json_match else content
+        data = json.loads(json_text)
+    except Exception as e:
+        st.error(f"⚠️ GPT extraction failed: {e}")
+        st.text_area("🔍 Raw GPT Output", content[:2000], height=200)
+        return []
 
-                records.append({
-                    "Alternative Document": doc,
-                    "Date": date,
-                    "Reason": reason,
-                    "Document Value": normalize_number(debe),
-                })
-    return records
+    # Post-clean
+    cleaned = []
+    for row in data:
+        val = normalize_number(row.get("Document Value"))
+        if val == "":
+            continue
+        reason = row.get("Reason", "").lower()
+        if "credit" in reason or "abono" in reason or "nota de crédito" in reason:
+            val = -abs(val)
+            reason = "Credit Note"
+        else:
+            reason = "Invoice"
+        cleaned.append({
+            "Alternative Document": row.get("Alternative Document", "").strip(),
+            "Date": row.get("Date", "").strip(),
+            "Reason": reason,
+            "Document Value": val
+        })
+    return cleaned
 
 def to_excel_bytes(records):
     df = pd.DataFrame(records)
@@ -89,24 +131,29 @@ def to_excel_bytes(records):
 uploaded_pdf = st.file_uploader("📂 Upload Vendor Statement (PDF)", type=["pdf"])
 
 if uploaded_pdf:
-    with st.spinner("📄 Reading structured table data..."):
-        try:
-            data = extract_table_data(uploaded_pdf)
-        except Exception as e:
-            st.error(f"❌ PDF extraction failed: {e}")
-            st.stop()
+    with st.spinner("📄 Extracting text from PDF..."):
+        lines = extract_raw_lines(uploaded_pdf)
 
-    if not data:
-        st.warning("⚠️ No DEBE records detected. Check if the PDF is tabular or scanned.")
+    if not lines:
+        st.warning("⚠️ No readable text lines found. Check if the PDF is scanned.")
     else:
-        df = pd.DataFrame(data)
-        st.success(f"✅ Extraction complete — {len(df)} valid DEBE entries found.")
-        st.dataframe(df, use_container_width=True)
-        st.download_button(
-            "⬇️ Download Excel",
-            data=to_excel_bytes(data),
-            file_name="vendor_statement_structured.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
+        st.text_area("📄 Extracted Sample (first 25 lines):", "\n".join(lines[:25]), height=250)
+
+        if st.button("🤖 Analyze with GPT-4o-mini"):
+            with st.spinner("Analyzing data... please wait..."):
+                data = extract_with_gpt(lines)
+
+            if not data:
+                st.warning("⚠️ No structured invoice data detected.")
+            else:
+                df = pd.DataFrame(data)
+                st.success(f"✅ Extraction complete — {len(df)} records found (Hybrid Mode).")
+                st.dataframe(df, use_container_width=True)
+                st.download_button(
+                    "⬇️ Download Excel",
+                    data=to_excel_bytes(data),
+                    file_name="vendor_statement_hybrid.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
 else:
     st.info("Please upload a vendor statement PDF to begin.")
