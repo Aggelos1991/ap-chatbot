@@ -6,10 +6,10 @@ from io import BytesIO
 from openai import OpenAI
 
 # ==========================================================
-# CONFIG
+# CONFIGURATION
 # ==========================================================
 st.set_page_config(page_title="🦅 DataFalcon Pro — Hybrid GPT Extractor", layout="wide")
-st.title("🦅 DataFalcon Pro — Hybrid Vendor Statement Extractor")
+st.title("🦅 DataFalcon Pro — Hybrid Vendor Statement Extractor (Optimized)")
 
 # Load API key
 try:
@@ -30,7 +30,7 @@ MODEL = "gpt-4o-mini"
 # HELPERS
 # ==========================================================
 def normalize_number(value):
-    """Normalize decimals like 1.234,56 → 1234.56."""
+    """Normalize decimals like 1.234,56 → 1234.56"""
     if not value:
         return ""
     s = str(value).strip().replace(" ", "")
@@ -48,75 +48,82 @@ def normalize_number(value):
         return ""
 
 def extract_raw_lines(uploaded_pdf):
-    """Extract readable text lines from PDF (even if not tabular)."""
-    lines = []
+    """Extract all text lines from every page of the PDF."""
+    all_lines = []
     with pdfplumber.open(uploaded_pdf) as pdf:
-        for page in pdf.pages:
+        for p_i, page in enumerate(pdf.pages, start=1):
             text = page.extract_text()
             if not text:
                 continue
             for line in text.split("\n"):
                 if re.search(r"\d{1,3}(?:[.,]\d{3})*[.,]\d{2}", line):
-                    lines.append(line.strip())
-    return lines
+                    clean_line = " ".join(line.split())
+                    all_lines.append(clean_line)
+    return all_lines
 
 # ==========================================================
 # GPT EXTRACTOR
 # ==========================================================
 def extract_with_gpt(lines):
-    """Send extracted lines to GPT for structured parsing."""
-    joined_text = "\n".join(lines[:200])  # limit for safety
+    """Analyze extracted lines using GPT-4o-mini for structure & DEBE detection."""
+    # Split into manageable batches (to avoid token overflow)
+    BATCH_SIZE = 200
+    all_records = []
 
-    prompt = f"""
+    for i in range(0, len(lines), BATCH_SIZE):
+        batch = lines[i:i + BATCH_SIZE]
+        text_block = "\n".join(batch)
+
+        prompt = f"""
 You are an expert Spanish accountant.
 
 Below are text lines from a vendor statement.
-Each line may contain several numbers — typically a DEBE value (second-to-last) and a SALDO (last).
+Each line may contain multiple numbers — usually a DEBE (second-to-last) and a SALDO (last).
 Your job:
-1. Extract all invoice or credit note lines.
+1. Extract only the valid invoice or credit note lines.
 2. For each, return:
-   - "Alternative Document": invoice or reference number (like 6--483)
+   - "Alternative Document": invoice/reference number (e.g. 6--483, SerieFactura-Precodigo-Num FactCliente)
    - "Date": dd/mm/yy or dd/mm/yyyy
    - "Reason": "Invoice" or "Credit Note"
-   - "Document Value": the second-to-last numeric value (DEBE)
-     - If the line mentions ABONO or NOTA DE CRÉDITO, make the value negative.
-3. Ignore SALDO and totals.
-4. Return valid JSON array only.
+   - "Document Value": the DEBE amount (second-to-last numeric value in the line)
+     • If line mentions ABONO, NOTA DE CRÉDITO, or CREDIT, make it negative.
+3. Ignore "Saldo", "Cobro", "Pago", "Remesa", "Banco", "Total", "Saldo Anterior".
+4. Output valid JSON array only.
+5. Ensure Document Value uses '.' for decimals and exactly two digits.
 
 Lines:
-\"\"\"{joined_text}\"\"\"
+\"\"\"{text_block}\"\"\"
 """
 
-    try:
-        response = client.responses.create(model=MODEL, input=prompt)
-        content = response.output_text.strip()
-        json_match = re.search(r"\[.*\]", content, re.DOTALL)
-        json_text = json_match.group(0) if json_match else content
-        data = json.loads(json_text)
-    except Exception as e:
-        st.error(f"⚠️ GPT extraction failed: {e}")
-        st.text_area("🔍 Raw GPT Output", content[:2000], height=200)
-        return []
-
-    # Post-clean
-    cleaned = []
-    for row in data:
-        val = normalize_number(row.get("Document Value"))
-        if val == "":
+        try:
+            response = client.responses.create(model=MODEL, input=prompt)
+            content = response.output_text.strip()
+            json_match = re.search(r"\[.*\]", content, re.DOTALL)
+            json_text = json_match.group(0) if json_match else content
+            data = json.loads(json_text)
+        except Exception as e:
+            st.warning(f"⚠️ GPT failed on batch {i//BATCH_SIZE + 1}: {e}")
             continue
-        reason = row.get("Reason", "").lower()
-        if "credit" in reason or "abono" in reason or "nota de crédito" in reason:
-            val = -abs(val)
-            reason = "Credit Note"
-        else:
-            reason = "Invoice"
-        cleaned.append({
-            "Alternative Document": row.get("Alternative Document", "").strip(),
-            "Date": row.get("Date", "").strip(),
-            "Reason": reason,
-            "Document Value": val
-        })
-    return cleaned
+
+        # Clean & normalize data
+        for row in data:
+            val = normalize_number(row.get("Document Value"))
+            if val == "":
+                continue
+            reason = row.get("Reason", "").lower()
+            if any(k in reason for k in ["abono", "credit", "nota de crédito", "nc"]):
+                val = -abs(val)
+                reason = "Credit Note"
+            else:
+                reason = "Invoice"
+            all_records.append({
+                "Alternative Document": row.get("Alternative Document", "").strip(),
+                "Date": row.get("Date", "").strip(),
+                "Reason": reason,
+                "Document Value": val
+            })
+
+    return all_records
 
 def to_excel_bytes(records):
     df = pd.DataFrame(records)
@@ -131,23 +138,23 @@ def to_excel_bytes(records):
 uploaded_pdf = st.file_uploader("📂 Upload Vendor Statement (PDF)", type=["pdf"])
 
 if uploaded_pdf:
-    with st.spinner("📄 Extracting text from PDF..."):
+    with st.spinner("📄 Extracting text from all pages..."):
         lines = extract_raw_lines(uploaded_pdf)
 
     if not lines:
         st.warning("⚠️ No readable text lines found. Check if the PDF is scanned.")
     else:
-        st.text_area("📄 Extracted Sample (first 25 lines):", "\n".join(lines[:25]), height=250)
+        st.text_area("📄 Preview (first 25 lines):", "\n".join(lines[:25]), height=250)
 
-        if st.button("🤖 Analyze with GPT-4o-mini"):
-            with st.spinner("Analyzing data... please wait..."):
+        if st.button("🤖 Run Hybrid Extraction"):
+            with st.spinner("Analyzing data with GPT-4o-mini..."):
                 data = extract_with_gpt(lines)
 
             if not data:
                 st.warning("⚠️ No structured invoice data detected.")
             else:
                 df = pd.DataFrame(data)
-                st.success(f"✅ Extraction complete — {len(df)} records found (Hybrid Mode).")
+                st.success(f"✅ Extraction complete — {len(df)} valid records found.")
                 st.dataframe(df, use_container_width=True)
                 st.download_button(
                     "⬇️ Download Excel",
