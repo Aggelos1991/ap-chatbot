@@ -70,11 +70,19 @@ def share_3plus_digits(a, b):
     return False
 
 
+def clean_core(v):
+    """Extract numeric core (last 3–6 digits) ignoring special characters."""
+    s = re.sub(r"[^0-9]", "", str(v))
+    if len(s) > 6:
+        return s[-6:]
+    return s
+
+
 # ======================================
 # CORE MATCHING
 # ======================================
 def match_invoices(erp_df, ven_df):
-    matched, matched_erp, matched_ven = [], set(), set()
+    matched, matched_erp, matched_ven_core = [], set(), set()
 
     erp_df["__doctype"] = erp_df.apply(
         lambda r: "CN" if normalize_number(r.get("debit_erp")) > 0 else "INV"
@@ -101,30 +109,33 @@ def match_invoices(erp_df, ven_df):
         e_inv = str(e_row["invoice_erp"]).strip()
         e_amt = round(float(e_row["__amt"]), 2)
         e_date = e_row.get("date_erp")
+        e_core = clean_core(e_inv)
 
         best_v = None
         best_score = -1
 
         for _, v_row in ven_use.iterrows():
             v_inv = str(v_row["invoice_ven"]).strip()
+            v_core = clean_core(v_inv)
             v_amt = round(float(v_row["__amt"]), 2)
             v_date = v_row.get("date_ven")
 
-            if v_inv in matched_ven:
+            # Skip if this core was already matched
+            if v_core in matched_ven_core:
                 continue
 
             digits3 = share_3plus_digits(e_inv, v_inv)
             fuzzy = fuzz.ratio(e_inv, v_inv) if e_inv and v_inv else 0
             amt_close = abs(e_amt - v_amt) < 0.05
 
-            if digits3 or fuzzy > 90 or e_inv == v_inv:
-                score = fuzzy + (60 if amt_close else 0) + (100 if digits3 else 0)
+            if digits3 or fuzzy > 90 or e_core == v_core:
+                score = fuzzy + (60 if amt_close else 0) + (100 if digits3 or e_core == v_core else 0)
                 if score > best_score:
                     best_score = score
-                    best_v = (v_inv, v_amt, v_date)
+                    best_v = (v_inv, v_core, v_amt, v_date)
 
         if best_v:
-            v_inv, v_amt, v_date = best_v
+            v_inv, v_core, v_amt, v_date = best_v
             diff = round(e_amt - v_amt, 2)
             status = "Match" if abs(diff) < 0.05 else "Difference"
             matched.append({
@@ -138,9 +149,9 @@ def match_invoices(erp_df, ven_df):
                 "Status": status
             })
             matched_erp.add(e_inv)
-            matched_ven.add(v_inv)
+            matched_ven_core.add(v_core)
 
-    # --- Missing logic (stable, non-aggressive) ---
+    # --- Missing logic ---
     def clean_invoice(v):
         return re.sub(r"[^A-Z0-9]", "", str(v).upper().strip())
 
@@ -148,7 +159,7 @@ def match_invoices(erp_df, ven_df):
     ven_use["__clean_inv"] = ven_use["invoice_ven"].apply(clean_invoice)
 
     matched_erp_clean = {clean_invoice(i) for i in matched_erp}
-    matched_ven_clean = {clean_invoice(i) for i in matched_ven}
+    matched_ven_clean = {clean_invoice(i) for i in matched_ven_core}
 
     erp_missing = (
         erp_use[~erp_use["__clean_inv"].isin(matched_erp_clean)]
