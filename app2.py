@@ -149,45 +149,50 @@ def match_invoices(erp_df, ven_df):
 
         # ====== BUILD MISSING TABLES (final fix) ======
 
+       # ====== BUILD MISSING TABLES (final symmetric logic) ======
+
     def extract_tokens(s: str):
-        """Extract all 3+ consecutive digit sequences from an invoice string."""
+        """Extract all 3+ digit sequences from invoice string."""
         return set(re.findall(r"\d{3,}", str(s or "")))
 
-    # Build sets of 3+ digit tokens for both sides
-    erp_tokens_all = set().union(*erp_use["__core"].astype(str).apply(extract_tokens))
-    ven_tokens_all = set().union(*ven_use["__core"].astype(str).apply(extract_tokens))
+    # Build token sets for ERP and Vendor
+    erp_tokens = {str(e): extract_tokens(e) for e in erp_use["__core"]}
+    ven_tokens = {str(v): extract_tokens(v) for v in ven_use["__core"]}
 
-    # Build matched tokens (based on already matched invoices)
-    matched_erp_tokens = set().union(*[extract_tokens(i["ERP Invoice"]) for i in matched])
-    matched_ven_tokens = set().union(*[extract_tokens(i["Vendor Invoice"]) for i in matched])
+    matched_erp_invs = {m["ERP Invoice"] for m in matched}
+    matched_ven_invs = {m["Vendor Invoice"] for m in matched}
 
-    # --- Missing in ERP (vendor invoices not sharing 3+ digits with any ERP invoice) ---
-    ven_missing_mask = ven_use["__core"].apply(
-        lambda c: len(extract_tokens(c) & (erp_tokens_all | matched_erp_tokens)) == 0
-    )
-    ven_missing = (
-        ven_use[ven_missing_mask]
-        .loc[:, ["date_ven", "invoice_ven", "__amt"]]
-        .rename(columns={"date_ven": "Date", "invoice_ven": "Invoice", "__amt": "Amount"})
-        .reset_index(drop=True)
-    )
+    # Find shared token sets across all
+    all_erp_tokens = set().union(*erp_tokens.values())
+    all_ven_tokens = set().union(*ven_tokens.values())
 
-    # --- Missing in Vendor (ERP invoices not sharing 3+ digits with any vendor invoice) ---
-    erp_missing_mask = erp_use["__core"].apply(
-        lambda c: len(extract_tokens(c) & (ven_tokens_all | matched_ven_tokens)) == 0
-    )
-    erp_missing = (
-        erp_use[erp_missing_mask]
-        .loc[:, ["date_erp", "invoice_erp", "__amt"]]
-        .rename(columns={"date_erp": "Date", "invoice_erp": "Invoice", "__amt": "Amount"})
-        .reset_index(drop=True)
-    )
+    # --- Missing in ERP (vendor invoices with no shared 3+ digits in ANY ERP invoice) ---
+    ven_missing_list = []
+    for _, row in ven_use.iterrows():
+        inv = str(row["invoice_ven"])
+        core = str(row["__core"])
+        if inv in matched_ven_invs:
+            continue
+        if len(extract_tokens(core) & all_erp_tokens) == 0:
+            ven_missing_list.append(row)
 
-    # If empty, just return blank tables (no "None" filler)
-    if ven_missing.empty:
-        ven_missing = pd.DataFrame(columns=["Date", "Invoice", "Amount"])
-    if erp_missing.empty:
-        erp_missing = pd.DataFrame(columns=["Date", "Invoice", "Amount"])
+    ven_missing = pd.DataFrame(ven_missing_list)[["date_ven", "invoice_ven", "__amt"]].rename(
+        columns={"date_ven": "Date", "invoice_ven": "Invoice", "__amt": "Amount"}
+    ) if ven_missing_list else pd.DataFrame(columns=["Date", "Invoice", "Amount"])
+
+    # --- Missing in Vendor (ERP invoices with no shared 3+ digits in ANY vendor invoice) ---
+    erp_missing_list = []
+    for _, row in erp_use.iterrows():
+        inv = str(row["invoice_erp"])
+        core = str(row["__core"])
+        if inv in matched_erp_invs:
+            continue
+        if len(extract_tokens(core) & all_ven_tokens) == 0:
+            erp_missing_list.append(row)
+
+    erp_missing = pd.DataFrame(erp_missing_list)[["date_erp", "invoice_erp", "__amt"]].rename(
+        columns={"date_erp": "Date", "invoice_erp": "Invoice", "__amt": "Amount"}
+    ) if erp_missing_list else pd.DataFrame(columns=["Date", "Invoice", "Amount"])
 
     return pd.DataFrame(matched), erp_missing, ven_missing
 # ======================================
