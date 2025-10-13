@@ -73,35 +73,36 @@ def extract_tax_id(raw_text):
     return None
 
 # =============================================
-# Extraction logic — with all your conditions
+# Extraction with refined logic
 # =============================================
 def extract_with_llm(raw_text):
     """
-    Extracts structured data from Spanish vendor statements.
-    Applies logic for all prefixes, Debe/Haber structure, and payments/CN recognition.
+    Extract structured invoice data with proper distinction between Debe/Haber/Saldo.
     """
     prompt = f"""
     You are a professional accountant AI. 
-    Read the following Spanish vendor statement and extract ONLY real documents (invoices or credit notes).
+    Analyze the following Spanish vendor statement and extract only documents (invoices or credit notes).
 
-    For each document, return:
-    - Alternative Document → the invoice/document number (look for prefixes: "Factura", "Documento", "Doc", "No", "Nº", "Num", "Número", "Nro", "Invoice")
-    - Date → from "Fecha" or nearby text
+    Each extracted record must include:
+    - Alternative Document → the invoice/document number (Factura, Documento, Doc, No, Nº, Num, Número, Nro, Invoice)
+    - Date → from "Fecha" or similar
     - Reason → "Invoice" or "Credit Note"
-    - Document Value → numeric value (positive for invoice, negative for credit note)
-    - Tax ID → CIF/NIF/VAT if present
+    - Document Value → numeric value (positive for Invoice, negative for Credit Note)
+    - Tax ID → CIF/NIF/VAT if found in the text
 
-    Rules for recognition:
-    • Columns or text "Debe", "Debit", "Debe.", "Db", "Cargo", "Importe", "Valor", "Total", "Totale", "Amount" 
-        → represent the document amount (Invoice → positive).
-    • "Haber", "Credit", "Crédito", "Pago", "Transferencia", "Remesa", "Domiciliación" 
-        → are payments → IGNORE unless text includes "Abono", "Nota de crédito", or "Devolución".
-    • "Abono", "Nota de crédito", "Nota credito", "Devolución" → Credit Note → keep and mark negative.
-    • If "Debe/Haber" columns not found, detect total amount near "Total", "Importe", "Valor", "Totale", "Amount".
-    • Never duplicate documents.
-    • Ignore lines that are purely payment, remittance, or bank operations.
+    ❗IMPORTANT RULES❗
+    - Columns or text labeled "Saldo", "Balance", "Acumulado", "Restante" represent running balance. IGNORE THEM.
+    - "Debe", "Debit", "Cargo", "Importe", "Valor", "Total", "Totale", "Amount" = document amount (Invoice → positive).
+    - "Haber", "Credit", "Crédito", "Pago", "Transferencia", "Remesa", "Domiciliación" = payments → IGNORE, 
+      unless text includes "Abono", "Nota de crédito", or "Devolución" (then Credit Note → negative).
+    - If Debe/Haber columns don’t exist, use "Total", "Importe", or "Valor" but never "Saldo".
+    - Detect Reason:
+        • Words like "Factura", "Documento", "Servicio", "Mantenimiento" → "Invoice"
+        • Words like "Abono", "Nota de crédito", "Devolución" → "Credit Note"
+        • Words like "Pago", "Transferencia", "Remesa", "Domiciliación" → ignore line
+    - Output only invoices and credit notes, not payments or balances.
 
-    Output a VALID JSON array with fields:
+    Return a VALID JSON array with fields:
     ["Alternative Document", "Date", "Reason", "Document Value", "Tax ID"]
 
     Example:
@@ -139,7 +140,7 @@ def extract_with_llm(raw_text):
         st.text_area("🔍 Raw GPT Output", content[:2000], height=200)
         return []
 
-    # --- Post-processing logic ---
+    # --- Post-cleaning ---
     tax_id = extract_tax_id(raw_text)
     filtered = []
 
@@ -147,7 +148,8 @@ def extract_with_llm(raw_text):
         reason = str(row.get("Reason", "")).lower()
         val = normalize_number(row.get("Document Value", ""))
 
-        if not val:
+        # Exclude if value is empty or if it's a balance field
+        if not val or any(k in reason for k in ["saldo", "balance", "acumulado", "restante"]):
             continue
 
         # Skip payments entirely
@@ -175,7 +177,7 @@ def extract_with_llm(raw_text):
     return filtered
 
 # =============================================
-# Excel output helper
+# Excel output
 # =============================================
 def to_excel_bytes(records):
     df = pd.DataFrame(records)
