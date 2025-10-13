@@ -82,8 +82,11 @@ def normalize_columns(df, tag):
             "nº factura", "no", "nro", "num", "numero", "document", "doc", "παραστατικό"
         ],
         "credit": ["credit", "haber", "crédito", "credito"],
-        # 👇 here we treat “Charge” as equivalent to “Debit”
-        "debit": ["charge", "debit", "debe", "cargo", "importe", "valor", "total", "totale", "amount", "importe total"],
+        # 👇 treat Charge & Document Value as Debit equivalents
+        "debit": [
+            "charge", "debit", "document value", "debe", "cargo", "importe", "valor", 
+            "total", "totale", "amount", "importe total"
+        ],
         "reason": ["reason", "motivo", "concepto", "descripcion", "glosa", "observaciones"],
         "cif": ["cif", "nif", "vat", "tax", "vat number", "tax id", "afm", "vat id", "num. identificacion fiscal"],
         "date": ["date", "fecha", "fech", "ημερομηνία", "data"],
@@ -130,7 +133,7 @@ def match_invoices(erp_df, ven_df):
     req_erp = ["invoice_erp", "credit_erp", "debit_erp", "reason_erp", "date_erp", "cif_erp"]
     req_ven = ["invoice_ven", "debit_ven", "credit_ven", "date_ven", "cif_ven"]
 
-    # Basic checks
+    # Checks
     for c in req_erp:
         if c not in erp_df.columns:
             st.error(f"❌ ERP file missing column: {c}")
@@ -140,11 +143,11 @@ def match_invoices(erp_df, ven_df):
             st.error(f"❌ Vendor file missing column: {c}")
             return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-    # Add core keys
+    # Add keys
     erp_df["__core"] = erp_df["invoice_erp"].astype(str).apply(extract_core_invoice)
     ven_df["__core"] = ven_df["invoice_ven"].astype(str).apply(extract_core_invoice)
 
-    # Pre-compute doc types and ERP effective amounts
+    # Compute ERP doc type and amounts
     erp_df["__doctype"] = erp_df.apply(
         lambda r: classify_erp_doc(r.get("reason_erp"), r.get("credit_erp"), r.get("debit_erp")),
         axis=1
@@ -158,7 +161,7 @@ def match_invoices(erp_df, ven_df):
     # Vendor amount = debit_ven (Factura)
     ven_df["__amt"] = ven_df.apply(lambda r: normalize_number(r.get("debit_ven", 0.0)), axis=1)
 
-    # Filter only invoices and CNs
+    # Filter only invoices/CNs
     erp_use = erp_df[erp_df["__doctype"].isin(["INV", "CN"])].copy()
     ven_use = ven_df.copy()
 
@@ -238,7 +241,7 @@ def match_invoices(erp_df, ven_df):
 # ======================================
 # STREAMLIT UI
 # ======================================
-st.write("Upload your ERP Export (Date / Alternative Document / Reason / Charge / Credit / CIF) and Vendor Statement (Factura/No/Doc + Debe/Importe/Total + CIF).")
+st.write("Upload your ERP Export (Date / Alternative Document / Reason / Charge / Credit / CIF) and Vendor Statement (Factura/No/Doc + Document Value + CIF).")
 
 uploaded_erp = st.file_uploader("📂 Upload ERP Export (Excel)", type=["xlsx"])
 uploaded_vendor = st.file_uploader("📂 Upload Vendor Statement (Excel)", type=["xlsx"])
