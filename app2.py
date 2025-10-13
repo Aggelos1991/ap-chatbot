@@ -145,18 +145,22 @@ def match_invoices(erp_df, ven_df):
             })
 
     # ====== BUILD MISSING TABLES ======
-    matched_erp = {m["ERP Invoice"] for m in matched}
-    matched_vendor = {m["Vendor Invoice"] for m in matched}
+      # ====== BUILD MISSING TABLES (presence-based, not match-based) ======
+    # A record is "missing" only if its numeric core does not exist in the other file at all.
+    erp_cores_all = set(erp_use["__core"].astype(str))
+    ven_cores_all = set(ven_use["__core"].astype(str))
 
+    # Vendor-only → Missing in ERP
     ven_missing = (
-        ven_use[~ven_use["invoice_ven"].isin(matched_vendor)]
+        ven_use[~ven_use["__core"].astype(str).isin(erp_cores_all)]
         .loc[:, ["date_ven", "invoice_ven", "__amt"]]
         .rename(columns={"date_ven": "Date", "invoice_ven": "Invoice", "__amt": "Amount"})
         .reset_index(drop=True)
     )
 
+    # ERP-only → Missing in Vendor
     erp_missing = (
-        erp_use[~erp_use["invoice_erp"].isin(matched_erp)]
+        erp_use[~erp_use["__core"].astype(str).isin(ven_cores_all)]
         .loc[:, ["date_erp", "invoice_erp", "__amt"]]
         .rename(columns={"date_erp": "Date", "invoice_erp": "Invoice", "__amt": "Amount"})
         .reset_index(drop=True)
