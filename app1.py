@@ -6,7 +6,7 @@ import streamlit as st
 from openai import OpenAI
 
 # =============================================
-# Load environment variables safely
+# Load API key safely
 # =============================================
 try:
     from dotenv import load_dotenv
@@ -25,8 +25,8 @@ MODEL = "gpt-4o-mini"
 # =============================================
 # Streamlit setup
 # =============================================
-st.set_page_config(page_title="📄 Vendor Statement Extractor", layout="wide")
-st.title("🦅 DataFalcon")
+st.set_page_config(page_title="📄 DataFalcon — Vendor Statement Extractor", layout="wide")
+st.title("🦅 DataFalcon — Vendor Statement Extractor")
 
 # =============================================
 # Helper functions
@@ -43,31 +43,28 @@ def clean_text(text):
     return " ".join(text.replace("\xa0", " ").replace("€", " EUR").split())
 
 def normalize_number(value):
-    """Normalize Spanish/EU formatted numbers like 1.234,56 or 1,234.56 into 1234.56"""
+    """Normalize EU/Spanish formatted numbers into float-compatible string."""
     if not value:
         return ""
     s = str(value).strip()
 
-    if re.match(r"^\d{1,3}(\.\d{3})*,\d{2}$", s):  # EU format
+    if re.match(r"^\d{1,3}(\.\d{3})*,\d{2}$", s):  # EU 1.234,56
         s = s.replace(".", "").replace(",", ".")
-    elif re.match(r"^\d{1,3}(,\d{3})*\.\d{2}$", s):  # US format
+    elif re.match(r"^\d{1,3}(,\d{3})*\.\d{2}$", s):  # US 1,234.56
         s = s.replace(",", "")
-    elif re.match(r"^\d+,\d{2}$", s):  # simple EU 150,00
+    elif re.match(r"^\d+,\d{2}$", s):  # 150,00
         s = s.replace(",", ".")
     else:
-        s = re.sub(r"[^\d.]", "", s)
+        s = re.sub(r"[^\d.-]", "", s)
     return s
 
 def extract_tax_id(raw_text):
-    """
-    Detect Spanish CIF/NIF or European VAT/AFM patterns in the raw text.
-    If found, return the first match; otherwise return None.
-    """
+    """Detect Spanish CIF/NIF or European VAT/AFM patterns in the raw text."""
     patterns = [
-        r"\b[A-Z]{1}\d{7}[A-Z0-9]{1}\b",        # Spanish CIF/NIF (e.g. B12345678)
-        r"\bES\d{9}\b",                         # Spanish VAT with ES prefix
+        r"\b[A-Z]{1}\d{7}[A-Z0-9]{1}\b",        # Spanish CIF/NIF (B12345678)
+        r"\bES\d{9}\b",                         # Spanish VAT ES123456789
         r"\bEL\d{9}\b",                         # Greek VAT
-        r"\b[A-Z]{2}\d{8,12}\b",                # Generic EU VAT (DE123456789, etc.)
+        r"\b[A-Z]{2}\d{8,12}\b",                # Generic EU VAT
     ]
     for pat in patterns:
         match = re.search(pat, raw_text)
@@ -75,31 +72,53 @@ def extract_tax_id(raw_text):
             return match.group(0)
     return None
 
+# =============================================
+# Extraction logic — with all your conditions
+# =============================================
 def extract_with_llm(raw_text):
-    """Send cleaned text to GPT and return structured JSON with correct columns."""
+    """
+    Extracts structured data from Spanish vendor statements.
+    Applies logic for all prefixes, Debe/Haber structure, and payments/CN recognition.
+    """
     prompt = f"""
-    You are an expert accountant AI.
+    You are a professional accountant AI. 
+    Read the following Spanish vendor statement and extract ONLY real documents (invoices or credit notes).
 
-    Extract all invoice lines from the following Spanish vendor statement.
-    Each line has: Invoice_Number, Date, Description, Debit (Debe), Credit (Haber), Balance (Saldo).
+    For each document, return:
+    - Alternative Document → the invoice/document number (look for prefixes: "Factura", "Documento", "Doc", "No", "Nº", "Num", "Número", "Nro", "Invoice")
+    - Date → from "Fecha" or nearby text
+    - Reason → "Invoice" or "Credit Note"
+    - Document Value → numeric value (positive for invoice, negative for credit note)
+    - Tax ID → CIF/NIF/VAT if present
 
-    Rules:
-    - "Debe" → Debit column.
-    - "Haber" → Credit column.
-    - Words like "Pago" or "Abono" mean Credit.
-    - Always include Balance as the rightmost value in each row.
-    - Only one of Debit or Credit can have a value.
-    - Return valid JSON array only.
+    Rules for recognition:
+    • Columns or text "Debe", "Debit", "Debe.", "Db", "Cargo", "Importe", "Valor", "Total", "Totale", "Amount" 
+        → represent the document amount (Invoice → positive).
+    • "Haber", "Credit", "Crédito", "Pago", "Transferencia", "Remesa", "Domiciliación" 
+        → are payments → IGNORE unless text includes "Abono", "Nota de crédito", or "Devolución".
+    • "Abono", "Nota de crédito", "Nota credito", "Devolución" → Credit Note → keep and mark negative.
+    • If "Debe/Haber" columns not found, detect total amount near "Total", "Importe", "Valor", "Totale", "Amount".
+    • Never duplicate documents.
+    • Ignore lines that are purely payment, remittance, or bank operations.
+
+    Output a VALID JSON array with fields:
+    ["Alternative Document", "Date", "Reason", "Document Value", "Tax ID"]
 
     Example:
     [
       {{
-        "Invoice_Number": "2025.TPY.190.1856",
-        "Date": "12/09/2025",
-        "Description": "Factura de servicios",
-        "Debit": "3250.00",
-        "Credit": "",
-        "Balance": "3250.00"
+        "Alternative Document": "2024/009",
+        "Date": "12/09/2024",
+        "Reason": "Invoice",
+        "Document Value": "450.00",
+        "Tax ID": "B12345678"
+      }},
+      {{
+        "Alternative Document": "NC-102",
+        "Date": "30/09/2024",
+        "Reason": "Credit Note",
+        "Document Value": "-150.00",
+        "Tax ID": "B12345678"
       }}
     ]
 
@@ -120,27 +139,44 @@ def extract_with_llm(raw_text):
         st.text_area("🔍 Raw GPT Output", content[:2000], height=200)
         return []
 
-    # --- Post-correction logic ---
-    for row in data:
-        for f in ["Debit", "Credit", "Balance"]:
-            row[f] = normalize_number(row.get(f, ""))
-        desc = row.get("Description", "").lower()
-        # Ensure "Pago" or "Abono" entries are Credit
-        if "pago" in desc or "abono" in desc:
-            if row.get("Debit") and not row.get("Credit"):
-                row["Credit"], row["Debit"] = row["Debit"], ""
-        # Ensure only one side has a value
-        if row.get("Debit") and row.get("Credit"):
-            try:
-                d, c = float(row["Debit"]), float(row["Credit"])
-                if "pago" in desc or "abono" in desc or c < d:
-                    row["Credit"], row["Debit"] = c, ""
-                else:
-                    row["Debit"], row["Credit"] = d, ""
-            except:
-                pass
-    return data
+    # --- Post-processing logic ---
+    tax_id = extract_tax_id(raw_text)
+    filtered = []
 
+    for row in data:
+        reason = str(row.get("Reason", "")).lower()
+        val = normalize_number(row.get("Document Value", ""))
+
+        if not val:
+            continue
+
+        # Skip payments entirely
+        if any(w in reason for w in ["pago", "transferencia", "remesa", "domiciliacion"]):
+            continue
+
+        try:
+            amount = float(val)
+        except:
+            amount = 0.0
+
+        # Detect credit notes
+        if any(w in reason for w in ["abono", "nota de crédito", "nota credito", "devolucion"]):
+            amount = -abs(amount)
+            row["Reason"] = "Credit Note"
+        elif any(w in reason for w in ["factura", "invoice", "servicio", "mantenimiento", "documento", "doc"]):
+            row["Reason"] = "Invoice"
+        else:
+            row["Reason"] = "Invoice" if amount > 0 else "Credit Note"
+
+        row["Document Value"] = f"{amount:.2f}"
+        row["Tax ID"] = tax_id if tax_id else "Missing TAX ID"
+        filtered.append(row)
+
+    return filtered
+
+# =============================================
+# Excel output helper
+# =============================================
 def to_excel_bytes(records):
     df = pd.DataFrame(records)
     output = BytesIO()
@@ -151,7 +187,7 @@ def to_excel_bytes(records):
 # =============================================
 # Streamlit interface
 # =============================================
-uploaded_pdf = st.file_uploader("📂 Upload a vendor statement (PDF)", type=["pdf"])
+uploaded_pdf = st.file_uploader("📂 Upload vendor statement (PDF)", type=["pdf"])
 
 if uploaded_pdf:
     with st.spinner("📄 Extracting text from PDF..."):
@@ -163,22 +199,17 @@ if uploaded_pdf:
         with st.spinner("Analyzing with GPT... please wait..."):
             data = extract_with_llm(text)
 
-        # --- NEW: Detect or add Tax ID ---
-        tax_id = extract_tax_id(text)
-        for row in data:
-            row["Tax ID"] = tax_id if tax_id else "Missing TAX ID"
-
         if data:
             df = pd.DataFrame(data)
-            st.success("✅ Extraction complete (with Tax ID detection)!")
-            st.dataframe(df)
+            st.success("✅ Extraction complete — invoices & credit notes detected successfully!")
+            st.dataframe(df, use_container_width=True)
 
             excel_bytes = to_excel_bytes(data)
             st.download_button(
-                "⬇️ Download Excel",
+                "⬇️ Download Excel (Vendor Statement)",
                 data=excel_bytes,
-                file_name="statement_output.xlsx",
+                file_name="vendor_statement_output.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
         else:
-            st.warning("⚠️ No structured data found. Try another PDF or verify text extraction.")
+            st.warning("⚠️ No valid document data found. Verify your PDF content or layout.")
