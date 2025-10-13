@@ -8,8 +8,8 @@ from openai import OpenAI
 # ==========================================================
 # CONFIGURATION
 # ==========================================================
-st.set_page_config(page_title="🦅 DataFalcon — GPT-5 DEBE Extractor", layout="wide")
-st.title("🦅 DataFalcon")
+st.set_page_config(page_title="🦅 DataFalcon — GPT-4o-mini DEBE Extractor", layout="wide")
+st.title("🦅 DataFalcon — Vendor Statement Extractor (GPT-4o-mini Edition)")
 
 # Load API key
 try:
@@ -24,7 +24,7 @@ if not api_key:
     st.stop()
 
 client = OpenAI(api_key=api_key)
-MODEL = "gpt-5"  # ✅ use GPT-5 if available; fallback later if needed
+MODEL = "gpt-4o-mini"  # ✅ fast, cheap, accurate for structured extraction
 
 # ==========================================================
 # HELPERS
@@ -59,8 +59,8 @@ def extract_tax_id(text):
     return match.group(0) if match else "Missing TAX ID"
 
 
-def extract_with_gpt5(raw_text):
-    """Send PDF text to GPT-5 to extract DEBE-only invoice lines."""
+def extract_with_gpt(raw_text):
+    """Send PDF text to GPT-4o-mini to extract DEBE-only invoice lines."""
     prompt = f"""
 You are an expert Spanish accountant.
 
@@ -102,7 +102,7 @@ Text:
         response = client.responses.create(model=MODEL, input=prompt)
         content = response.output_text.strip()
     except Exception as e:
-        st.error(f"❌ GPT-5 request failed: {e}")
+        st.error(f"❌ GPT call failed: {e}")
         return []
 
     # Extract JSON safely
@@ -158,9 +158,14 @@ if uploaded_pdf:
 
     st.text_area("🔍 Extracted Text Preview", text[:2000], height=200)
 
-    if st.button("🤖 Extract Data with GPT-5"):
-        with st.spinner("Analyzing with GPT-5... please wait..."):
-            data = extract_with_gpt5(text)
+    # Cost estimate
+    approx_tokens = len(text) / 4  # ~4 chars per token
+    est_cost = (approx_tokens / 1000) * (0.0006 + 0.0024)  # input + output token pricing for gpt-4o-mini
+    st.info(f"💲 Estimated cost for this extraction: **${est_cost:.4f} USD**")
+
+    if st.button("🤖 Extract Data with GPT-4o-mini"):
+        with st.spinner("Analyzing with GPT-4o-mini... please wait..."):
+            data = extract_with_gpt(text)
 
         tax_id = extract_tax_id(text)
         for row in data:
@@ -176,7 +181,7 @@ if uploaded_pdf:
             st.download_button(
                 "⬇️ Download Excel",
                 data=to_excel_bytes(data),
-                file_name="vendor_statement_gpt5.xlsx",
+                file_name="vendor_statement_gpt4omini.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
 else:
