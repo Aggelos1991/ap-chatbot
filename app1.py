@@ -8,8 +8,8 @@ from openai import OpenAI
 # ==========================================================
 # CONFIGURATION
 # ==========================================================
-st.set_page_config(page_title="🦅 DataFalcon Pro — GPT-4o-mini", layout="wide")
-st.title("🦅 DataFalcon Pro — Vendor Statement Extractor")
+st.set_page_config(page_title="🦅 DataFalcon Pro — DEBE Extractor", layout="wide")
+st.title("🦅 DataFalcon Pro — Vendor Statement Extractor (GPT-4o-mini)")
 
 # Load API key
 try:
@@ -30,7 +30,7 @@ MODEL = "gpt-4o-mini"
 # HELPERS
 # ==========================================================
 def extract_text_from_pdf(file):
-    """Extract text cleanly from PDF."""
+    """Extract clean text from PDF."""
     file_bytes = file.getvalue()
     if not file_bytes:
         raise ValueError("Uploaded file is empty.")
@@ -42,7 +42,7 @@ def extract_text_from_pdf(file):
 
 
 def normalize_number(value):
-    """Normalize decimals: 1.234,56 → 1234.56 | 1,234.56 → 1234.56"""
+    """Normalize all decimal formats like 1.234,56 → 1234.56."""
     if not value:
         return ""
     s = str(value).strip().replace(" ", "")
@@ -66,13 +66,14 @@ def extract_tax_id(text):
 
 
 # ==========================================================
-# PREFILTER ENGINE — KEEP RIGHTMOST (SALDO ACTUAL)
+# PRE-FILTER ENGINE
 # ==========================================================
 def preprocess_text_for_ai(raw_text):
     """
-    Extracts and tags the correct DEBE (document amount) per line.
-    In this layout, the DEBE is the second-to-last number per line,
-    while the last one is the running SALDO (balance) we ignore.
+    Preprocess vendor statement text:
+    - Keeps only DEBE (second-to-last numeric value per line)
+    - Ignores SALDO/HABER automatically
+    - Tags credit notes explicitly
     """
     txt = raw_text
     txt = re.sub(r"[ \t]+", " ", txt)
@@ -84,89 +85,57 @@ def preprocess_text_for_ai(raw_text):
     for line in lines:
         if not line.strip():
             continue
+
+        # Skip irrelevant lines
         if re.search(r"(?i)\b(SALDO\s+ANTERIOR|BANCO|COBRO|EFECTO|REME|PAGO)\b", line):
             continue
 
-        numbers = re.findall(r"\d{1,3}(?:[.,]\d{3})*[.,]\d{2}", line)
+        # Extract numbers (Spanish/EU style)
+        nums = re.findall(r"\d{1,3}(?:[.,]\d{3})*[.,]\d{2}", line)
 
-        if len(numbers) >= 2:
-            # keep second-to-last (DEBE)
-            value = numbers[-2]
-            line = re.sub(
-                re.escape(value),
-                f"[DEBE: {value}]",
-                line,
-                count=1
-            )
-        elif len(numbers) == 1:
-            value = numbers[0]
-            line = re.sub(
-                re.escape(value),
-                f"[DEBE: {value}]",
-                line,
-                count=1
-            )
+        # Keep only DEBE (second-to-last number)
+        if len(nums) >= 2:
+            amount = nums[-2]
+        elif len(nums) == 1:
+            amount = nums[0]
+        else:
+            continue
 
-        # Credit notes (Abono, Nota de crédito)
-        line = re.sub(
-            r"(?i)(ABONO|NOTA\s+DE\s+CR[EÉ]DITO|C\.?N\.?|CREDIT\s+NOTE)[^\d]*(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})",
-            r"[CREDIT: -\2]",
-            line
-        )
+        # Tag the DEBE amount
+        line = re.sub(re.escape(amount), f"[DEBE: {amount}]", line, count=1)
 
-        # Totale / Importe / Total
-        line = re.sub(
-            r"(?i)(TOTALE|TOTAL|IMPORTE)\s*[:\-]?\s*(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})",
-            r"[DEBE: \2]",
-            line
-        )
+        # Mark Credit Notes explicitly
+        if re.search(r"(?i)(ABONO|NOTA\s+DE\s+CR[EÉ]DITO|CREDIT\s+NOTE|C\.?N\.?)", line):
+            line = line.replace("[DEBE:", "[CREDIT:")
 
         clean_lines.append(line)
 
-    txt = "\n".join(clean_lines)
-    txt = re.sub(r"\[+", "[", txt)
-    txt = re.sub(r"\]+", "]", txt)
-    return txt
+    return "\n".join(clean_lines)
+
 
 # ==========================================================
 # GPT EXTRACTOR
 # ==========================================================
 def extract_with_gpt(raw_text):
+    """Send preprocessed text to GPT-4o-mini to extract invoice lines."""
     preprocessed_text = preprocess_text_for_ai(raw_text)
 
     prompt = f"""
-You are an expert accountant.
+You are an expert Spanish accountant.
 
-Extract all valid invoice and credit note entries.
+Extract all valid invoice or credit note entries.
 
 Each record must include:
-- "Alternative Document"
-- "Date"
+- "Alternative Document": invoice/reference number (e.g. 6--483)
+- "Date": dd/mm/yy or dd/mm/yyyy
 - "Reason": "Invoice" or "Credit Note"
-- "Document Value": number inside [DEBE: ...] or [CREDIT: ...] only.
+- "Document Value": number inside [DEBE: ...] or [CREDIT: ...] brackets only
 
 Rules:
-- The document amount is always the rightmost number on each line.
-- Ignore Banco, Cobro, Efecto, Remesa, Pago, or other payment lines.
-- If you see [CREDIT: -value], mark it as "Credit Note" with negative value.
-- Output only JSON array with these exact keys.
 - Use '.' for decimals.
-
-Example:
-[
-  {{
-    "Alternative Document": "6--483",
-    "Date": "24/01/2025",
-    "Reason": "Invoice",
-    "Document Value": 708.43
-  }},
-  {{
-    "Alternative Document": "6--2434",
-    "Date": "14/03/2025",
-    "Reason": "Credit Note",
-    "Document Value": -107.34
-  }}
-]
+- Ignore all values from SALDO or HABER.
+- If you see [CREDIT: -value], reason = Credit Note and value = negative number.
+- Return only valid JSON array with these keys.
 
 Text:
 \"\"\"{preprocessed_text[:15000]}\"\"\"
@@ -188,12 +157,13 @@ Text:
         st.text_area("🔍 Raw GPT Output", content[:2000], height=200)
         return []
 
+    # Post-clean
     cleaned = []
     for row in data:
         val = normalize_number(row.get("Document Value") or row.get("DocumentValue"))
         if val == "":
             continue
-        reason = row.get("Reason", "").lower()
+        reason = row.get("Reason", "").strip().lower()
         if any(k in reason for k in ["credit", "abono", "nota de crédito", "cn"]):
             val = -abs(val)
             reason = "Credit Note"
@@ -233,7 +203,7 @@ if uploaded_pdf:
             st.stop()
 
     if st.button("🤖 Extract Data"):
-        with st.spinner("Analyzing file... please wait..."):
+        with st.spinner("Analyzing with GPT-4o-mini... please wait..."):
             data = extract_with_gpt(text)
 
         tax_id = extract_tax_id(text)
@@ -241,7 +211,7 @@ if uploaded_pdf:
             row["Tax ID"] = tax_id
 
         if not data:
-            st.warning("⚠️ No valid invoice data found.")
+            st.warning("⚠️ No valid invoice data found. Verify the PDF format or retry.")
         else:
             df = pd.DataFrame(data)
             st.success(f"✅ Extraction complete — {len(df)} records.")
@@ -249,7 +219,7 @@ if uploaded_pdf:
             st.download_button(
                 "⬇️ Download Excel",
                 data=to_excel_bytes(data),
-                file_name="vendor_statement.xlsx",
+                file_name="vendor_statement_DataFalconPro.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
 else:
