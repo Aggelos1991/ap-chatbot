@@ -34,49 +34,30 @@ def normalize_number(v):
 
 
 def normalize_columns(df, tag):
-    """Map multilingual headers to unified names (robust, with diagnostics)."""
+    """Map multilingual headers to unified names."""
     mapping = {
-        "invoice": [
-            "alternative document", "alt document", "invoice", "factura",
-            "nº factura", "no", "nro", "num", "numero", "document", "doc", "παραστατικό"
-        ],
-        "credit": ["credit", "haber", "crédito", "credito"],
-        "debit": [
-            "debit", "debe", "cargo", "importe", "valor", "total", "totale",
-            "amount", "importe total", "document value", "charge", "charges"
-        ],
-        "reason": ["reason", "motivo", "concepto", "descripcion", "glosa", "observaciones"],
-        "cif": ["cif", "nif", "vat", "tax", "vat number", "tax id", "afm", "vat id", "num. identificacion fiscal"],
-        "date": ["date", "fecha", "fech", "ημερομηνία", "data"],
+        "invoice": ["invoice", "factura", "document", "doc", "nº", "num"],
+        "credit": ["credit", "haber", "credito"],
+        "debit": ["debit", "debe", "cargo", "importe", "valor", "amount", "document value", "charge"],
+        "reason": ["reason", "motivo", "concepto", "descripcion"],
+        "cif": ["cif", "nif", "vat", "tax"],
+        "date": ["date", "fecha", "data"],
     }
-
     rename_map = {}
     cols_lower = {c: str(c).strip().lower() for c in df.columns}
-
     for k, vals in mapping.items():
         for col, low in cols_lower.items():
             if any(v in low for v in vals):
                 rename_map[col] = f"{k}_{tag}"
-
     out = df.rename(columns=rename_map)
-
-    # Fallback creation if still missing key columns
-    required = ["debit", "credit"]
-    for coltype in required:
-        cname = f"{coltype}_{tag}"
+    for required in ["debit", "credit"]:
+        cname = f"{required}_{tag}"
         if cname not in out.columns:
             out[cname] = 0.0
-
-    # ✅ Debug info
-    with st.expander(f"🧩 Column mapping detected for {tag.upper()} file"):
-        st.write({k: v for k, v in rename_map.items()})
-        st.write("✅ Columns after normalization:", list(out.columns))
-
     return out
 
 
-_digit_seq = re.compile(r"\d{3,}")  # any 3+ continuous digits
-
+_digit_seq = re.compile(r"\d{3,}")  # 3+ digit sequence matcher
 
 def share_3plus_digits(a, b):
     """True if a and b share any continuous 3+ digit substring."""
@@ -95,15 +76,6 @@ def share_3plus_digits(a, b):
 def match_invoices(erp_df, ven_df):
     matched, matched_erp, matched_ven = [], set(), set()
 
-    # ---- Sanity check for columns ----
-    for col in ["invoice_erp", "debit_erp", "credit_erp", "date_erp"]:
-        if col not in erp_df.columns:
-            erp_df[col] = ""
-    for col in ["invoice_ven", "debit_ven", "date_ven"]:
-        if col not in ven_df.columns:
-            ven_df[col] = ""
-
-    # ---- ERP amounts ----
     erp_df["__doctype"] = erp_df.apply(
         lambda r: "CN" if normalize_number(r.get("debit_erp")) > 0 else "INV"
         if normalize_number(r.get("credit_erp")) > 0 else "UNKNOWN",
@@ -115,18 +87,16 @@ def match_invoices(erp_df, ven_df):
         axis=1
     )
 
-    # ---- Vendor amounts ----
     ven_df["__doctype"] = ven_df.apply(
         lambda r: "CN" if normalize_number(r.get("debit_ven")) < 0 else "INV",
         axis=1
     )
     ven_df["__amt"] = ven_df.apply(lambda r: abs(normalize_number(r.get("debit_ven"))), axis=1)
 
-    # ---- Keep only invoices / CNs ----
     erp_use = erp_df[erp_df["__doctype"].isin(["INV", "CN"])].copy()
     ven_use = ven_df[ven_df["__doctype"].isin(["INV", "CN"])].copy()
 
-    # ---- Core matching ----
+    # --- Main matching ---
     for _, e_row in erp_use.iterrows():
         e_inv = str(e_row["invoice_erp"]).strip()
         e_amt = round(float(e_row["__amt"]), 2)
@@ -170,59 +140,32 @@ def match_invoices(erp_df, ven_df):
             matched_erp.add(e_inv)
             matched_ven.add(v_inv)
 
-    # ---- Robust missing detection ----
-    def safe_series(df, col):
-        return df[col] if col in df.columns else pd.Series([], dtype=str)
-
-    def is_missing_robust(target_df, compare_df, target_col, compare_col):
-        missing_rows = []
-        target_col_data = safe_series(target_df, target_col)
-        compare_col_data = safe_series(compare_df, compare_col)
-        for _, row in target_df.iterrows():
-            ref = str(row.get(target_col, ""))
-            if not any(share_3plus_digits(ref, str(other)) for other in compare_col_data):
-                missing_rows.append(row)
-        return pd.DataFrame(missing_rows)
-
-    erp_missing = is_missing_robust(erp_use, ven_use, "invoice_erp", "invoice_ven")
-    ven_missing = is_missing_robust(ven_use, erp_use, "invoice_ven", "invoice_erp")
-
-    erp_missing = erp_missing.loc[:, ["date_erp", "invoice_erp", "__amt"]].rename(
-        columns={"date_erp": "Date", "invoice_erp": "Invoice", "__amt": "Amount"},
-        errors="ignore"
-    ).reset_index(drop=True)
-
-    ven_missing = ven_missing.loc[:, ["date_ven", "invoice_ven", "__amt"]].rename(
-        columns={"date_ven": "Date", "invoice_ven": "Invoice", "__amt": "Amount"},
-        errors="ignore"
-    ).reset_index(drop=True)
-
-    return pd.DataFrame(matched), erp_missing, ven_missing
-    # Missing detection using same 3-digit rule
-        # ✅ FIXED Missing detection (3-digit rule respected)
+    # --- Missing logic (stable, non-aggressive) ---
     def clean_invoice(v):
         return re.sub(r"[^A-Z0-9]", "", str(v).upper().strip())
 
     erp_use["__clean_inv"] = erp_use["invoice_erp"].apply(clean_invoice)
     ven_use["__clean_inv"] = ven_use["invoice_ven"].apply(clean_invoice)
 
-    def is_missing_robust(target_df, compare_df, target_col, compare_col):
-        missing_rows = []
-        for _, row in target_df.iterrows():
-            ref = str(row[target_col])
-            # If any invoice in compare_df shares 3 consecutive digits, it’s not missing
-            if not any(share_3plus_digits(ref, other) for other in compare_df[compare_col].astype(str)):
-                missing_rows.append(row)
-        return pd.DataFrame(missing_rows)
+    matched_erp_clean = {clean_invoice(i) for i in matched_erp}
+    matched_ven_clean = {clean_invoice(i) for i in matched_ven}
 
-    erp_missing = is_missing_robust(erp_use, ven_use, "invoice_erp", "invoice_ven")
-    ven_missing = is_missing_robust(ven_use, erp_use, "invoice_ven", "invoice_erp")
+    erp_missing = (
+        erp_use[~erp_use["__clean_inv"].isin(matched_erp_clean)]
+        .loc[:, ["date_erp", "invoice_erp", "__amt"]]
+        .rename(columns={"date_erp": "Date", "invoice_erp": "Invoice", "__amt": "Amount"})
+        .reset_index(drop=True)
+    )
 
-    erp_missing = erp_missing.loc[:, ["date_erp", "invoice_erp", "__amt"]].rename(
-        columns={"date_erp": "Date", "invoice_erp": "Invoice", "__amt": "Amount"}).reset_index(drop=True)
+    ven_missing = (
+        ven_use[~ven_use["__clean_inv"].isin(matched_ven_clean)]
+        .loc[:, ["date_ven", "invoice_ven", "__amt"]]
+        .rename(columns={"date_ven": "Date", "invoice_ven": "Invoice", "__amt": "Amount"})
+        .reset_index(drop=True)
+    )
 
-    ven_missing = ven_missing.loc[:, ["date_ven", "invoice_ven", "__amt"]].rename(
-        columns={"date_ven": "Date", "invoice_ven": "Invoice", "__amt": "Amount"}).reset_index(drop=True)
+    df_matched = pd.DataFrame(matched)
+    return df_matched, erp_missing, ven_missing
 
 
 # ======================================
