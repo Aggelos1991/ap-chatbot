@@ -145,22 +145,37 @@ def match_invoices(erp_df, ven_df):
             })
 
     # ====== BUILD MISSING TABLES ======
-      # ====== BUILD MISSING TABLES (presence-based, not match-based) ======
-    # A record is "missing" only if its numeric core does not exist in the other file at all.
-    erp_cores_all = set(erp_use["__core"].astype(str))
-    ven_cores_all = set(ven_use["__core"].astype(str))
+    # ====== BUILD MISSING TABLES (3+ digit overlap aware) ======
 
-    # Vendor-only → Missing in ERP
+    def tok3(s: str):
+        return set(re.findall(r"\d{3,}", str(s or "")))
+
+    # all ERP tokens and all Vendor tokens (any 3+ consecutive digits)
+    erp_tokens_all = set()
+    for c in erp_use["__core"].astype(str):
+        erp_tokens_all |= tok3(c)
+
+    ven_tokens_all = set()
+    for c in ven_use["__core"].astype(str):
+        ven_tokens_all |= tok3(c)
+
+    # Missing in ERP  = vendor invoice whose core shares NO 3+ digit token with ANY ERP core
+    ven_missing_mask = ~ven_use["__core"].astype(str).apply(
+        lambda c: len(tok3(c) & erp_tokens_all) > 0
+    )
     ven_missing = (
-        ven_use[~ven_use["__core"].astype(str).isin(erp_cores_all)]
+        ven_use[ven_missing_mask]
         .loc[:, ["date_ven", "invoice_ven", "__amt"]]
         .rename(columns={"date_ven": "Date", "invoice_ven": "Invoice", "__amt": "Amount"})
         .reset_index(drop=True)
     )
 
-    # ERP-only → Missing in Vendor
+    # Missing in Vendor = ERP invoice whose core shares NO 3+ digit token with ANY Vendor core
+    erp_missing_mask = ~erp_use["__core"].astype(str).apply(
+        lambda c: len(tok3(c) & ven_tokens_all) > 0
+    )
     erp_missing = (
-        erp_use[~erp_use["__core"].astype(str).isin(ven_cores_all)]
+        erp_use[erp_missing_mask]
         .loc[:, ["date_erp", "invoice_erp", "__amt"]]
         .rename(columns={"date_erp": "Date", "invoice_erp": "Invoice", "__amt": "Amount"})
         .reset_index(drop=True)
