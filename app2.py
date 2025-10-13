@@ -82,10 +82,9 @@ def normalize_columns(df, tag):
             "nº factura", "no", "nro", "num", "numero", "document", "doc", "παραστατικό"
         ],
         "credit": ["credit", "haber", "crédito", "credito"],
-        # 👇 treat Charge & Document Value as Debit equivalents
         "debit": [
-            "charge", "debit", "document value", "debe", "cargo", "importe", "valor", 
-            "total", "totale", "amount", "importe total"
+            "charge", "debit", "document value", "debe", "cargo", "importe", 
+            "valor", "total", "totale", "amount", "importe total"
         ],
         "reason": ["reason", "motivo", "concepto", "descripcion", "glosa", "observaciones"],
         "cif": ["cif", "nif", "vat", "tax", "vat number", "tax id", "afm", "vat id", "num. identificacion fiscal"],
@@ -97,8 +96,7 @@ def normalize_columns(df, tag):
         for col, low in cols_lower.items():
             if any(v in low for v in vals):
                 rename_map[col] = f"{k}_{tag}"
-    out = df.rename(columns=rename_map)
-    return out
+    return df.rename(columns=rename_map)
 
 
 def extract_core_invoice(inv):
@@ -111,15 +109,22 @@ def extract_core_invoice(inv):
     m = re.search(r"([A-Z]*\d{2,6})$", s)
     return m.group(1) if m else (s[-4:] if len(s) > 4 else s)
 
-_digit_seq = re.compile(r"\d{3,}")  # any 3+ continuous digits
+# ✅ improved shared digit rule
+_digit_seq = re.compile(r"\d{3,}")
 
 def share_3plus_digits(a, b):
-    """True if a and b share any continuous 3+ digit substring."""
-    A = set(m.group(0) for m in _digit_seq.finditer(a))
-    if not A:
-        return False
-    for m in _digit_seq.finditer(b):
-        if m.group(0) in A:
+    """
+    Return True if 'a' and 'b' share any sequence of 3 or more consecutive digits,
+    ignoring leading zeros or prefixes like '6--'.
+    Example: '6--002743' ↔ '6--2743' → True
+    """
+    a_clean = re.sub(r"[^0-9]", "", a)
+    b_clean = re.sub(r"[^0-9]", "", b)
+    a_digits = re.sub(r"^0+", "", a_clean)
+    b_digits = re.sub(r"^0+", "", b_clean)
+    for m in _digit_seq.finditer(a_digits):
+        seq = m.group(0)
+        if len(seq) >= 3 and seq in b_digits:
             return True
     return False
 
@@ -130,36 +135,38 @@ def share_3plus_digits(a, b):
 def match_invoices(erp_df, ven_df):
     matched, matched_erp, matched_ven = [], set(), set()
 
+    # Required columns for ERP
     req_erp = ["invoice_erp", "credit_erp", "debit_erp", "reason_erp", "date_erp", "cif_erp"]
-    req_ven = ["invoice_ven", "debit_ven", "credit_ven", "date_ven", "cif_ven"]
-
-    # Checks
     for c in req_erp:
         if c not in erp_df.columns:
             st.error(f"❌ ERP file missing column: {c}")
             return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+
+    # Vendor minimal columns
+    req_ven = ["invoice_ven", "debit_ven", "date_ven", "cif_ven"]
     for c in req_ven:
         if c not in ven_df.columns:
             st.error(f"❌ Vendor file missing column: {c}")
             return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-    # Add keys
+    # Add core keys
     erp_df["__core"] = erp_df["invoice_erp"].astype(str).apply(extract_core_invoice)
     ven_df["__core"] = ven_df["invoice_ven"].astype(str).apply(extract_core_invoice)
 
-    # Compute ERP doc type and amounts
+    # ERP: classify and set amount
     erp_df["__doctype"] = erp_df.apply(
         lambda r: classify_erp_doc(r.get("reason_erp"), r.get("credit_erp"), r.get("debit_erp")),
         axis=1
     )
     erp_df["__amt"] = erp_df.apply(
         lambda r: normalize_number(r["credit_erp"]) if r["__doctype"] == "INV"
-                  else (-normalize_number(r["debit_erp"]) if r["__doctype"] == "CN" else 0.0),
+        else (-normalize_number(r["debit_erp"]) if r["__doctype"] == "CN" else 0.0),
         axis=1
     )
 
-    # Vendor amount = debit_ven (Factura)
+    # ✅ Vendor amount: if negative → Credit Note
     ven_df["__amt"] = ven_df.apply(lambda r: normalize_number(r.get("debit_ven", 0.0)), axis=1)
+    ven_df["__doctype"] = ven_df["__amt"].apply(lambda x: "CN" if x < 0 else "INV")
 
     # Filter only invoices/CNs
     erp_use = erp_df[erp_df["__doctype"].isin(["INV", "CN"])].copy()
@@ -214,7 +221,7 @@ def match_invoices(erp_df, ven_df):
             matched_erp.add(e_inv)
             matched_ven.add(v_inv)
 
-    # Build missing tables
+    # Clean missing
     clean = lambda x: re.sub(r"[^A-Z0-9]", "", str(x).strip().upper())
     erp_use["__clean_inv"] = erp_use["invoice_erp"].apply(clean)
     ven_use["__clean_inv"] = ven_use["invoice_ven"].apply(clean)
@@ -241,7 +248,7 @@ def match_invoices(erp_df, ven_df):
 # ======================================
 # STREAMLIT UI
 # ======================================
-st.write("Upload your ERP Export (Date / Alternative Document / Reason / Charge / Credit / CIF) and Vendor Statement (Factura/No/Doc + Document Value + CIF).")
+st.write("Upload ERP Export (Charge = debit) and Vendor Statement (Document Value column, negatives = Credit Notes).")
 
 uploaded_erp = st.file_uploader("📂 Upload ERP Export (Excel)", type=["xlsx"])
 uploaded_vendor = st.file_uploader("📂 Upload Vendor Statement (Excel)", type=["xlsx"])
