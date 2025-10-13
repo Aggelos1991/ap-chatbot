@@ -83,9 +83,9 @@ def clean_core(v):
 # ======================================
 def match_invoices(erp_df, ven_df):
     matched = []
-    matched_pairs = set()
+    matched_pairs = set()  # track only exact ERP/VEN invoices, not just cores
 
-    # ============== PREP ERP ==================
+    # ========== ERP PREP ==========
     erp_df["__doctype"] = erp_df.apply(
         lambda r: "CN" if normalize_number(r.get("debit_erp")) > 0
         else ("INV" if normalize_number(r.get("credit_erp")) > 0 else "UNKNOWN"),
@@ -97,7 +97,7 @@ def match_invoices(erp_df, ven_df):
         axis=1
     )
 
-    # ============== PREP VENDOR ==================
+    # ========== VENDOR PREP ==========
     ven_df["__doctype"] = ven_df.apply(
         lambda r: "CN" if normalize_number(r.get("debit_ven")) < 0 else "INV",
         axis=1
@@ -106,6 +106,80 @@ def match_invoices(erp_df, ven_df):
 
     erp_use = erp_df[erp_df["__doctype"].isin(["INV", "CN"])].copy()
     ven_use = ven_df[ven_df["__doctype"].isin(["INV", "CN"])].copy()
+
+    # ========== CLEAN NUMERIC CORE ==========
+    def clean_core(v):
+        s = re.sub(r"[^0-9]", "", str(v or ""))
+        return s[-6:] if len(s) >= 6 else s
+
+    erp_use["__core"] = erp_use["invoice_erp"].apply(clean_core)
+    ven_use["__core"] = ven_use["invoice_ven"].apply(clean_core)
+
+    # ========== MATCH LOOP ==========
+    for _, e in erp_use.iterrows():
+        e_inv = str(e["invoice_erp"]).strip()
+        e_core = clean_core(e_inv)
+        e_amt = round(float(e["__amt"]), 2)
+        e_date = e.get("date_erp")
+
+        # find all possible vendor matches (not just one)
+        for _, v in ven_use.iterrows():
+            v_inv = str(v["invoice_ven"]).strip()
+            v_core = clean_core(v_inv)
+            v_amt = round(float(v["__amt"]), 2)
+            v_date = v.get("date_ven")
+
+            # skip exact duplicate ERP/VEN already matched (not same core)
+            pair_key = (e_inv, v_inv)
+            if pair_key in matched_pairs:
+                continue
+
+            # --- 3-digit overlap rule ---
+            digits_erp = re.findall(r"\d{3,}", e_core)
+            digits_ven = re.findall(r"\d{3,}", v_core)
+            three_match = any(d in v_core for d in digits_erp if len(d) >= 3) or any(d in e_core for d in digits_ven if len(d) >= 3)
+
+            fuzzy = fuzz.ratio(e_inv, v_inv)
+            amt_close = abs(e_amt - v_amt) < 0.05
+
+            # match if numeric overlap, or fuzzy high, or identical core
+            if three_match or e_core == v_core or fuzzy > 90:
+                diff = round(e_amt - v_amt, 2)
+                status = "Match" if abs(diff) < 0.05 else "Difference"
+                matched.append({
+                    "Date (ERP)": e_date,
+                    "Date (Vendor)": v_date,
+                    "ERP Invoice": e_inv if e_inv else "(inferred)",
+                    "Vendor Invoice": v_inv,
+                    "ERP Amount": e_amt,
+                    "Vendor Amount": v_amt,
+                    "Difference": diff,
+                    "Status": status
+                })
+                matched_pairs.add(pair_key)  # only this exact invoice pair
+
+    # ========== BUILD MISSING TABLES ==========
+    matched_erp_invoices = {m["ERP Invoice"] for m in matched}
+    matched_vendor_invoices = {m["Vendor Invoice"] for m in matched}
+
+    # Vendor-only → Missing in ERP
+    ven_missing = (
+        ven_use[~ven_use["invoice_ven"].isin(matched_vendor_invoices)]
+        .loc[:, ["date_ven", "invoice_ven", "__amt"]]
+        .rename(columns={"date_ven": "Date", "invoice_ven": "Invoice", "__amt": "Amount"})
+        .reset_index(drop=True)
+    )
+
+    # ERP-only → Missing in Vendor
+    erp_missing = (
+        erp_use[~erp_use["invoice_erp"].isin(matched_erp_invoices)]
+        .loc[:, ["date_erp", "invoice_erp", "__amt"]]
+        .rename(columns={"date_erp": "Date", "invoice_erp": "Invoice", "__amt": "Amount"})
+        .reset_index(drop=True)
+    )
+
+    df_matched = pd.DataFrame(matched)
+    return df_matched, erp_missing, ven_missing
 
     # ============== CLEAN CORE (numeric) ==================
     def clean_core(v):
