@@ -26,41 +26,48 @@ MODEL = "gpt-4o-mini"
 # STREAMLIT CONFIG
 # =============================================
 st.set_page_config(page_title="🦅 DataFalcon — Vendor Statement Extractor", layout="wide")
-st.title("🦅 DataFalcon — Vendor Statement Extractor (Saldo-Proof + Totale Edition)")
+st.title("🦅 DataFalcon — Vendor Statement Extractor (Saldo-Proof Universal Edition)")
 
 # =============================================
 # HELPERS
 # =============================================
 def extract_text_from_pdf(file):
+    """Extract text from PDF."""
     text = ""
     with fitz.open(stream=file.read(), filetype="pdf") as doc:
         for page in doc:
             text += page.get_text("text") + "\n"
     return text
 
+
 def clean_text(text):
+    """Clean extracted text."""
     return " ".join(text.replace("\xa0", " ").replace("€", " EUR").split())
 
+
 def normalize_number(value):
+    """Normalize European-style numbers (e.g. 1.234,56)."""
     if not value:
         return ""
     s = str(value).strip()
-    if re.match(r"^\d{1,3}(\.\d{3})*,\d{2}$", s):
+    if re.match(r"^\d{1,3}(\.\d{3})*,\d{2}$", s):  # 1.234,56
         s = s.replace(".", "").replace(",", ".")
-    elif re.match(r"^\d{1,3}(,\d{3})*\.\d{2}$", s):
+    elif re.match(r"^\d{1,3}(,\d{3})*\.\d{2}$", s):  # 1,234.56
         s = s.replace(",", "")
-    elif re.match(r"^\d+,\d{2}$", s):
+    elif re.match(r"^\d+,\d{2}$", s):  # 150,00
         s = s.replace(",", ".")
     else:
         s = re.sub(r"[^\d.-]", "", s)
     return s
 
+
 def extract_tax_id(raw_text):
+    """Detect CIF/NIF/VAT from text."""
     patterns = [
-        r"\b[A-Z]{1}\d{7}[A-Z0-9]{1}\b",
-        r"\bES\d{9}\b",
-        r"\bEL\d{9}\b",
-        r"\b[A-Z]{2}\d{8,12}\b",
+        r"\b[A-Z]{1}\d{7}[A-Z0-9]{1}\b",  # e.g. B12345678
+        r"\bES\d{9}\b",  # Spanish VAT
+        r"\bEL\d{9}\b",  # Greek VAT
+        r"\b[A-Z]{2}\d{8,12}\b",  # Generic EU VAT
     ]
     for pat in patterns:
         match = re.search(pat, raw_text)
@@ -68,35 +75,37 @@ def extract_tax_id(raw_text):
             return match.group(0)
     return None
 
+
 # =============================================
-# CORE EXTRACTION — SALDO-PROOF
+# CORE EXTRACTION (Saldo-proof + Totale support)
 # =============================================
 def extract_with_llm(raw_text):
     """
-    GPT identifies structure; regex extracts numeric values from DEBE / IMPORTE / VALOR / TOTAL / TOTALE / AMOUNT only.
-    SALDO, HABER, BALANCE, payments always ignored.
+    Hybrid extraction:
+    ✅ Extracts DEBE / IMPORTE / VALOR / TOTAL / TOTALE / AMOUNT
+    ❌ Ignores SALDO, HABER, BALANCE, payments.
+    Works even if no column headers exist.
     """
-    # 1️⃣ GPT → detect document numbers & dates
+
+    # ---------- 1️⃣ GPT extracts document/date/reason ----------
     prompt = f"""
     You are a Spanish accountant AI.
-    Read the following vendor statement and identify only document lines (invoices or credit notes).
+    Identify all invoice or credit note lines from this vendor statement text.
 
-    For each document include:
-    - Alternative Document (Factura / Documento / No / Nº / Num / Número / Nro / Doc)
+    Each record must contain:
+    - Alternative Document (Factura, Documento, No, Nº, Num, Número, Nro, Doc)
     - Date (Fecha)
     - Reason ("Invoice" or "Credit Note")
 
-    Ignore:
-    - SALDO, BALANCE, ACUMULADO, RESTANTE
-    - HABER, CRÉDITO, PAGO, BANCO, REMESA, COBRO, DOMICILIACIÓN
-    - Any totals unrelated to documents
+    Ignore any line containing:
+    SALDO, BALANCE, ACUMULADO, RESTANTE,
+    HABER, CRÉDITO, PAGO, BANCO, REMESA, COBRO, DOMICILIACIÓN.
 
-    Output JSON with:
-    ["Alternative Document", "Date", "Reason"]
-
+    Return a valid JSON list of objects with those three fields.
     Text:
     \"\"\"{raw_text[:24000]}\"\"\"
     """
+
     try:
         response = client.responses.create(model=MODEL, input=prompt)
         content = response.output_text.strip()
@@ -106,53 +115,60 @@ def extract_with_llm(raw_text):
     except Exception:
         gpt_rows = []
 
-    # 2️⃣ Regex → capture numeric DEBE / TOTAL / IMPORTE / VALOR values, ignoring SALDO & HABER
+    # ---------- 2️⃣ Regex extract numeric document values ----------
+    # Works even if "DEBE" not printed — captures DEBE or TOTAL equivalents.
     pattern = re.compile(
-        r"(6[-–]\d{1,4})"                                   # Document number
-        r".{0,60}?"                                          # up to 60 chars between
-        r"(\d{1,2}/\d{1,2}/\d{2,4})"                        # Date
-        r".{0,80}?"                                          # allow some text
-        r"(?:DEBE|DEBITO|CARGO|IMPORTE|VALOR|TOTAL|TOTALE|AMOUNT)[\s:=]*([\d.,]{3,10})"  # capture value
-        r"(?![\s]*(SALDO|BALANCE|HABER|CR[EÉ]DITO))",       # exclude saldo/haber
-        re.IGNORECASE
+        r"(?P<doc>(?:\b\d{1,3}[-–]\d{1,5}\b|\b6[-–]\d{1,5}\b)).{0,60}?"
+        r"(?P<date>\d{1,2}/\d{1,2}/\d{2,4}).{0,80}?"
+        r"(?:(?:DEBE|IMPORTE|VALOR|TOTAL|TOTALE|AMOUNT)[\s:=]*)?"
+        r"(?P<amount>[\d.,]{3,10})"
+        r"(?![\s]*(SALDO|BALANCE|HABER|CR[EÉ]DITO|PAGO|BANCO|COBRO|REMESA))",
+        re.IGNORECASE,
     )
 
     regex_data = []
     for m in pattern.finditer(raw_text):
-        doc, date, val, _ = m.groups()
-        num = normalize_number(val)
+        doc, date, val = m.group("doc"), m.group("date"), m.group("amount")
+        val = normalize_number(val)
         try:
-            amount = float(num)
+            amount = float(val)
         except:
             continue
-        if amount <= 0 or amount > 100000:  # reject ledger codes
+        if amount <= 0 or amount > 100000:
             continue
-        regex_data.append({
-            "Alternative Document": doc.strip(),
-            "Date": date.strip(),
-            "Document Value": f"{amount:.2f}"
-        })
+        regex_data.append(
+            {
+                "Alternative Document": doc.strip(),
+                "Date": date.strip(),
+                "Document Value": f"{amount:.2f}",
+            }
+        )
 
-    # 3️⃣ Merge GPT structure (Reason) with regex numeric data
+    # ---------- 3️⃣ Merge GPT structure ----------
     tax_id = extract_tax_id(raw_text)
     merged = []
     for r in regex_data:
         doc, date, val = r["Alternative Document"], r["Date"], r["Document Value"]
         reason = "Invoice"
         for g in gpt_rows:
-            if doc in str(g.get("Alternative Document", "")) or date in str(g.get("Date", "")):
+            if doc in str(g.get("Alternative Document", "")) or date in str(
+                g.get("Date", "")
+            ):
                 reason = g.get("Reason", "Invoice")
                 break
-        merged.append({
-            "Alternative Document": doc,
-            "Date": date,
-            "Reason": reason,
-            "Document Value": val,
-            "Tax ID": tax_id if tax_id else "Missing TAX ID"
-        })
+        merged.append(
+            {
+                "Alternative Document": doc,
+                "Date": date,
+                "Reason": reason,
+                "Document Value": val,
+                "Tax ID": tax_id if tax_id else "Missing TAX ID",
+            }
+        )
 
     df = pd.DataFrame(merged).drop_duplicates(subset=["Alternative Document", "Date"])
     return df.to_dict(orient="records")
+
 
 # =============================================
 # EXCEL EXPORT
@@ -164,6 +180,7 @@ def to_excel_bytes(records):
     buf.seek(0)
     return buf
 
+
 # =============================================
 # STREAMLIT UI
 # =============================================
@@ -173,15 +190,17 @@ if uploaded_pdf:
     with st.spinner("📄 Extracting text from PDF..."):
         text = clean_text(extract_text_from_pdf(uploaded_pdf))
 
-    st.text_area("🔍 Extracted Text Preview", text[:2000], height=200)
+    st.text_area("🔍 Extracted Text Preview", text[:2500], height=250)
 
     if st.button("🤖 Extract Data to Excel"):
-        with st.spinner("Analyzing..."):
+        with st.spinner("Analyzing with GPT + Regex..."):
             data = extract_with_llm(text)
 
         if data:
             df = pd.DataFrame(data)
-            st.success("✅ Extraction complete — Only DEBE / IMPORTE / VALOR / TOTAL lines included. SALDO ignored.")
+            st.success(
+                "✅ Extraction complete — Only DEBE / IMPORTE / VALOR / TOTAL / TOTALE / AMOUNT used. SALDO ignored."
+            )
             st.dataframe(df, use_container_width=True)
 
             excel_bytes = to_excel_bytes(data)
@@ -192,6 +211,8 @@ if uploaded_pdf:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
         else:
-            st.warning("⚠️ No valid document data found. Verify your PDF format.")
+            st.warning(
+                "⚠️ No valid document data found. Please verify your PDF layout or share a sample text line for calibration."
+            )
 else:
     st.info("Please upload a vendor statement PDF to begin.")
