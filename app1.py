@@ -1,57 +1,73 @@
-import os, re
+import os, json, re
 from io import BytesIO
 import fitz  # PyMuPDF
 import pandas as pd
 import streamlit as st
+from openai import OpenAI
 
 # =============================================
-# STREAMLIT CONFIG
+# Load environment variables safely
 # =============================================
-st.set_page_config(page_title="🦅 DataFalcon — DEBE Extractor", layout="wide")
-st.title("🦅 DataFalcon — Vendor Statement Extractor (DEBE Calibrated)")
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ModuleNotFoundError:
+    st.warning("⚠️ 'python-dotenv' not installed — continuing without .env support.")
+
+api_key = os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY")
+if not api_key:
+    st.error("❌ No OpenAI API key found. Add it to .env or Streamlit Secrets.")
+    st.stop()
+
+client = OpenAI(api_key=api_key)
+MODEL = "gpt-4o-mini"
 
 # =============================================
-# HELPERS
+# Streamlit setup
+# =============================================
+st.set_page_config(page_title="📄 Vendor Statement Extractor", layout="wide")
+st.title("🦅 DataFalcon")
+
+# =============================================
+# Helper functions
 # =============================================
 def extract_text_from_pdf(file):
-    """Safely extract text from uploaded PDF."""
-    file_bytes = file.getvalue()
-    if not file_bytes:
-        raise ValueError("Uploaded file is empty or unreadable.")
-
+    """Extract text from PDF pages."""
     text = ""
-    with fitz.open(stream=file_bytes, filetype="pdf") as doc:
+    with fitz.open(stream=file.read(), filetype="pdf") as doc:
         for page in doc:
             text += page.get_text("text") + "\n"
     return text
 
-
 def clean_text(text):
-    """Clean extracted text."""
     return " ".join(text.replace("\xa0", " ").replace("€", " EUR").split())
 
-
 def normalize_number(value):
-    """Normalize European-style numbers."""
+    """Normalize Spanish/EU formatted numbers like 1.234,56 or 1,234.56 into 1234.56"""
     if not value:
         return ""
     s = str(value).strip()
-    if re.match(r"^\d{1,3}(\.\d{3})*,\d{2}$", s):
+
+    if re.match(r"^\d{1,3}(\.\d{3})*,\d{2}$", s):  # EU format
         s = s.replace(".", "").replace(",", ".")
-    elif re.match(r"^\d+,\d{2}$", s):
+    elif re.match(r"^\d{1,3}(,\d{3})*\.\d{2}$", s):  # US format
+        s = s.replace(",", "")
+    elif re.match(r"^\d+,\d{2}$", s):  # simple EU 150,00
         s = s.replace(",", ".")
     else:
         s = re.sub(r"[^\d.]", "", s)
     return s
 
-
 def extract_tax_id(raw_text):
-    """Detect CIF/NIF/VAT from text."""
+    """
+    Detect Spanish CIF/NIF or European VAT/AFM patterns in the raw text.
+    If found, return the first match; otherwise return None.
+    """
     patterns = [
-        r"\b[A-Z]{1}\d{7}[A-Z0-9]{1}\b",
-        r"\bES\d{9}\b",
-        r"\bEL\d{9}\b",
-        r"\b[A-Z]{2}\d{8,12}\b",
+        r"\b[A-Z]{1}\d{7}[A-Z0-9]{1}\b",        # Spanish CIF/NIF (e.g. B12345678)
+        r"\bES\d{9}\b",                         # Spanish VAT with ES prefix
+        r"\bEL\d{9}\b",                         # Greek VAT
+        r"\b[A-Z]{2}\d{8,12}\b",                # Generic EU VAT (DE123456789, etc.)
     ]
     for pat in patterns:
         match = re.search(pat, raw_text)
@@ -59,78 +75,112 @@ def extract_tax_id(raw_text):
             return match.group(0)
     return None
 
-# =============================================
-# CORE EXTRACTION (DEBE-FIRST LOGIC)
-# =============================================
-def extract_debe_lines(raw_text):
+def extract_with_llm(raw_text):
+    """Send cleaned text to GPT and return structured JSON with correct columns."""
+    prompt = f"""
+    You are an expert accountant AI.
+
+    Extract all invoice lines from the following Spanish vendor statement.
+    Each line has: Invoice_Number, Date, Description, Debit (Debe), Credit (Haber), Balance (Saldo).
+
+    Rules:
+    - "Debe" → Debit column.
+    - "Haber" → Credit column.
+    - Words like "Pago" or "Abono" mean Credit.
+    - Always include Balance as the rightmost value in each row.
+    - Only one of Debit or Credit can have a value.
+    - Return valid JSON array only.
+
+    Example:
+    [
+      {{
+        "Invoice_Number": "2025.TPY.190.1856",
+        "Date": "12/09/2025",
+        "Description": "Factura de servicios",
+        "Debit": "3250.00",
+        "Credit": "",
+        "Balance": "3250.00"
+      }}
+    ]
+
+    Text:
+    \"\"\"{raw_text[:12000]}\"\"\"
     """
-    Extract only invoice lines where 'Fra. emitida' and invoice pattern (6--) exist.
-    Takes the first numeric amount (DEBE) and ignores the rest.
-    """
 
-    pattern = re.compile(
-        r"(?P<debe>\d{1,3}(?:[\.,]\d{2,3})+)\s+\d{1,2}/\d{1,2}/\d{2,4}.*?(?P<doc>6[-–]\d{1,5}).*?(?P<date>\d{1,2}/\d{1,2}/\d{2,4}).*?(Fra\. emitida|Factura|Doc)",
-        re.IGNORECASE,
-    )
+    response = client.responses.create(model=MODEL, input=prompt)
+    content = response.output_text.strip()
 
-    rows = []
-    for match in pattern.finditer(raw_text):
-        val = normalize_number(match.group("debe"))
-        date = match.group("date")
-        doc = match.group("doc")
+    try:
+        json_match = re.search(r'\[.*\]', content, re.DOTALL)
+        if json_match:
+            content = json_match.group(0)
+        data = json.loads(content)
+    except Exception as e:
+        st.error(f"⚠️ Could not parse GPT output: {e}")
+        st.text_area("🔍 Raw GPT Output", content[:2000], height=200)
+        return []
 
-        try:
-            amount = float(val)
-        except:
-            continue
+    # --- Post-correction logic ---
+    for row in data:
+        for f in ["Debit", "Credit", "Balance"]:
+            row[f] = normalize_number(row.get(f, ""))
+        desc = row.get("Description", "").lower()
+        # Ensure "Pago" or "Abono" entries are Credit
+        if "pago" in desc or "abono" in desc:
+            if row.get("Debit") and not row.get("Credit"):
+                row["Credit"], row["Debit"] = row["Debit"], ""
+        # Ensure only one side has a value
+        if row.get("Debit") and row.get("Credit"):
+            try:
+                d, c = float(row["Debit"]), float(row["Credit"])
+                if "pago" in desc or "abono" in desc or c < d:
+                    row["Credit"], row["Debit"] = c, ""
+                else:
+                    row["Debit"], row["Credit"] = d, ""
+            except:
+                pass
+    return data
 
-        if amount <= 0 or amount > 100000:
-            continue
-
-        rows.append({
-            "Alternative Document": doc.strip(),
-            "Date": date.strip(),
-            "Reason": "Invoice",
-            "Document Value": f"{amount:.2f}"
-        })
-
-    df = pd.DataFrame(rows).drop_duplicates(subset=["Alternative Document", "Date"])
-    return df
-
-
-def to_excel_bytes(df):
-    buf = BytesIO()
-    df.to_excel(buf, index=False)
-    buf.seek(0)
-    return buf
-
+def to_excel_bytes(records):
+    df = pd.DataFrame(records)
+    output = BytesIO()
+    df.to_excel(output, index=False)
+    output.seek(0)
+    return output
 
 # =============================================
-# STREAMLIT UI
+# Streamlit interface
 # =============================================
-uploaded_pdf = st.file_uploader("📂 Upload Vendor Statement (PDF)", type=["pdf"])
+uploaded_pdf = st.file_uploader("📂 Upload a vendor statement (PDF)", type=["pdf"])
 
 if uploaded_pdf:
     with st.spinner("📄 Extracting text from PDF..."):
         text = clean_text(extract_text_from_pdf(uploaded_pdf))
 
-    st.text_area("🔍 Extracted Text Preview", text[:2500], height=250)
+    st.text_area("🔍 Extracted text preview", text[:2000], height=200)
 
-    if st.button("🔎 Extract DEBE Invoices"):
-        df = extract_debe_lines(text)
-        if not df.empty:
-            tax_id = extract_tax_id(text)
-            df["Tax ID"] = tax_id if tax_id else "Missing TAX ID"
-            st.success(f"✅ Extracted {len(df)} invoices (DEBE only, SALDO ignored)")
-            st.dataframe(df, use_container_width=True)
+    if st.button("🤖 Extract data to Excel"):
+        with st.spinner("Analyzing with GPT... please wait..."):
+            data = extract_with_llm(text)
 
+        # --- NEW: Detect or add Tax ID ---
+        tax_id = extract_tax_id(text)
+        for row in data:
+            row["Tax ID"] = tax_id if tax_id else "Missing TAX ID"
+
+        if data:
+            df = pd.DataFrame(data)
+            st.success("✅ Extraction complete (with Tax ID detection)!")
+            st.dataframe(df)
+
+            excel_bytes = to_excel_bytes(data)
             st.download_button(
-                "⬇️ Download Excel (Vendor Statement)",
-                data=to_excel_bytes(df),
-                file_name="vendor_statement_output.xlsx",
+                "⬇️ Download Excel",
+                data=excel_bytes,
+                file_name="statement_output.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
         else:
-            st.warning("⚠️ No DEBE-based invoices found. Try uploading another page or format.")
+            st.warning("⚠️ No structured data found. Try another PDF or verify text extraction.")
 else:
     st.info("Please upload a vendor statement PDF to begin.")
