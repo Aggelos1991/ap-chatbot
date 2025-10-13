@@ -95,7 +95,15 @@ def share_3plus_digits(a, b):
 def match_invoices(erp_df, ven_df):
     matched, matched_erp, matched_ven = [], set(), set()
 
-    # Pre-compute ERP doc types + amounts (Credit = invoice, Debit = CN)
+    # ---- Sanity check for columns ----
+    for col in ["invoice_erp", "debit_erp", "credit_erp", "date_erp"]:
+        if col not in erp_df.columns:
+            erp_df[col] = ""
+    for col in ["invoice_ven", "debit_ven", "date_ven"]:
+        if col not in ven_df.columns:
+            ven_df[col] = ""
+
+    # ---- ERP amounts ----
     erp_df["__doctype"] = erp_df.apply(
         lambda r: "CN" if normalize_number(r.get("debit_erp")) > 0 else "INV"
         if normalize_number(r.get("credit_erp")) > 0 else "UNKNOWN",
@@ -107,16 +115,18 @@ def match_invoices(erp_df, ven_df):
         axis=1
     )
 
-    # Vendor side: positive = Invoice, negative = Credit Note
+    # ---- Vendor amounts ----
     ven_df["__doctype"] = ven_df.apply(
         lambda r: "CN" if normalize_number(r.get("debit_ven")) < 0 else "INV",
         axis=1
     )
     ven_df["__amt"] = ven_df.apply(lambda r: abs(normalize_number(r.get("debit_ven"))), axis=1)
 
+    # ---- Keep only invoices / CNs ----
     erp_use = erp_df[erp_df["__doctype"].isin(["INV", "CN"])].copy()
     ven_use = ven_df[ven_df["__doctype"].isin(["INV", "CN"])].copy()
 
+    # ---- Core matching ----
     for _, e_row in erp_use.iterrows():
         e_inv = str(e_row["invoice_erp"]).strip()
         e_amt = round(float(e_row["__amt"]), 2)
@@ -133,11 +143,11 @@ def match_invoices(erp_df, ven_df):
             if v_inv in matched_ven:
                 continue
 
-            # Matching rules
             digits3 = share_3plus_digits(e_inv, v_inv)
             fuzzy = fuzz.ratio(e_inv, v_inv) if e_inv and v_inv else 0
             amt_close = abs(e_amt - v_amt) < 0.05
-            if digits3 or fuzzy > 90 or (e_inv == v_inv):
+
+            if digits3 or fuzzy > 90 or e_inv == v_inv:
                 score = fuzzy + (60 if amt_close else 0) + (100 if digits3 else 0)
                 if score > best_score:
                     best_score = score
@@ -160,6 +170,34 @@ def match_invoices(erp_df, ven_df):
             matched_erp.add(e_inv)
             matched_ven.add(v_inv)
 
+    # ---- Robust missing detection ----
+    def safe_series(df, col):
+        return df[col] if col in df.columns else pd.Series([], dtype=str)
+
+    def is_missing_robust(target_df, compare_df, target_col, compare_col):
+        missing_rows = []
+        target_col_data = safe_series(target_df, target_col)
+        compare_col_data = safe_series(compare_df, compare_col)
+        for _, row in target_df.iterrows():
+            ref = str(row.get(target_col, ""))
+            if not any(share_3plus_digits(ref, str(other)) for other in compare_col_data):
+                missing_rows.append(row)
+        return pd.DataFrame(missing_rows)
+
+    erp_missing = is_missing_robust(erp_use, ven_use, "invoice_erp", "invoice_ven")
+    ven_missing = is_missing_robust(ven_use, erp_use, "invoice_ven", "invoice_erp")
+
+    erp_missing = erp_missing.loc[:, ["date_erp", "invoice_erp", "__amt"]].rename(
+        columns={"date_erp": "Date", "invoice_erp": "Invoice", "__amt": "Amount"},
+        errors="ignore"
+    ).reset_index(drop=True)
+
+    ven_missing = ven_missing.loc[:, ["date_ven", "invoice_ven", "__amt"]].rename(
+        columns={"date_ven": "Date", "invoice_ven": "Invoice", "__amt": "Amount"},
+        errors="ignore"
+    ).reset_index(drop=True)
+
+    return pd.DataFrame(matched), erp_missing, ven_missing
     # Missing detection using same 3-digit rule
         # ✅ FIXED Missing detection (3-digit rule respected)
     def clean_invoice(v):
