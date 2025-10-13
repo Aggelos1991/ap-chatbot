@@ -10,9 +10,18 @@ st.title("🦖 ReconRaptor — Vendor Invoice Reconciliation")
 # Helper functions
 # ==========================
 def normalize_number(v):
-    """Convert strings like '1.234,56' or '1,234.56' to float."""
-    if pd.isna(v):
+    """Safely convert strings like '1.234,56' or '1,234.56' to float, handling Series and NaN."""
+    import pandas as pd
+
+    # Handle Series or list values
+    if isinstance(v, (pd.Series, list)):
+        v = v.iloc[0] if isinstance(v, pd.Series) else v[0]
+
+    # Handle NaN or None
+    if v is None or (isinstance(v, float) and pd.isna(v)):
         return 0.0
+
+    # Convert to string, clean symbols and parse
     s = str(v).strip()
     s = re.sub(r"[^\d,.\-]", "", s)
     if s.count(",") == 1 and s.count(".") == 1:
@@ -24,9 +33,10 @@ def normalize_number(v):
         s = s.replace(",", ".")
     elif s.count(".") > 1:
         s = s.replace(".", "", s.count(".") - 1)
+
     try:
         return float(s)
-    except:
+    except Exception:
         return 0.0
 
 
@@ -51,11 +61,8 @@ def normalize_columns(df, tag):
     return df.rename(columns=rename_map)
 
 
-# ==========================
-# Enhanced invoice core extractor
-# ==========================
 def extract_core_invoice(inv):
-    """Extracts the meaningful invoice tail (last alphanumeric part)."""
+    """Extract the meaningful part of the invoice (last alphanumeric tail)."""
     if not inv or pd.isna(inv):
         return ""
     s = str(inv).strip().upper()
@@ -98,7 +105,16 @@ def match_invoices(erp_df, ven_df):
         e_inv = str(e_row.get("invoice_erp", "")).strip()
         if not e_inv:
             continue
-        e_amt = normalize_number(e_row.get("credit_erp", 0)) or -normalize_number(e_row.get("debit_erp", 0))
+
+        # SAFER extraction for credit/debit amounts
+        credit_val = e_row["credit_erp"] if "credit_erp" in e_row else 0
+        debit_val = e_row["debit_erp"] if "debit_erp" in e_row else 0
+        if isinstance(credit_val, pd.Series):
+            credit_val = credit_val.iloc[0]
+        if isinstance(debit_val, pd.Series):
+            debit_val = debit_val.iloc[0]
+        e_amt = normalize_number(credit_val) or -normalize_number(debit_val)
+
         e_core = e_row["__core"]
 
         for _, v_row in ven_df.iterrows():
@@ -111,7 +127,7 @@ def match_invoices(erp_df, ven_df):
             c_val = normalize_number(v_row.get("credit_ven", 0))
             v_amt = d_val if "abono" not in desc and "credit" not in desc else -c_val
 
-            # Smart match: exact, fuzzy, or core match (suffix/ending)
+            # Smart match: exact, fuzzy, or suffix match
             if (
                 e_inv == v_inv
                 or e_core == v_core
