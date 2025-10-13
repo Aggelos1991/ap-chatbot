@@ -82,12 +82,13 @@ def clean_core(v):
 # CORE MATCHING
 # ======================================
 def match_invoices(erp_df, ven_df):
-    matched, matched_erp, matched_ven_core = [], set(), set()
+    matched = []
+    matched_pairs = set()
 
-    # --- classify ERP rows (Invoice vs Credit Note) ---
+    # ============== PREP ERP ==================
     erp_df["__doctype"] = erp_df.apply(
-        lambda r: "CN" if normalize_number(r.get("debit_erp")) > 0 else "INV"
-        if normalize_number(r.get("credit_erp")) > 0 else "UNKNOWN",
+        lambda r: "CN" if normalize_number(r.get("debit_erp")) > 0
+        else ("INV" if normalize_number(r.get("credit_erp")) > 0 else "UNKNOWN"),
         axis=1
     )
     erp_df["__amt"] = erp_df.apply(
@@ -96,7 +97,7 @@ def match_invoices(erp_df, ven_df):
         axis=1
     )
 
-    # --- vendor side ---
+    # ============== PREP VENDOR ==================
     ven_df["__doctype"] = ven_df.apply(
         lambda r: "CN" if normalize_number(r.get("debit_ven")) < 0 else "INV",
         axis=1
@@ -106,6 +107,91 @@ def match_invoices(erp_df, ven_df):
     erp_use = erp_df[erp_df["__doctype"].isin(["INV", "CN"])].copy()
     ven_use = ven_df[ven_df["__doctype"].isin(["INV", "CN"])].copy()
 
+    # ============== CLEAN CORE (numeric) ==================
+    def clean_core(v):
+        s = re.sub(r"[^0-9]", "", str(v or ""))
+        return s[-6:] if len(s) >= 6 else s
+
+    erp_use["__core"] = erp_use["invoice_erp"].apply(clean_core)
+    ven_use["__core"] = ven_use["invoice_ven"].apply(clean_core)
+
+    # ============== MAIN MATCHING LOOP ==================
+    for _, e in erp_use.iterrows():
+        e_inv = str(e["invoice_erp"]).strip()
+        e_core = clean_core(e_inv)
+        e_amt = round(float(e["__amt"]), 2)
+        e_date = e.get("date_erp")
+
+        best = None
+        best_score = -1
+
+        for _, v in ven_use.iterrows():
+            v_inv = str(v["invoice_ven"]).strip()
+            v_core = clean_core(v_inv)
+            v_amt = round(float(v["__amt"]), 2)
+            v_date = v.get("date_ven")
+
+            # avoid reusing exact same core pair
+            if (e_core, v_core) in matched_pairs:
+                continue
+
+            # ---------- 3-digit rule ----------
+            # if any sequence of 3+ digits overlaps between ERP and vendor core, it's a match
+            digits_erp = re.findall(r"\d{3,}", e_core)
+            digits_ven = re.findall(r"\d{3,}", v_core)
+            three_match = any(d in v_core for d in digits_erp if len(d) >= 3) or any(d in e_core for d in digits_ven if len(d) >= 3)
+
+            fuzzy = fuzz.ratio(e_inv, v_inv)
+            amt_close = abs(e_amt - v_amt) < 0.05
+
+            if three_match or fuzzy > 90 or e_core == v_core:
+                score = fuzzy + (100 if three_match or e_core == v_core else 0) + (60 if amt_close else 0)
+                if score > best_score:
+                    best_score = score
+                    best = (v_inv, v_core, v_amt, v_date)
+
+        if best:
+            v_inv, v_core, v_amt, v_date = best
+            diff = round(e_amt - v_amt, 2)
+            status = "Match" if abs(diff) < 0.05 else "Difference"
+
+            matched.append({
+                "Date (ERP)": e_date,
+                "Date (Vendor)": v_date,
+                "ERP Invoice": e_inv if e_inv else "(inferred)",
+                "Vendor Invoice": v_inv,
+                "ERP Amount": e_amt,
+                "Vendor Amount": v_amt,
+                "Difference": diff,
+                "Status": status
+            })
+
+            matched_pairs.add((e_core, v_core))
+
+    # ============== BUILD MISSING TABLES ==================
+    erp_matched_cores = {pair[0] for pair in matched_pairs}
+    ven_matched_cores = {pair[1] for pair in matched_pairs}
+
+    def core_of(v): return clean_core(v)
+
+    # invoices present in vendor but not ERP → Missing in ERP
+    ven_missing = (
+        ven_use[~ven_use["__core"].isin(erp_matched_cores)]
+        .loc[:, ["date_ven", "invoice_ven", "__amt"]]
+        .rename(columns={"date_ven": "Date", "invoice_ven": "Invoice", "__amt": "Amount"})
+        .reset_index(drop=True)
+    )
+
+    # invoices present in ERP but not vendor → Missing in Vendor
+    erp_missing = (
+        erp_use[~erp_use["__core"].isin(ven_matched_cores)]
+        .loc[:, ["date_erp", "invoice_erp", "__amt"]]
+        .rename(columns={"date_erp": "Date", "invoice_erp": "Invoice", "__amt": "Amount"})
+        .reset_index(drop=True)
+    )
+
+    df_matched = pd.DataFrame(matched)
+    return df_matched, erp_missing, ven_missing
     # --- define clean numeric core ---
     def clean_core(v):
         """Return last 4–6 digits of any invoice for core match."""
