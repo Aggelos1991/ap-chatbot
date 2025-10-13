@@ -84,6 +84,7 @@ def clean_core(v):
 def match_invoices(erp_df, ven_df):
     matched, matched_erp, matched_ven_core = [], set(), set()
 
+    # --- classify ERP rows (Invoice vs Credit Note) ---
     erp_df["__doctype"] = erp_df.apply(
         lambda r: "CN" if normalize_number(r.get("debit_erp")) > 0 else "INV"
         if normalize_number(r.get("credit_erp")) > 0 else "UNKNOWN",
@@ -95,6 +96,7 @@ def match_invoices(erp_df, ven_df):
         axis=1
     )
 
+    # --- vendor side ---
     ven_df["__doctype"] = ven_df.apply(
         lambda r: "CN" if normalize_number(r.get("debit_ven")) < 0 else "INV",
         axis=1
@@ -104,7 +106,13 @@ def match_invoices(erp_df, ven_df):
     erp_use = erp_df[erp_df["__doctype"].isin(["INV", "CN"])].copy()
     ven_use = ven_df[ven_df["__doctype"].isin(["INV", "CN"])].copy()
 
-    # --- Main matching ---
+    # --- define clean numeric core ---
+    def clean_core(v):
+        """Return last 4–6 digits of any invoice for core match."""
+        s = re.sub(r"[^0-9]", "", str(v))
+        return s[-6:] if len(s) >= 6 else s
+
+    # --- main matching loop ---
     for _, e_row in erp_use.iterrows():
         e_inv = str(e_row["invoice_erp"]).strip()
         e_amt = round(float(e_row["__amt"]), 2)
@@ -120,19 +128,25 @@ def match_invoices(erp_df, ven_df):
             v_amt = round(float(v_row["__amt"]), 2)
             v_date = v_row.get("date_ven")
 
-            # Skip if this core was already matched
-            if v_core in matched_ven_core:
+            # Skip if vendor core already used by the exact same ERP core
+            pair_key = f"{e_core}-{v_core}"
+            if pair_key in matched_ven_core:
                 continue
 
-            digits3 = share_3plus_digits(e_inv, v_inv)
-            fuzzy = fuzz.ratio(e_inv, v_inv) if e_inv and v_inv else 0
-            amt_close = abs(e_amt - v_amt) < 0.05
+            # --- 3-digit rule ---
+            three_match = False
+            for match in re.findall(r"\d{3,}", v_core):
+                if match in e_core or e_core.endswith(match):
+                    three_match = True
+                    break
 
-            if digits3 or fuzzy > 90 or e_core == v_core:
-                score = fuzzy + (60 if amt_close else 0) + (100 if digits3 or e_core == v_core else 0)
-                if score > best_score:
-                    best_score = score
-                    best_v = (v_inv, v_core, v_amt, v_date)
+            fuzzy = fuzz.ratio(e_inv, v_inv)
+            amt_close = abs(e_amt - v_amt) < 0.05
+            score = fuzzy + (60 if amt_close else 0) + (100 if three_match or e_core == v_core else 0)
+
+            if score > best_score:
+                best_score = score
+                best_v = (v_inv, v_core, v_amt, v_date)
 
         if best_v:
             v_inv, v_core, v_amt, v_date = best_v
@@ -149,7 +163,34 @@ def match_invoices(erp_df, ven_df):
                 "Status": status
             })
             matched_erp.add(e_inv)
-            matched_ven_core.add(v_core)
+            matched_ven_core.add(f"{e_core}-{v_core}")  # track pair instead of single vendor invoice
+
+    # --- missing logic ---
+    def clean_invoice(v):
+        return re.sub(r"[^A-Z0-9]", "", str(v).upper().strip())
+
+    erp_use["__clean_inv"] = erp_use["invoice_erp"].apply(clean_invoice)
+    ven_use["__clean_inv"] = ven_use["invoice_ven"].apply(clean_invoice)
+
+    matched_erp_clean = {clean_invoice(i) for i in matched_erp}
+    matched_ven_clean = {re.sub(r"[^0-9]", "", i[-6:]) for i in matched_ven_core}
+
+    erp_missing = (
+        erp_use[~erp_use["__clean_inv"].isin(matched_erp_clean)]
+        .loc[:, ["date_erp", "invoice_erp", "__amt"]]
+        .rename(columns={"date_erp": "Date", "invoice_erp": "Invoice", "__amt": "Amount"})
+        .reset_index(drop=True)
+    )
+
+    ven_missing = (
+        ven_use[~ven_use["invoice_ven"].apply(lambda x: clean_core(x)).isin(matched_ven_clean)]
+        .loc[:, ["date_ven", "invoice_ven", "__amt"]]
+        .rename(columns={"date_ven": "Date", "invoice_ven": "Invoice", "__amt": "Amount"})
+        .reset_index(drop=True)
+    )
+
+    df_matched = pd.DataFrame(matched)
+    return df_matched, erp_missing, ven_missing
 
     # --- Missing logic ---
     def clean_invoice(v):
