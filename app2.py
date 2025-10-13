@@ -34,33 +34,61 @@ def normalize_number(v):
 
 
 def normalize_columns(df, tag):
-    """Map multilingual headers to unified names."""
+    """Map multilingual headers to unified names — fully optimized for Spanish vendor statements."""
     mapping = {
-        "invoice": ["invoice", "factura", "document", "doc", "nº", "num"],
-        "credit": ["credit", "haber", "credito"],
-        "debit": [
-            "debit", "debe", "cargo", "importe", "valor",
-            "amount", "document value", "charge",
-            "total", "totale", "totales", "totals"
+        # 🔢 Invoice / Document number detection
+        "invoice": [
+            "invoice", "factura", "fact", "nº", "num", "numero", "número",
+            "document", "doc", "ref", "referencia", "nº factura", "num factura"
         ],
+
+        # 💳 Credit note / Abono / Haber detection
+        "credit": [
+            "credit", "haber", "credito", "crédito", "nota de crédito", "nota crédito",
+            "abono", "abonos", "importe haber", "valor haber"
+        ],
+
+        # 💰 Debit / Document Value / Total detection
+        "debit": [
+            "debit", "debe", "cargo", "importe", "importe total", "valor", "monto",
+            "amount", "document value", "charge",
+            "total", "totale", "totales", "totals",
+            "base imponible", "importe factura", "importe neto"
+        ],
+
+        # 🗒️ Reason / Description detection
         "reason": [
             "reason", "motivo", "concepto", "descripcion", "descripción",
-            "descriptivo", "detalle", "razon"
+            "descriptivo", "detalle", "detalles", "razon", "razón",
+            "observaciones", "comentario", "comentarios", "explicacion"
         ],
-        "cif": ["cif", "nif", "vat", "tax"],
-        "date": ["date", "fecha", "data"],
+
+        # 🧾 CIF / VAT / NIF detection
+        "cif": [
+            "cif", "nif", "vat", "iva", "tax", "id fiscal", "número fiscal", "num fiscal"
+        ],
+
+        # 📅 Date detection
+        "date": [
+            "date", "fecha", "fech", "data", "fecha factura", "fecha doc", "fecha documento"
+        ],
     }
+
     rename_map = {}
     cols_lower = {c: str(c).strip().lower() for c in df.columns}
+
     for k, vals in mapping.items():
         for col, low in cols_lower.items():
             if any(v in low for v in vals):
                 rename_map[col] = f"{k}_{tag}"
+
     out = df.rename(columns=rename_map)
+
     for required in ["debit", "credit"]:
         cname = f"{required}_{tag}"
         if cname not in out.columns:
             out[cname] = 0.0
+
     return out
 
 
