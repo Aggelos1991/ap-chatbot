@@ -129,11 +129,20 @@ def match_invoices(erp_df, ven_df):
                 break
 
     # --- HANDLE MISSING INVOICES ---
+    def clean_invoice(v):
+        return re.sub(r"[^A-Z0-9]", "", str(v).strip().upper())
+
+    # Normalize both lists for reliable exclusion
+    erp_df["__clean_inv"] = erp_df["invoice_erp"].apply(clean_invoice)
+    ven_df["__clean_inv"] = ven_df["invoice_ven"].apply(clean_invoice)
+    matched_erp_clean = {clean_invoice(i) for i in matched_erp}
+    matched_ven_clean = {clean_invoice(i) for i in matched_ven}
+
     erp_cols = [c for c in ["invoice_erp", "credit_erp", "debit_erp"] if c in erp_df.columns]
     ven_cols = [c for c in ["invoice_ven", "debit_ven", "credit_ven"] if c in ven_df.columns]
 
     erp_missing = (
-        erp_df[~erp_df["invoice_erp"].isin(matched_erp)]
+        erp_df[~erp_df["__clean_inv"].isin(matched_erp_clean)]
         .loc[:, erp_cols]
         .rename(columns={
             "invoice_erp": "ERP Invoice",
@@ -144,7 +153,7 @@ def match_invoices(erp_df, ven_df):
     )
 
     ven_missing = (
-        ven_df[~ven_df["invoice_ven"].isin(matched_ven)]
+        ven_df[~ven_df["__clean_inv"].isin(matched_ven_clean)]
         .loc[:, ven_cols]
         .rename(columns={
             "invoice_ven": "Vendor Invoice",
