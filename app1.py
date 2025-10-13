@@ -6,7 +6,7 @@ import streamlit as st
 from openai import OpenAI
 
 # =============================================
-# ENVIRONMENT & MODEL SETUP
+# ENVIRONMENT SETUP
 # =============================================
 try:
     from dotenv import load_dotenv
@@ -25,27 +25,23 @@ MODEL = "gpt-4o-mini"
 # =============================================
 # STREAMLIT CONFIG
 # =============================================
-st.set_page_config(page_title="📄 DataFalcon — Vendor Statement Extractor", layout="wide")
-st.title("🦅 DataFalcon — Vendor Statement Extractor (Saldo-Proof Version)")
+st.set_page_config(page_title="🦅 DataFalcon — Vendor Statement Extractor", layout="wide")
+st.title("🦅 DataFalcon — Vendor Statement Extractor (Saldo-Proof + Totale Edition)")
 
 # =============================================
 # HELPERS
 # =============================================
 def extract_text_from_pdf(file):
-    """Extract text from PDF."""
     text = ""
     with fitz.open(stream=file.read(), filetype="pdf") as doc:
         for page in doc:
             text += page.get_text("text") + "\n"
     return text
 
-
 def clean_text(text):
     return " ".join(text.replace("\xa0", " ").replace("€", " EUR").split())
 
-
 def normalize_number(value):
-    """Normalize Spanish/EU formatted numbers into float-compatible strings."""
     if not value:
         return ""
     s = str(value).strip()
@@ -59,14 +55,12 @@ def normalize_number(value):
         s = re.sub(r"[^\d.-]", "", s)
     return s
 
-
 def extract_tax_id(raw_text):
-    """Detect Spanish CIF/NIF or European VAT patterns."""
     patterns = [
-        r"\b[A-Z]{1}\d{7}[A-Z0-9]{1}\b",  # B12345678
-        r"\bES\d{9}\b",  # ES123456789
-        r"\bEL\d{9}\b",  # EL123456789
-        r"\b[A-Z]{2}\d{8,12}\b",  # EU VAT generic
+        r"\b[A-Z]{1}\d{7}[A-Z0-9]{1}\b",
+        r"\bES\d{9}\b",
+        r"\bEL\d{9}\b",
+        r"\b[A-Z]{2}\d{8,12}\b",
     ]
     for pat in patterns:
         match = re.search(pat, raw_text)
@@ -75,121 +69,100 @@ def extract_tax_id(raw_text):
     return None
 
 # =============================================
-# CORE EXTRACTION LOGIC
+# CORE EXTRACTION — SALDO-PROOF
 # =============================================
 def extract_with_llm(raw_text):
     """
-    Hybrid extraction: GPT for semantic context + regex fallback for missed DEBE lines.
+    GPT identifies structure; regex extracts numeric values from DEBE / IMPORTE / VALOR / TOTAL / TOTALE / AMOUNT only.
+    SALDO, HABER, BALANCE, payments always ignored.
     """
-    # ---------- GPT extraction ----------
+    # 1️⃣ GPT → detect document numbers & dates
     prompt = f"""
-    You are an expert accountant AI.
+    You are a Spanish accountant AI.
+    Read the following vendor statement and identify only document lines (invoices or credit notes).
 
-    The following text is a Spanish vendor statement with columns:
-    ASIENTO | FECHA | DOC | DEBE | HABER | SALDO
+    For each document include:
+    - Alternative Document (Factura / Documento / No / Nº / Num / Número / Nro / Doc)
+    - Date (Fecha)
+    - Reason ("Invoice" or "Credit Note")
 
-    Each line may look like:
-    6--483 24/01/25 Fra. emitida nº 70000000 CREADA POR IMPORTADOR 322,27 386,16 708,43
+    Ignore:
+    - SALDO, BALANCE, ACUMULADO, RESTANTE
+    - HABER, CRÉDITO, PAGO, BANCO, REMESA, COBRO, DOMICILIACIÓN
+    - Any totals unrelated to documents
 
-    Instructions:
-    - Extract all document lines (Factura / Credit Note) using DEBE as Document Value.
-    - The DEBE value is always the number appearing **before HABER and SALDO**.
-    - Ignore "Saldo", "Balance", "Acumulado", "Restante" values.
-    - Ignore payments ("Pago", "Transferencia", "Banco", "Cobro Efecto", "Remesa", "Domiciliación").
-    - Keep all Factura lines, even if repeated pattern.
-    - Output valid JSON with: ["Alternative Document", "Date", "Reason", "Document Value", "Tax ID"]
-
-    Example:
-    [
-      {{
-        "Alternative Document": "6--483",
-        "Date": "24/01/25",
-        "Reason": "Invoice",
-        "Document Value": "322.27",
-        "Tax ID": "B12345678"
-      }},
-      {{
-        "Alternative Document": "6--2322",
-        "Date": "12/03/25",
-        "Reason": "Invoice",
-        "Document Value": "132.57",
-        "Tax ID": "B12345678"
-      }}
-    ]
+    Output JSON with:
+    ["Alternative Document", "Date", "Reason"]
 
     Text:
     \"\"\"{raw_text[:24000]}\"\"\"
     """
-
-    response = client.responses.create(model=MODEL, input=prompt)
-    content = response.output_text.strip()
-
     try:
-        json_match = re.search(r'\[.*\]', content, re.DOTALL)
-        if json_match:
-            content = json_match.group(0)
-        data = json.loads(content)
-    except Exception as e:
-        st.error(f"⚠️ Could not parse GPT output: {e}")
-        data = []
+        response = client.responses.create(model=MODEL, input=prompt)
+        content = response.output_text.strip()
+        json_match = re.search(r"\[.*\]", content, re.DOTALL)
+        content = json_match.group(0) if json_match else content
+        gpt_rows = json.loads(content)
+    except Exception:
+        gpt_rows = []
 
-    # ---------- Post-cleanup ----------
-    tax_id = extract_tax_id(raw_text)
-    filtered = []
+    # 2️⃣ Regex → capture numeric DEBE / TOTAL / IMPORTE / VALOR values, ignoring SALDO & HABER
+    pattern = re.compile(
+        r"(6[-–]\d{1,4})"                                   # Document number
+        r".{0,60}?"                                          # up to 60 chars between
+        r"(\d{1,2}/\d{1,2}/\d{2,4})"                        # Date
+        r".{0,80}?"                                          # allow some text
+        r"(?:DEBE|DEBITO|CARGO|IMPORTE|VALOR|TOTAL|TOTALE|AMOUNT)[\s:=]*([\d.,]{3,10})"  # capture value
+        r"(?![\s]*(SALDO|BALANCE|HABER|CR[EÉ]DITO))",       # exclude saldo/haber
+        re.IGNORECASE
+    )
 
-    for row in data:
-        val = normalize_number(row.get("Document Value", ""))
-        if not val:
-            continue
-
+    regex_data = []
+    for m in pattern.finditer(raw_text):
+        doc, date, val, _ = m.groups()
+        num = normalize_number(val)
         try:
-            amount = float(val)
+            amount = float(num)
         except:
             continue
-
-        # ignore large / invalid / SALDO / account codes
-        if amount <= 0 or amount > 100000:
+        if amount <= 0 or amount > 100000:  # reject ledger codes
             continue
+        regex_data.append({
+            "Alternative Document": doc.strip(),
+            "Date": date.strip(),
+            "Document Value": f"{amount:.2f}"
+        })
 
-        reason = str(row.get("Reason", "")).lower()
-        if any(w in reason for w in ["saldo", "balance", "acumulad", "restante", "pago", "transferencia", "banco", "remesa", "cobro"]):
-            continue
+    # 3️⃣ Merge GPT structure (Reason) with regex numeric data
+    tax_id = extract_tax_id(raw_text)
+    merged = []
+    for r in regex_data:
+        doc, date, val = r["Alternative Document"], r["Date"], r["Document Value"]
+        reason = "Invoice"
+        for g in gpt_rows:
+            if doc in str(g.get("Alternative Document", "")) or date in str(g.get("Date", "")):
+                reason = g.get("Reason", "Invoice")
+                break
+        merged.append({
+            "Alternative Document": doc,
+            "Date": date,
+            "Reason": reason,
+            "Document Value": val,
+            "Tax ID": tax_id if tax_id else "Missing TAX ID"
+        })
 
-        if any(w in reason for w in ["abono", "nota de crédito", "nota credito", "devolucion"]):
-            amount = -abs(amount)
-            row["Reason"] = "Credit Note"
-        else:
-            row["Reason"] = "Invoice"
+    df = pd.DataFrame(merged).drop_duplicates(subset=["Alternative Document", "Date"])
+    return df.to_dict(orient="records")
 
-        row["Document Value"] = f"{amount:.2f}"
-        row["Tax ID"] = tax_id if tax_id else "Missing TAX ID"
-        filtered.append(row)
-
-    # ---------- Regex fallback ----------
-    regex_matches = re.findall(r'(\d{1,2}/\d{1,2}/\d{2,4}).*?(6[-–]\d{1,4}).*?\s(\d{1,3}[.,]\d{2})\s', raw_text)
-    for date, doc, val in regex_matches:
-        val = normalize_number(val)
-        if not val:
-            continue
-        if not any(doc == r.get("Alternative Document") for r in filtered):
-            filtered.append({
-                "Alternative Document": doc,
-                "Date": date,
-                "Reason": "Invoice",
-                "Document Value": val,
-                "Tax ID": tax_id if tax_id else "Missing TAX ID"
-            })
-
-    return filtered
 # =============================================
 # EXCEL EXPORT
 # =============================================
 def to_excel_bytes(records):
     df = pd.DataFrame(records)
-    output = BytesIO()
-    df.to_excel(output, index=False)
-    output.seek(0)
-    return output
+    buf = BytesIO()
+    df.to_excel(buf, index=False)
+    buf.seek(0)
+    return buf
 
 # =============================================
 # STREAMLIT UI
@@ -203,12 +176,12 @@ if uploaded_pdf:
     st.text_area("🔍 Extracted Text Preview", text[:2000], height=200)
 
     if st.button("🤖 Extract Data to Excel"):
-        with st.spinner("Analyzing with GPT... please wait..."):
+        with st.spinner("Analyzing..."):
             data = extract_with_llm(text)
 
         if data:
             df = pd.DataFrame(data)
-            st.success("✅ Extraction complete — only DEBE (document values) captured, SALDO ignored!")
+            st.success("✅ Extraction complete — Only DEBE / IMPORTE / VALOR / TOTAL lines included. SALDO ignored.")
             st.dataframe(df, use_container_width=True)
 
             excel_bytes = to_excel_bytes(data)
@@ -219,6 +192,6 @@ if uploaded_pdf:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
         else:
-            st.warning("⚠️ No valid document data found. Check the PDF layout or content.")
+            st.warning("⚠️ No valid document data found. Verify your PDF format.")
 else:
-    st.info("Upload a Spanish vendor statement PDF to begin.")
+    st.info("Please upload a vendor statement PDF to begin.")
