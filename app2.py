@@ -151,8 +151,10 @@ def match_invoices(erp_df, ven_df):
 
        # ====== BUILD MISSING TABLES (final symmetric logic) ======
 
+        # ====== BUILD MISSING TABLES (final clean symmetric fix) ======
+
     def extract_tokens(s: str):
-        """Extract all 3+ digit sequences from invoice string."""
+        """Extract all 3+ digit sequences from an invoice string."""
         return set(re.findall(r"\d{3,}", str(s or "")))
 
     # Build token sets for ERP and Vendor
@@ -162,9 +164,9 @@ def match_invoices(erp_df, ven_df):
     matched_erp_invs = {m["ERP Invoice"] for m in matched}
     matched_ven_invs = {m["Vendor Invoice"] for m in matched}
 
-    # Find shared token sets across all
-    all_erp_tokens = set().union(*erp_tokens.values())
-    all_ven_tokens = set().union(*ven_tokens.values())
+    # Combine token pools
+    all_erp_tokens = set().union(*erp_tokens.values()) if len(erp_tokens) else set()
+    all_ven_tokens = set().union(*ven_tokens.values()) if len(ven_tokens) else set()
 
     # --- Missing in ERP (vendor invoices with no shared 3+ digits in ANY ERP invoice) ---
     ven_missing_list = []
@@ -173,14 +175,12 @@ def match_invoices(erp_df, ven_df):
         core = str(row["__core"])
         if inv in matched_ven_invs:
             continue
+        # Missing if no 3-digit overlap with any ERP core
         if len(extract_tokens(core) & all_erp_tokens) == 0:
             ven_missing_list.append(row)
 
-    ven_missing = pd.DataFrame(ven_missing_list)[["date_ven", "invoice_ven", "__amt"]].rename(
-        columns={"date_ven": "Date", "invoice_ven": "Invoice", "__amt": "Amount"}
-    ) if ven_missing_list else pd.DataFrame(columns=["Date", "Invoice", "Amount"])
-
     # --- Missing in Vendor (ERP invoices with no shared 3+ digits in ANY vendor invoice) ---
+    # 👇 We merge this logic into Missing in ERP instead
     erp_missing_list = []
     for _, row in erp_use.iterrows():
         inv = str(row["invoice_erp"])
@@ -188,13 +188,23 @@ def match_invoices(erp_df, ven_df):
         if inv in matched_erp_invs:
             continue
         if len(extract_tokens(core) & all_ven_tokens) == 0:
-            erp_missing_list.append(row)
+            # Move all these ERP-only invoices into the same Missing in ERP table
+            ven_missing_list.append(row)
 
-    erp_missing = pd.DataFrame(erp_missing_list)[["date_erp", "invoice_erp", "__amt"]].rename(
-        columns={"date_erp": "Date", "invoice_erp": "Invoice", "__amt": "Amount"}
-    ) if erp_missing_list else pd.DataFrame(columns=["Date", "Invoice", "Amount"])
+    # --- Create clean DataFrames ---
+    if ven_missing_list:
+        missing_erp_final = pd.DataFrame(ven_missing_list)[["date_ven" if "date_ven" in ven_use.columns else "date_erp",
+                                                            "invoice_ven" if "invoice_ven" in ven_use.columns else "invoice_erp",
+                                                            "__amt"]].rename(
+            columns={"date_ven": "Date", "invoice_ven": "Invoice", "date_erp": "Date", "invoice_erp": "Invoice", "__amt": "Amount"}
+        )
+    else:
+        missing_erp_final = pd.DataFrame(columns=["Date", "Invoice", "Amount"])
 
-    return pd.DataFrame(matched), erp_missing, ven_missing
+    # Missing in Vendor now stays always empty
+    missing_vendor_final = pd.DataFrame(columns=["Date", "Invoice", "Amount"])
+
+    return pd.DataFrame(matched), missing_erp_final, missing_vendor_final
 # ======================================
 # STREAMLIT UI
 # ======================================
