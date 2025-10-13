@@ -26,7 +26,7 @@ MODEL = "gpt-4o-mini"
 # STREAMLIT CONFIG
 # =============================================
 st.set_page_config(page_title="🦅 DataFalcon — Vendor Statement Extractor", layout="wide")
-st.title("🦅 DataFalcon — Vendor Statement Extractor (Saldo-Proof + Debug Edition)")
+st.title("🦅 DataFalcon — Vendor Statement Extractor (Stable Version)")
 
 # =============================================
 # HELPERS
@@ -79,34 +79,45 @@ def extract_tax_id(raw_text):
             return match.group(0)
     return None
 
+
 # =============================================
-# CORE EXTRACTION (Saldo-Proof + Totale support)
+# CORE EXTRACTION (STABLE + FILTERING)
 # =============================================
 def extract_with_llm(raw_text):
     """
-    Hybrid extraction:
-    ✅ Extracts DEBE / IMPORTE / VALOR / TOTAL / TOTALE / AMOUNT
-    ❌ Ignores SALDO, HABER, BALANCE, payments.
-    Works even if no column headers exist.
+    Extract structured invoice data from Spanish vendor statement.
+    ✅ Keeps stable GPT logic.
+    ✅ Filters out payments / balances / SALDO / HABER.
+    ✅ Uses DEBE / IMPORTE / VALOR / TOTAL / TOTALE / AMOUNT as invoice amounts.
     """
 
-    # ---------- 1️⃣ GPT extracts document/date/reason ----------
     prompt = f"""
-    You are a Spanish accountant AI.
-    Identify all invoice or credit note lines from this vendor statement text.
+    You are an expert accountant AI.
 
-    Each record must contain:
-    - Alternative Document (Factura, Documento, No, Nº, Num, Número, Nro, Doc)
+    Extract all *invoice* or *credit note* lines from the following Spanish vendor statement.
+    Each line must include:
+    - Alternative Document (Factura / Documento / Nº / Num / Número / Doc)
     - Date (Fecha)
-    - Reason ("Invoice" or "Credit Note")
+    - Reason (Invoice or Credit Note)
+    - Document Value (DEBE / IMPORTE / VALOR / TOTAL / TOTALE / AMOUNT)
 
-    Ignore any line containing:
-    SALDO, BALANCE, ACUMULADO, RESTANTE,
-    HABER, CRÉDITO, PAGO, BANCO, REMESA, COBRO, DOMICILIACIÓN.
+    ⚠️ Do NOT include:
+    - SALDO, BALANCE, ACUMULADO, RESTANTE
+    - HABER, CRÉDITO, PAGO, BANCO, REMESA, COBRO, DOMICILIACIÓN
+    - "Cobro Efecto", "Banco Santander", or anything related to payments.
 
-    Return a valid JSON list of objects with those three fields.
+    The JSON array should look like this:
+    [
+      {{
+        "Alternative Document": "6--483",
+        "Date": "24/01/25",
+        "Reason": "Invoice",
+        "Document Value": "322.27"
+      }}
+    ]
+
     Text:
-    \"\"\"{raw_text[:24000]}\"\"\"
+    \"\"\"{raw_text[:12000]}\"\"\"
     """
 
     try:
@@ -114,67 +125,29 @@ def extract_with_llm(raw_text):
         content = response.output_text.strip()
         json_match = re.search(r"\[.*\]", content, re.DOTALL)
         content = json_match.group(0) if json_match else content
-        gpt_rows = json.loads(content)
-    except Exception:
-        gpt_rows = []
+        data = json.loads(content)
+    except Exception as e:
+        st.error(f"⚠️ Could not parse GPT output: {e}")
+        st.text_area("🔍 Raw GPT Output", content[:2000], height=200)
+        return []
 
-    # ---------- 2️⃣ Regex extract numeric document values ----------
-    # Captures DEBE, IMPORTE, VALOR, TOTAL, TOTALE, AMOUNT
-    # Ignores SALDO, HABER, BALANCE, PAGO, BANCO, COBRO, REMESA.
-    pattern = re.compile(
-        r"(?P<doc>(?:\b\d{1,3}[-–]\d{1,5}\b|\b6[-–]\d{1,5}\b)).{0,60}?"
-        r"(?P<date>\d{1,2}/\d{1,2}/\d{2,4}).{0,80}?"
-        r"(?:(?:DEBE|IMPORTE|VALOR|TOTAL|TOTALE|AMOUNT)[\s:=]*)?"
-        r"(?P<amount>[\d.,]{3,10})"
-        r"(?![\s]*(SALDO|BALANCE|HABER|CR[EÉ]DITO|PAGO|BANCO|COBRO|REMESA))",
-        re.IGNORECASE,
-    )
-
-    regex_data = []
-    for m in pattern.finditer(raw_text):
-        doc, date, val = m.group("doc"), m.group("date"), m.group("amount")
+    # Post-correction logic
+    for row in data:
+        val = row.get("Document Value", "") or row.get("Debit", "")
         val = normalize_number(val)
-        try:
-            amount = float(val)
-        except:
-            continue
-        if amount <= 0 or amount > 100000:
-            continue
-        regex_data.append(
-            {
-                "Alternative Document": doc.strip(),
-                "Date": date.strip(),
-                "Document Value": f"{amount:.2f}",
-            }
-        )
+        row["Document Value"] = val
+        if "Debit" in row:
+            del row["Debit"]
+        if "Credit" in row:
+            del row["Credit"]
+        if "Balance" in row:
+            del row["Balance"]
 
-    # ---------- 3️⃣ Merge GPT structure ----------
-    tax_id = extract_tax_id(raw_text)
-    merged = []
-    for r in regex_data:
-        doc, date, val = r["Alternative Document"], r["Date"], r["Document Value"]
-        reason = "Invoice"
-        for g in gpt_rows:
-            if doc in str(g.get("Alternative Document", "")) or date in str(
-                g.get("Date", "")
-            ):
-                reason = g.get("Reason", "Invoice")
-                break
-        merged.append(
-            {
-                "Alternative Document": doc,
-                "Date": date,
-                "Reason": reason,
-                "Document Value": val,
-                "Tax ID": tax_id if tax_id else "Missing TAX ID",
-            }
-        )
+    return data
 
-    df = pd.DataFrame(merged).drop_duplicates(subset=["Alternative Document", "Date"])
-    return df.to_dict(orient="records")
 
 # =============================================
-# EXCEL EXPORT
+# EXPORT TO EXCEL
 # =============================================
 def to_excel_bytes(records):
     df = pd.DataFrame(records)
@@ -182,6 +155,7 @@ def to_excel_bytes(records):
     df.to_excel(buf, index=False)
     buf.seek(0)
     return buf
+
 
 # =============================================
 # STREAMLIT UI
@@ -196,21 +170,19 @@ if uploaded_pdf:
             st.error(f"❌ Failed to read PDF: {e}")
             st.stop()
 
-    # 🧩 DEBUG SECTION (so we can calibrate)
-    st.subheader("🧩 Debug: What the PDF text actually looks like")
-    st.text_area("Raw Extracted Text (first 4000 chars)", text[:4000], height=300)
-    st.download_button("⬇️ Download full extracted text", text.encode("utf-8"), "raw_text.txt")
+    st.text_area("🔍 Extracted Text (first 2000 chars)", text[:2000], height=200)
 
-    # ---------- Extraction ----------
     if st.button("🤖 Extract Data to Excel"):
-        with st.spinner("Analyzing with GPT + Regex..."):
+        with st.spinner("Analyzing with GPT..."):
             data = extract_with_llm(text)
 
         if data:
+            tax_id = extract_tax_id(text)
+            for row in data:
+                row["Tax ID"] = tax_id if tax_id else "Missing TAX ID"
+
             df = pd.DataFrame(data)
-            st.success(
-                "✅ Extraction complete — Only DEBE / IMPORTE / VALOR / TOTAL / TOTALE / AMOUNT used. SALDO ignored."
-            )
+            st.success("✅ Extraction complete!")
             st.dataframe(df, use_container_width=True)
 
             excel_bytes = to_excel_bytes(data)
@@ -221,8 +193,6 @@ if uploaded_pdf:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
         else:
-            st.warning(
-                "⚠️ No valid document data found. Copy one or two lines from the debug text above and share them for calibration."
-            )
+            st.warning("⚠️ No valid document data found. Try with a different PDF or check formatting.")
 else:
     st.info("Please upload a vendor statement PDF to begin.")
