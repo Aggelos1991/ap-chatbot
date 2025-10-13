@@ -8,10 +8,9 @@ from openai import OpenAI
 # ==========================================================
 # CONFIGURATION
 # ==========================================================
-st.set_page_config(page_title="🦅 DataFalcon Pro — GPT-4o-mini DEBE Extractor", layout="wide")
-st.title("🦅 DataFalcon Pro — Vendor Statement Extractor (GPT-4o-mini AI Engine)")
+st.set_page_config(page_title="🦅 DataFalcon Pro — GPT-4o-mini (No-Saldo)", layout="wide")
+st.title("🦅 DataFalcon Pro — Vendor Statement Extractor (GPT-4o-mini, No-Saldo Engine)")
 
-# Load API key
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -30,7 +29,6 @@ MODEL = "gpt-4o-mini"
 # HELPERS
 # ==========================================================
 def extract_text_from_pdf(file):
-    """Extract text cleanly from PDF."""
     file_bytes = file.getvalue()
     if not file_bytes:
         raise ValueError("Uploaded file is empty.")
@@ -42,11 +40,10 @@ def extract_text_from_pdf(file):
 
 
 def normalize_number(value):
-    """Normalize decimals: 1.234,56 → 1234.56 | 1,234.56 → 1234.56"""
+    """Normalize decimals like 1.234,56 → 1234.56."""
     if not value:
         return ""
-    s = str(value).strip()
-    s = s.replace(" ", "")
+    s = str(value).strip().replace(" ", "")
     if "," in s and "." in s:
         if s.rfind(",") > s.rfind("."):
             s = s.replace(".", "").replace(",", ".")
@@ -67,41 +64,49 @@ def extract_tax_id(text):
 
 
 # ==========================================================
-# PREFILTER ENGINE
+# PREFILTER ENGINE — remove SALDO completely
 # ==========================================================
 def preprocess_text_for_ai(raw_text):
     """
-    Pre-filters text to tag DEBE / SALDO / TOTALE / CREDIT scenarios explicitly.
-    This lets GPT distinguish what matters.
+    Clean and mark only meaningful financial values.
+    SALDO values are completely removed — GPT never sees them.
     """
     txt = raw_text
-
-    # Normalize spacing and commas
     txt = re.sub(r"[ \t]+", " ", txt)
     txt = re.sub(r",\s+", ",", txt)
 
-    # 1️⃣ Tag number pairs (DEBE + SALDO)
+    # 1️⃣ Remove numeric pairs — keep only the first (DEBE)
     txt = re.sub(
         r"(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})\s+(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})",
-        r"[DEBE: \1] [SALDO: \2]",
+        r"\1",
         txt
     )
 
-    # 2️⃣ Tag any line containing 'TOTALE', 'TOTAL', 'IMPORTE', 'DEBE' explicitly
+    # 2️⃣ Remove any line explicitly mentioning SALDO
+    txt = re.sub(r"(?i)(SALDO\s*:?(\s*\d{1,3}(?:[.,]\d{3})*[.,]\d{2})?)", "", txt)
+
+    # 3️⃣ Tag DEBE/TOTAL/TOTALE/IMPORTE values
     txt = re.sub(
         r"(?i)(TOTALE|TOTAL|IMPORTE|DEBE)\s*[:\-]?\s*(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})",
         r"[DEBE: \2]",
         txt
     )
 
-    # 3️⃣ Tag any Credit Note keywords and mark values nearby
+    # 4️⃣ Tag Credit Notes
     txt = re.sub(
         r"(?i)(ABONO|NOTA\s+DE\s+CR[EÉ]DITO|C\.?N\.?|CREDIT\s+NOTE)[^\d]*(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})",
         r"[CREDIT: -\2]",
         txt
     )
 
-    # 4️⃣ Ensure no nested brackets
+    # 5️⃣ Mark standalone numbers as potential DEBE
+    txt = re.sub(
+        r"(?<!\[)(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})(?![\d\]])",
+        r"[DEBE: \1]",
+        txt
+    )
+
+    # 6️⃣ Cleanup brackets
     txt = re.sub(r"\[+", "[", txt)
     txt = re.sub(r"\]+", "]", txt)
 
@@ -112,26 +117,23 @@ def preprocess_text_for_ai(raw_text):
 # GPT EXTRACTOR
 # ==========================================================
 def extract_with_gpt(raw_text):
-    """Send preprocessed text to GPT-4o-mini to extract DEBE/TOTALE/CREDIT only."""
     preprocessed_text = preprocess_text_for_ai(raw_text)
 
     prompt = f"""
-You are an expert Spanish accountant and data extractor.
-
-From the following vendor statement, extract all valid invoice or credit note entries.
+You are an expert accountant.
+Extract all valid invoice and credit note lines.
 
 Each record must include:
-- "Alternative Document": invoice or reference number (e.g. 6--483, 2434-1, SerieFactura-Precodigo-Num FactCliente)
-- "Date": dd/mm/yy or dd/mm/yyyy
+- "Alternative Document"
+- "Date"
 - "Reason": "Invoice" or "Credit Note"
-- "Document Value": number inside [DEBE: ...] or [CREDIT: ...] brackets only (ignore [SALDO: ...])
+- "Document Value": number inside [DEBE: ...] or [CREDIT: ...] only.
 
 Rules:
-- Only capture values from [DEBE: ...] or [CREDIT: ...].
-- Ignore "Saldo anterior", "Banco", "Cobro", "Efecto", "Remesa", "Pago".
-- If you see [CREDIT: -value], reason = Credit Note and value = negative number.
-- Always output a valid JSON array with the exact keys.
-- Use '.' for decimals only.
+- Ignore all SALDO values (they have already been removed).
+- Ignore Banco, Cobro, Efecto, Remesa, Pago, or other payment lines.
+- If you see [CREDIT: -value], mark it as "Credit Note" with negative value.
+- Output only JSON array with these exact keys.
 
 Example:
 [
@@ -169,13 +171,12 @@ Text:
         st.text_area("🔍 Raw GPT Output", content[:2000], height=200)
         return []
 
-    # Post-clean
     cleaned = []
     for row in data:
         val = normalize_number(row.get("Document Value") or row.get("DocumentValue"))
         if val == "":
             continue
-        reason = row.get("Reason", "").strip().lower()
+        reason = row.get("Reason", "").lower()
         if any(k in reason for k in ["credit", "abono", "nota de crédito", "cn"]):
             val = -abs(val)
             reason = "Credit Note"
@@ -214,7 +215,6 @@ if uploaded_pdf:
             st.error(f"❌ PDF extraction failed: {e}")
             st.stop()
 
-    # Cost estimate
     approx_tokens = len(text) / 4
     est_cost = (approx_tokens / 1000) * (0.0006 + 0.0024)
     st.info(f"💲 Estimated cost for this extraction: **${est_cost:.4f} USD**")
@@ -231,12 +231,12 @@ if uploaded_pdf:
             st.warning("⚠️ No valid invoice data found. Verify the PDF format or retry.")
         else:
             df = pd.DataFrame(data)
-            st.success(f"✅ Extraction complete — {len(df)} records (DEBE/TOTALE/CREDIT only).")
+            st.success(f"✅ Extraction complete — {len(df)} records (DEBE/TOTALE/CREDIT only, SALDO removed).")
             st.dataframe(df, use_container_width=True)
             st.download_button(
                 "⬇️ Download Excel",
                 data=to_excel_bytes(data),
-                file_name="vendor_statement_DataFalconPro.xlsx",
+                file_name="vendor_statement_NoSaldo.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
 else:
