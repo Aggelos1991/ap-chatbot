@@ -232,17 +232,7 @@ def match_invoices(erp_df, ven_df):
             })
 
 
-            # --- Scoring logic
-            # --- Scoring logic
-            score = 0
-            if exact_match:
-                score = 200
-            elif three_match:
-                score = 150
-            elif prefix_match:
-                score = 130
-            elif fuzzy > 90 and amt_close:
-                score = 120
+           
 
 
             if score > best_score:
