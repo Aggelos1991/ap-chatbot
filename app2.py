@@ -139,33 +139,43 @@ def match_invoices(erp_df, ven_df):
 
             fuzzy = fuzz.ratio(e_inv, v_inv)
             amt_close = abs(e_amt - v_amt) < 0.05
+                # === Matching rules priority ===
+                # 1️⃣ Exact invoice match
+                exact_match = e_inv.lower().strip() == v_inv.lower().strip()
+                
+                # 2️⃣ Extract numeric sequences
+                e_nums = re.findall(r"\d+", e_inv)
+                v_nums = re.findall(r"\d+", v_inv)
+                
+                # Get the longest numeric part near the end (e.g. 12345)
+                e_num = e_nums[-1] if e_nums else ""
+                v_num = v_nums[-1] if v_nums else ""
+                
+                # 3️⃣ Check 3-digit ending rule
+                three_match = (
+                    len(e_num) >= 3 and len(v_num) >= 3 and
+                    e_num[-3:] == v_num[-3:]
+                )
+                
+                # 4️⃣ Check short prefix/ending match for cases like PSF000001 ↔ 1
+                prefix_match = False
+                if e_num and v_num:
+                    prefix_match = (
+                        e_num.endswith(v_num) or v_num.endswith(e_num)
+                    )
 
-            # === Matching rules priority ===
-            # 1️⃣ Exact invoice match
-            exact_match = e_inv.lower().strip() == v_inv.lower().strip()
+# --- Weighted scoring ---
+score = 0
+if exact_match:
+    score = 200
+elif three_match:
+    score = 150
+elif prefix_match:
+    score = 130
+elif fuzzy > 90 and amt_close:
+    score = 120
 
-            # 2️⃣ Extract numeric cores
-            e_nums = re.findall(r"\d+", e_core)
-            v_nums = re.findall(r"\d+", v_core)
-            e_last = e_nums[-1] if e_nums else ""
-            v_last = v_nums[-1] if v_nums else ""
-
-            # 3️⃣ Check 3-digit ending rule — stricter version
-            three_match = (
-                len(e_last) >= 3 and len(v_last) >= 3 and
-                e_last[-3:] == v_last[-3:] and
-                abs(len(e_last) - len(v_last)) <= 1
-            )
-
-            # 4️⃣ Short numeric suffix (INV0002 ↔ 2)
-            short_match = False
-            try:
-                e_suffix = re.search(r'(\d{1,4})$', e_core)
-                v_suffix = re.search(r'(\d{1,4})$', v_core)
-                if e_suffix and v_suffix:
-                    short_match = e_suffix.group(1).lstrip("0") == v_suffix.group(1).lstrip("0")
-            except:
-                short_match = False
+            
 
             # --- Weighted scoring ---
             score = (
