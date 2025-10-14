@@ -171,7 +171,6 @@ def match_invoices(erp_df, ven_df):
     # ====== MATCHING ======
         # ====== MATCHING (strict rules with safe last-3 fallback) ======
         # ====== MATCHING (enhanced last-digit rules) ======
-        # ====== MATCHING ======
     for e_idx, e in erp_use.iterrows():
         e_inv = str(e["invoice_erp"]).strip()
         e_core = e["__core"]
@@ -190,76 +189,57 @@ def match_invoices(erp_df, ven_df):
             v_amt = round(float(v["__amt"]), 2)
             v_date = v.get("date_ven")
 
+            fuzzy = fuzz.ratio(e_inv, v_inv)
             amt_close = abs(e_amt - v_amt) < 0.05
 
-            # 1️⃣ Exact match
-            if e_inv.lower() == v_inv.lower():
+            # --- Rule 1: Exact core match
+            exact_match = e_core == v_core
+
+            # --- Rule 2: Strict 3-digit unique match
+            last3_match = False
+            if len(e_core) >= 3 and len(v_core) >= 3:
+                last3_match = (
+                    e_core.endswith(v_core[-3:]) and
+                    v_core.endswith(e_core[-3:])
+                )
+
+            # --- Rule 3: Short numeric match (e.g. INV0002 ↔ 2)
+            short_match = False
+            if len(e_core) >= len(v_core):
+                short_match = e_core.endswith(v_core)
+            elif len(v_core) > len(e_core):
+                short_match = v_core.endswith(e_core)
+
+            # --- Uniqueness check for 3-digit endings
+            def is_unique_end(core, all_cores):
+                if len(core) < 3:
+                    return True
+                suffix = core[-3:]
+                return sum(1 for c in all_cores if str(c).endswith(suffix)) == 1
+
+            unique_erp = is_unique_end(e_core, erp_use["__core"])
+            unique_ven = is_unique_end(v_core, ven_use["__core"])
+
+            # --- Scoring logic
+            score = 0
+            if exact_match:
                 score = 200
-
-            # 2️⃣ Last 3 digits match
-            elif len(e_core) >= 3 and len(v_core) >= 3 and e_core[-3:] == v_core[-3:]:
+            elif last3_match and amt_close and unique_erp and unique_ven:
                 score = 150
-
-            # 3️⃣ Short suffix/prefix rule (like PSF000012 ↔ 12)
-            elif e_core.endswith(v_core) or v_core.endswith(e_core):
+            elif short_match and amt_close:
                 score = 130
-
-            else:
-                score = 0
-
-            # keep best match
-            if score > best_score:
-                best_score = score
-                best_v = (v_idx, v_inv, v_core, v_amt, v_date, amt_close)
-
-        # ✅ Only add if we found a solid match (score >= 130)
-        if best_v and best_score >= 130:
-            v_idx, v_inv, v_core, v_amt, v_date, amt_close = best_v
-            used_vendor_rows.add(v_idx)
-
-            diff = round(e_amt - v_amt, 2)
-            status = "Match" if abs(diff) < 0.05 else "Difference"
-
-            matched.append({
-                "Date (ERP)": e_date,
-                "Date (Vendor)": v_date,
-                "ERP Invoice": e_inv if e_inv else "(inferred)",
-                "Vendor Invoice": v_inv,
-                "ERP Amount": e_amt,
-                "Vendor Amount": v_amt,
-                "Difference": diff,
-                "Status": status
-            })
-
-
-           
-
+            elif fuzzy > 90 and amt_close:
+                score = 120
 
             if score > best_score:
                 best_score = score
                 best_v = (v_idx, v_inv, v_core, v_amt, v_date)
 
-                # --- Pick best match if any scored high enough ---
-        if best_v is not None and best_score >= 120:
+        if best_v and best_score >= 120:
             v_idx, v_inv, v_core, v_amt, v_date = best_v
             used_vendor_rows.add(v_idx)
             diff = round(e_amt - v_amt, 2)
             status = "Match" if abs(diff) < 0.05 else "Difference"
-
-            matched.append({
-                "Date (ERP)": e_date,
-                "Date (Vendor)": v_date,
-                "ERP Invoice": e_inv if e_inv else "(inferred)",
-                "Vendor Invoice": v_inv,
-                "ERP Amount": e_amt,
-                "Vendor Amount": v_amt,
-                "Difference": diff,
-                "Status": status
-            })
-        else:
-            # no match found for this ERP invoice, skip it
-            continue
-
 
             matched.append({
                 "Date (ERP)": e_date,
