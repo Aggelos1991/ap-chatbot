@@ -140,7 +140,7 @@ def match_invoices(erp_df, ven_df):
 
     # ====== CLEAN NUMERIC CORE ======
     def clean_core(v):
-    s = safe_value(v)
+        s = safe_value(v)
     # extract all numeric sequences
     nums = re.findall(r"\d+", s)
     if not nums:
