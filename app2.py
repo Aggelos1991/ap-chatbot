@@ -84,58 +84,79 @@ def normalize_columns(df, tag):
 # ======================================
 # CORE MATCHING
 # ======================================
+import re
+import pandas as pd
+
+def safe_value(v):
+    if isinstance(v, (pd.Series, list, dict)):
+        return ""
+    return str(v).strip() if v is not None else ""
+
+def clean_digits(v):
+    """Extract digits only."""
+    s = re.sub(r"[^0-9]", "", safe_value(v))
+    return s
+
+def clean_core3(v):
+    """Get last 3 digits of numeric part."""
+    digits = clean_digits(v)
+    return digits[-3:] if len(digits) >= 3 else digits
+
+def clean_prefixless(v):
+    """Remove prefixes like OM000001 → 1."""
+    s = clean_digits(v)
+    # remove leading zeros
+    return s.lstrip("0")
+
 def match_invoices(erp_df, ven_df):
-    matched = []
-    used_vendor_rows = set()
+    # Normalized helpers
+    erp_df["invoice_norm"] = erp_df["invoice_erp"].apply(safe_value)
+    ven_df["invoice_norm"] = ven_df["invoice_ven"].apply(safe_value)
 
-    # ====== ERP PREP ======
-    erp_df["__doctype"] = erp_df.apply(
-        lambda r: "CN" if normalize_number(r.get("debit_erp")) > 0
-        else ("INV" if normalize_number(r.get("credit_erp")) > 0 else "UNKNOWN"),
-        axis=1
+    # Step 1: Full match
+    full_match = pd.merge(
+        erp_df, ven_df,
+        left_on="invoice_norm", right_on="invoice_norm",
+        how="inner", suffixes=("_erp", "_ven")
     )
-    erp_df["__amt"] = erp_df.apply(
-        lambda r: normalize_number(r["credit_erp"]) if r["__doctype"] == "INV"
-        else (-normalize_number(r["debit_erp"]) if r["__doctype"] == "CN" else 0.0),
-        axis=1
+    matched = full_match.copy()
+    matched["MatchType"] = "Full"
+
+    # Remove matched rows from next steps
+    erp_left = erp_df[~erp_df["invoice_erp"].isin(matched["invoice_erp"])]
+    ven_left = ven_df[~ven_df["invoice_ven"].isin(matched["invoice_ven"])]
+
+    # Step 2: Last 3-digit match
+    erp_left["core3"] = erp_left["invoice_erp"].apply(clean_core3)
+    ven_left["core3"] = ven_left["invoice_ven"].apply(clean_core3)
+    core_match = pd.merge(
+        erp_left, ven_left,
+        on="core3", how="inner", suffixes=("_erp", "_ven")
     )
+    core_match["MatchType"] = "3-digit"
 
-    # ====== VENDOR PREP ======
-    ven_df["__doctype"] = ven_df.apply(
-        lambda r: "CN" if normalize_number(r.get("debit_ven")) < 0 else "INV",
-        axis=1
+    # Update remaining
+    erp_left = erp_left[~erp_left["invoice_erp"].isin(core_match["invoice_erp"])]
+    ven_left = ven_left[~ven_left["invoice_ven"].isin(core_match["invoice_ven"])]
+
+    # Step 3: Prefixless numeric match
+    erp_left["prefixless"] = erp_left["invoice_erp"].apply(clean_prefixless)
+    ven_left["prefixless"] = ven_left["invoice_ven"].apply(clean_prefixless)
+    prefix_match = pd.merge(
+        erp_left, ven_left,
+        on="prefixless", how="inner", suffixes=("_erp", "_ven")
     )
-    ven_df["__amt"] = ven_df.apply(lambda r: abs(normalize_number(r.get("debit_ven"))), axis=1)
+    prefix_match["MatchType"] = "Prefixless"
 
-    erp_use = erp_df[erp_df["__doctype"].isin(["INV", "CN"])].copy()
-    ven_use = ven_df[ven_df["__doctype"].isin(["INV", "CN"])].copy()
-        # ====== MERGE ERP CREDIT/INVOICE PAIRS ======
-    merged_rows = []
-    grouped = erp_use.groupby("invoice_erp", dropna=False)
+    # Combine all matches
+    matched = pd.concat([matched, core_match, prefix_match], ignore_index=True)
 
-    for inv, group in grouped:
-        if len(group) == 1:
-            merged_rows.append(group.iloc[0])
-            continue
+    # Anything not matched
+    erp_missing = erp_df[~erp_df["invoice_erp"].isin(matched["invoice_erp"])]
+    ven_missing = ven_df[~ven_df["invoice_ven"].isin(matched["invoice_ven"])]
 
-        inv_rows = group[group["__doctype"] == "INV"]
-        cn_rows = group[group["__doctype"] == "CN"]
+    return matched, erp_missing, ven_missing
 
-        if not inv_rows.empty and not cn_rows.empty:
-            total_inv = inv_rows["__amt"].sum()
-            total_cn = cn_rows["__amt"].sum()
-            net = round(total_inv + total_cn, 2)  # CN amounts are negative in ERP
-
-            # Keep one line with net amount
-            base_row = inv_rows.iloc[0].copy()
-            base_row["__amt"] = net
-            merged_rows.append(base_row)
-        else:
-            # If only invoices or only CNs exist, keep all
-            for _, row in group.iterrows():
-                merged_rows.append(row)
-
-    erp_use = pd.DataFrame(merged_rows).reset_index(drop=True)
 
 
     # ====== CLEAN NUMERIC CORE ======
