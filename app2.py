@@ -107,13 +107,13 @@ def match_invoices(erp_df, ven_df):
         if credit > 0:
              return "CN"
         # ✅ Case 2: Negative debit also means a Credit Note
-             elif debit < 0:
+        elif debit < 0:
              return "CN"
         # ✅ Case 3: Normal invoice (positive debit)
-             elif debit > 0:
+        elif debit > 0:
              return "INV"
-            else:
-                return "UNKNOWN"
+        else:
+            return "UNKNOWN"
 
 
 def calc_vendor_amount(row):
