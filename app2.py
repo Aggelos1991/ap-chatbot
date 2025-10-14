@@ -98,6 +98,7 @@ def match_invoices(erp_df, ven_df):
         else (-normalize_number(r["debit_erp"]) if r["__doctype"] == "CN" else 0.0),
         axis=1
     )
+
     # ====== VENDOR PREP ======
     def detect_vendor_doc_type(row):
         debit = normalize_number(row.get("debit_ven"))
@@ -105,39 +106,37 @@ def match_invoices(erp_df, ven_df):
 
         # ✅ Case 1: Credit Note explicitly in Credit column
         if credit > 0:
-             return "CN"
+            return "CN"
         # ✅ Case 2: Negative debit also means a Credit Note
         elif debit < 0:
-             return "CN"
+            return "CN"
         # ✅ Case 3: Normal invoice (positive debit)
         elif debit > 0:
-             return "INV"
+            return "INV"
         else:
             return "UNKNOWN"
 
+    def calc_vendor_amount(row):
+        debit = normalize_number(row.get("debit_ven"))
+        credit = normalize_number(row.get("credit_ven"))
+        doc = row.get("__doctype", "")
 
-def calc_vendor_amount(row):
-    debit = normalize_number(row.get("debit_ven"))
-    credit = normalize_number(row.get("credit_ven"))
-    doc = row.get("__doctype", "")
+        if doc == "INV":
+            # Normal invoice = positive amount (we owe the vendor)
+            return abs(debit)
+        elif doc == "CN":
+            # Credit note = always negative impact
+            return -abs(credit if credit > 0 else debit)
+        else:
+            return 0.0
 
-    if doc == "INV":
-        # Normal invoice = positive amount (we owe the vendor)
-        return abs(debit)
-    elif doc == "CN":
-        # Credit note = always negative impact
-        return -abs(credit if credit > 0 else debit)
-    else:
-        return 0.0
+    # Apply to vendor dataframe
+    ven_df["__doctype"] = ven_df.apply(detect_vendor_doc_type, axis=1)
+    ven_df["__amt"] = ven_df.apply(calc_vendor_amount, axis=1)
 
-
-# Apply to vendor dataframe
-ven_df["__doctype"] = ven_df.apply(detect_vendor_doc_type, axis=1)
-ven_df["__amt"] = ven_df.apply(calc_vendor_amount, axis=1)
-    
-
-erp_use = erp_df[erp_df["__doctype"].isin(["INV", "CN"])].copy()
-ven_use = ven_df[ven_df["__doctype"].isin(["INV", "CN"])].copy()
+    # ====== CONTINUE NORMAL FLOW ======
+    erp_use = erp_df[erp_df["__doctype"].isin(["INV", "CN"])].copy()
+    ven_use = ven_df[ven_df["__doctype"].isin(["INV", "CN"])].copy()
 
     # ====== MERGE ERP CREDIT/INVOICE PAIRS ======
     merged_rows = []
@@ -237,39 +236,36 @@ ven_use = ven_df[ven_df["__doctype"].isin(["INV", "CN"])].copy()
             })
             break
 
-
-    # Normalize invoices in all DataFrames before filtering missing
+    # ====== NORMALIZE AND BUILD MISSING TABLES ======
     erp_use["invoice_erp"] = erp_use["invoice_erp"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
     ven_use["invoice_ven"] = ven_use["invoice_ven"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
-    
+
     for m in matched:
         m["ERP Invoice"] = str(m["ERP Invoice"]).strip().replace(".0", "")
         m["Vendor Invoice"] = str(m["Vendor Invoice"]).strip().replace(".0", "")
 
-    # ====== BUILD MISSING TABLES (SAFE + CORRECT LOGIC) ======
     matched_erp = {m["ERP Invoice"] for m in matched}
     matched_ven = {m["Vendor Invoice"] for m in matched}
-    
+
     def safe_cols(df, possible_cols):
-        """Return only columns that actually exist in df."""
         return [c for c in possible_cols if c in df.columns]
-    
+
     erp_cols = safe_cols(erp_use, ["date_erp", "invoice_erp", "__amt"])
     ven_cols = safe_cols(ven_use, ["date_ven", "invoice_ven", "__amt"])
-    
+
     missing_in_erp = ven_use[~ven_use["invoice_ven"].isin(matched_ven)][ven_cols] if "invoice_ven" in ven_use.columns else pd.DataFrame()
     missing_in_vendor = erp_use[~erp_use["invoice_erp"].isin(matched_erp)][erp_cols] if "invoice_erp" in erp_use.columns else pd.DataFrame()
-    
+
     if not missing_in_erp.empty:
         missing_in_erp = missing_in_erp.rename(columns={"date_ven": "Date", "invoice_ven": "Invoice", "__amt": "Amount"})
     else:
         missing_in_erp = pd.DataFrame(columns=["Date", "Invoice", "Amount"])
-    
+
     if not missing_in_vendor.empty:
         missing_in_vendor = missing_in_vendor.rename(columns={"date_erp": "Date", "invoice_erp": "Invoice", "__amt": "Amount"})
     else:
         missing_in_vendor = pd.DataFrame(columns=["Date", "Invoice", "Amount"])
-    
+
     matched_df = pd.DataFrame(matched)
     return matched_df, missing_in_erp, missing_in_vendor
 
