@@ -171,6 +171,7 @@ def match_invoices(erp_df, ven_df):
     # ====== MATCHING ======
         # ====== MATCHING (strict rules with safe last-3 fallback) ======
         # ====== MATCHING (enhanced last-digit rules) ======
+        # ====== MATCHING ======
     for e_idx, e in erp_use.iterrows():
         e_inv = str(e["invoice_erp"]).strip()
         e_core = e["__core"]
@@ -189,33 +190,47 @@ def match_invoices(erp_df, ven_df):
             v_amt = round(float(v["__amt"]), 2)
             v_date = v.get("date_ven")
 
-            fuzzy = fuzz.ratio(e_inv, v_inv)
             amt_close = abs(e_amt - v_amt) < 0.05
 
-            # === Matching rules priority ===
-            # 1️⃣ Exact invoice match
-            exact_match = e_inv.lower().strip() == v_inv.lower().strip()
+            # 1️⃣ Exact match
+            if e_inv.lower() == v_inv.lower():
+                score = 200
 
-            # 2️⃣ Extract numeric sequences
-            e_nums = re.findall(r"\d+", e_inv)
-            v_nums = re.findall(r"\d+", v_inv)
+            # 2️⃣ Last 3 digits match
+            elif len(e_core) >= 3 and len(v_core) >= 3 and e_core[-3:] == v_core[-3:]:
+                score = 150
 
-            # Get the longest numeric part near the end (e.g. 12345)
-            e_num = e_nums[-1] if e_nums else ""
-            v_num = v_nums[-1] if v_nums else ""
+            # 3️⃣ Short suffix/prefix rule (like PSF000012 ↔ 12)
+            elif e_core.endswith(v_core) or v_core.endswith(e_core):
+                score = 130
 
-            # 3️⃣ Check 3-digit ending rule
-            three_match = (
-                len(e_num) >= 3 and len(v_num) >= 3 and
-                e_num[-3:] == v_num[-3:]
-            )
+            else:
+                score = 0
 
-            # 4️⃣ Check short prefix/ending match for cases like PSF000001 ↔ 1
-            prefix_match = False
-            if e_num and v_num:
-                prefix_match = (
-                    e_num.endswith(v_num) or v_num.endswith(e_num)
-                )
+            # keep best match
+            if score > best_score:
+                best_score = score
+                best_v = (v_idx, v_inv, v_core, v_amt, v_date, amt_close)
+
+        # ✅ Only add if we found a solid match (score >= 130)
+        if best_v and best_score >= 130:
+            v_idx, v_inv, v_core, v_amt, v_date, amt_close = best_v
+            used_vendor_rows.add(v_idx)
+
+            diff = round(e_amt - v_amt, 2)
+            status = "Match" if abs(diff) < 0.05 else "Difference"
+
+            matched.append({
+                "Date (ERP)": e_date,
+                "Date (Vendor)": v_date,
+                "ERP Invoice": e_inv if e_inv else "(inferred)",
+                "Vendor Invoice": v_inv,
+                "ERP Amount": e_amt,
+                "Vendor Amount": v_amt,
+                "Difference": diff,
+                "Status": status
+            })
+
 
             # --- Weighted scoring ---
             score = 0
