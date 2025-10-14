@@ -99,48 +99,25 @@ def match_invoices(erp_df, ven_df):
     matched = []
     used_vendor_rows = set()
 
-       # ====== ERP PREP ======
-    def detect_doc_type(row, tag):
-        """Determine document type (INV or CN) using sign and multilingual keywords."""
-        text = " ".join(str(row.get(c, "")).lower() for c in row.index if "reason" in c or "desc" in c)
-        # Spanish + English keywords that indicate a credit note
-        cn_keywords = [
-            "abono", "nota credito", "nota de crédito", "cancellation", "cancelación",
-            "credit note", "refund", "reembolso", "devolucion", "devolución"
-        ]
+    # ====== ERP PREP ======
+erp_df["__doctype"] = erp_df.apply(
+    lambda r: "CN" if normalize_number(r.get("debit_erp")) > 0
+    else ("INV" if normalize_number(r.get("credit_erp")) > 0 else "UNKNOWN"),
+    axis=1
+)
+erp_df["__amt"] = erp_df.apply(
+    lambda r: normalize_number(r["credit_erp"]) if r["__doctype"] == "INV"
+    else (-normalize_number(r["debit_erp"]) if r["__doctype"] == "CN" else 0.0),
+    axis=1
+)
 
-        debit_val = normalize_number(row.get("debit_" + tag))
-        credit_val = normalize_number(row.get("credit_" + tag))
+# ====== VENDOR PREP ======
+ven_df["__doctype"] = ven_df.apply(
+    lambda r: "CN" if normalize_number(r.get("debit_ven")) < 0 else "INV",
+    axis=1
+)
+ven_df["__amt"] = ven_df.apply(lambda r: abs(normalize_number(r.get("debit_ven"))), axis=1)
 
-        # 1️⃣ text-based detection
-        if any(k in text for k in cn_keywords):
-            return "CN"
-        # 2️⃣ negative values indicate CN
-        elif credit_val < 0 or debit_val < 0:
-            return "CN"
-        # 3️⃣ otherwise positive means INV
-        elif abs(credit_val) > 0:
-            return "INV"
-        elif abs(debit_val) > 0:
-            return "INV"
-        else:
-            return "UNKNOWN"
-
-    # --- apply to ERP ---
-    erp_df["__doctype"] = erp_df.apply(lambda r: detect_doc_type(r, "erp"), axis=1)
-    erp_df["__amt"] = erp_df.apply(
-        lambda r: -abs(normalize_number(r["credit_erp"])) if r["__doctype"] == "CN"
-        else abs(normalize_number(r["credit_erp"])),
-        axis=1
-    )
-
-    # ====== VENDOR PREP ======
-    ven_df["__doctype"] = ven_df.apply(lambda r: detect_doc_type(r, "ven"), axis=1)
-    ven_df["__amt"] = ven_df.apply(
-        lambda r: -abs(normalize_number(r["debit_ven"])) if r["__doctype"] == "CN"
-        else abs(normalize_number(r["debit_ven"])),
-        axis=1
-    )
 
 
 
