@@ -280,8 +280,9 @@ uploaded_erp = st.file_uploader("📂 Upload ERP Export (Excel)", type=["xlsx"])
 uploaded_vendor = st.file_uploader("📂 Upload Vendor Statement (Excel)", type=["xlsx"])
 
 if uploaded_erp and uploaded_vendor:
-    erp_raw = pd.read_excel(uploaded_erp)
-    ven_raw = pd.read_excel(uploaded_vendor)
+    erp_raw = pd.read_excel(uploaded_erp, dtype=str)
+    ven_raw = pd.read_excel(uploaded_vendor, dtype=str)
+
 
     erp_df = normalize_columns(erp_raw, "erp")
     ven_df = normalize_columns(ven_raw, "ven")
