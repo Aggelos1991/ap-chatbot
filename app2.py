@@ -299,14 +299,8 @@ def match_invoices(erp_df, ven_df):
     # --- Missing in Vendor (ERP invoices with no shared 3+ digits in ANY vendor invoice) ---
     # 👇 We merge this logic into Missing in ERP instead
     # --- Missing in Vendor (ERP invoices with no shared 3+ digits in ANY vendor invoice) ---
-vendor_missing_list = []
-for _, row in erp_use.iterrows():
-    inv = str(row["invoice_erp"])
-    core = str(row["__core"])
-    if inv in matched_erp_invs:
-        continue
-    if len(extract_tokens(core) & all_ven_tokens) == 0:
-        vendor_missing_list.append(row)
+ven_missing_list.append(row)
+
 
 
     # --- Create clean DataFrames ---
