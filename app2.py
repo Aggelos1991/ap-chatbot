@@ -239,11 +239,27 @@ def match_invoices(erp_df, ven_df):
                 best_score = score
                 best_v = (v_idx, v_inv, v_core, v_amt, v_date)
 
-        if best_v and best_score >= 120:
+                # --- Pick best match if any scored high enough ---
+        if best_v is not None and best_score >= 120:
             v_idx, v_inv, v_core, v_amt, v_date = best_v
             used_vendor_rows.add(v_idx)
             diff = round(e_amt - v_amt, 2)
             status = "Match" if abs(diff) < 0.05 else "Difference"
+
+            matched.append({
+                "Date (ERP)": e_date,
+                "Date (Vendor)": v_date,
+                "ERP Invoice": e_inv if e_inv else "(inferred)",
+                "Vendor Invoice": v_inv,
+                "ERP Amount": e_amt,
+                "Vendor Amount": v_amt,
+                "Difference": diff,
+                "Status": status
+            })
+        else:
+            # no match found for this ERP invoice, skip it
+            continue
+
 
             matched.append({
                 "Date (ERP)": e_date,
