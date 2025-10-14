@@ -207,6 +207,15 @@ def match_invoices(erp_df, ven_df):
             })
             break
 
+
+    # Normalize invoices in all DataFrames before filtering missing
+    erp_use["invoice_erp"] = erp_use["invoice_erp"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
+    ven_use["invoice_ven"] = ven_use["invoice_ven"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
+    
+    for m in matched:
+        m["ERP Invoice"] = str(m["ERP Invoice"]).strip().replace(".0", "")
+        m["Vendor Invoice"] = str(m["Vendor Invoice"]).strip().replace(".0", "")
+
     # ====== BUILD MISSING TABLES ======
     # ====== BUILD MISSING TABLES (SAFE) ======
     matched_erp = {m["ERP Invoice"] for m in matched}
