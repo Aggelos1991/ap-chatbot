@@ -139,27 +139,27 @@ def match_invoices(erp_df, ven_df):
 
             fuzzy = fuzz.ratio(e_inv, v_inv)
             amt_close = abs(e_amt - v_amt) < 0.05
-                # === Matching rules priority ===
-                # 1️⃣ Exact invoice match
-                exact_match = e_inv.lower().strip() == v_inv.lower().strip()
+            # === Matching rules priority ===
+            # 1️⃣ Exact invoice match
+            exact_match = e_inv.lower().strip() == v_inv.lower().strip()
                 
-                # 2️⃣ Extract numeric sequences
-                e_nums = re.findall(r"\d+", e_inv)
-                v_nums = re.findall(r"\d+", v_inv)
+            # 2️⃣ Extract numeric sequences
+            e_nums = re.findall(r"\d+", e_inv)
+            v_nums = re.findall(r"\d+", v_inv)
                 
-                # Get the longest numeric part near the end (e.g. 12345)
-                e_num = e_nums[-1] if e_nums else ""
-                v_num = v_nums[-1] if v_nums else ""
+            # Get the longest numeric part near the end (e.g. 12345)
+            e_num = e_nums[-1] if e_nums else ""
+            v_num = v_nums[-1] if v_nums else ""
                 
-                # 3️⃣ Check 3-digit ending rule
-                three_match = (
+            # 3️⃣ Check 3-digit ending rule
+            three_match = (
                     len(e_num) >= 3 and len(v_num) >= 3 and
                     e_num[-3:] == v_num[-3:]
                 )
                 
-                # 4️⃣ Check short prefix/ending match for cases like PSF000001 ↔ 1
-                prefix_match = False
-                if e_num and v_num:
+            # 4️⃣ Check short prefix/ending match for cases like PSF000001 ↔ 1
+            prefix_match = False
+            if e_num and v_num:
                     prefix_match = (
                         e_num.endswith(v_num) or v_num.endswith(e_num)
                     )
