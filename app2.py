@@ -119,6 +119,7 @@ def match_invoices(erp_df, ven_df):
     ven_use["__core"] = ven_use["invoice_ven"].apply(clean_core)
 
     # ====== MATCHING ======
+        # ====== MATCHING (strict rules with safe last-3 fallback) ======
     for e_idx, e in erp_use.iterrows():
         e_inv = str(e["invoice_erp"]).strip()
         e_core = e["__core"]
@@ -137,17 +138,28 @@ def match_invoices(erp_df, ven_df):
             v_amt = round(float(v["__amt"]), 2)
             v_date = v.get("date_ven")
 
-            digits_erp = re.findall(r"\d{3,}", e_core)
-            digits_ven = re.findall(r"\d{3,}", v_core)
-            three_match = any(
-                d in v_core or v_core.endswith(d) or e_core.endswith(d)
-                for d in digits_erp if len(d) >= 3
+            # === exact core match ===
+            exact_match = e_core == v_core
+
+            # === strict last-3-digits rule (endswith only) ===
+            last3_match = (
+                len(e_core) >= 3 and len(v_core) >= 3
+                and e_core.endswith(v_core[-3:])
+                and v_core.endswith(e_core[-3:])
             )
 
+            # === fuzzy similarity for safety ===
             fuzzy = fuzz.ratio(e_inv, v_inv)
             amt_close = abs(e_amt - v_amt) < 0.05
 
-            score = fuzzy + (80 if three_match or e_core == v_core else 0) + (50 if amt_close else 0)
+            # Compute score only if real match
+            score = 0
+            if exact_match:
+                score = 200
+            elif last3_match and amt_close:
+                score = 150
+            elif fuzzy > 90 and amt_close:
+                score = 120
 
             if score > best_score:
                 best_score = score
@@ -169,6 +181,7 @@ def match_invoices(erp_df, ven_df):
                 "Difference": diff,
                 "Status": status
             })
+
 
     # ====== BUILD MISSING TABLES ======
     def extract_tokens(s: str):
