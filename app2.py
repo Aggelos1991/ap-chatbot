@@ -219,22 +219,41 @@ def match_invoices(erp_df, ven_df):
                 "Status": status
             })
 
-    # ====== BUILD MISSING TABLES ======
+        # ====== BUILD MISSING TABLES ======
     matched_erp_invs = {m["ERP Invoice"] for m in matched}
     matched_ven_invs = {m["Vendor Invoice"] for m in matched}
 
     missing_erp = ven_use[~ven_use["invoice_ven"].isin(matched_ven_invs)].copy()
     missing_vendor = erp_use[~erp_use["invoice_erp"].isin(matched_erp_invs)].copy()
 
-    missing_erp_final = missing_erp[["date_ven", "invoice_ven", "__amt"]].rename(
-        columns={"date_ven": "Date", "invoice_ven": "Invoice", "__amt": "Amount"}
-    ) if not missing_erp.empty else pd.DataFrame(columns=["Date", "Invoice", "Amount"])
+    # --- Missing in ERP (found in vendor but not ERP) ---
+    if not missing_erp.empty:
+        cols_erp = {c.lower(): c for c in missing_erp.columns}
+        date_col = cols_erp.get("date_ven") or cols_erp.get("date") or list(missing_erp.columns)[0]
+        inv_col = cols_erp.get("invoice_ven") or cols_erp.get("invoice") or list(missing_erp.columns)[1]
+        amt_col = "__amt" if "__amt" in missing_erp.columns else list(missing_erp.columns)[-1]
 
-    missing_vendor_final = missing_vendor[["date_erp", "invoice_erp", "__amt"]].rename(
-        columns={"date_erp": "Date", "invoice_erp": "Invoice", "__amt": "Amount"}
-    ) if not missing_vendor.empty else pd.DataFrame(columns=["Date", "Invoice", "Amount"])
+        missing_erp_final = missing_erp[[date_col, inv_col, amt_col]].rename(
+            columns={date_col: "Date", inv_col: "Invoice", amt_col: "Amount"}
+        )
+    else:
+        missing_erp_final = pd.DataFrame(columns=["Date", "Invoice", "Amount"])
+
+    # --- Missing in Vendor (found in ERP but not Vendor) ---
+    if not missing_vendor.empty:
+        cols_v = {c.lower(): c for c in missing_vendor.columns}
+        date_col = cols_v.get("date_erp") or cols_v.get("date") or list(missing_vendor.columns)[0]
+        inv_col = cols_v.get("invoice_erp") or cols_v.get("invoice") or list(missing_vendor.columns)[1]
+        amt_col = "__amt" if "__amt" in missing_vendor.columns else list(missing_vendor.columns)[-1]
+
+        missing_vendor_final = missing_vendor[[date_col, inv_col, amt_col]].rename(
+            columns={date_col: "Date", inv_col: "Invoice", amt_col: "Amount"}
+        )
+    else:
+        missing_vendor_final = pd.DataFrame(columns=["Date", "Invoice", "Amount"])
 
     return pd.DataFrame(matched), missing_erp_final, missing_vendor_final
+
 
 
 
