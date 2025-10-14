@@ -256,23 +256,20 @@ def match_invoices(erp_df, ven_df):
       # Missing in Vendor now always empty
     missing_vendor_final = pd.DataFrame(columns=["Date", "Invoice", "Amount"])
 
-    # ✅ Ensure all outputs are DataFrames
-if isinstance(matched, list):
-    matched = pd.DataFrame(matched)
-if not isinstance(missing_erp_final, pd.DataFrame):
-    missing_erp_final = pd.DataFrame(missing_erp_final)
-if not isinstance(missing_vendor_final, pd.DataFrame):
-    missing_vendor_final = pd.DataFrame(missing_vendor_final)
+   # ✅ Ensure all outputs are DataFrames
+    if isinstance(matched, list):
+        matched = pd.DataFrame(matched)
+    if not isinstance(missing_erp_final, pd.DataFrame):
+        missing_erp_final = pd.DataFrame(missing_erp_final)
+    if not isinstance(missing_vendor_final, pd.DataFrame):
+        missing_vendor_final = pd.DataFrame(missing_vendor_final)
 
-# ✅ Convert only true numeric fields to floats
-for df in [matched, missing_erp_final, missing_vendor_final]:
-    if not df.empty:
-        # Detect likely numeric columns by name
-        for col in df.columns:
-            if any(key in col.lower() for key in ["amount", "value", "total", "difference"]):
-                df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
-            else:
-                df[col] = df[col].astype(str).str.strip()
+    # ✅ Force Invoice column to string (important for codes like AB123)
+    for df in [matched, missing_erp_final, missing_vendor_final]:
+        if not df.empty and "Invoice" in df.columns:
+            df["Invoice"] = df["Invoice"].astype(str).str.strip()
+
+    return matched, missing_erp_final, missing_vendor_final
 
 
 # ======================================
