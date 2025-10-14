@@ -120,6 +120,7 @@ def match_invoices(erp_df, ven_df):
 
     # ====== MATCHING ======
         # ====== MATCHING (strict rules with safe last-3 fallback) ======
+        # ====== MATCHING (enhanced last-digit rules) ======
     for e_idx, e in erp_use.iterrows():
         e_inv = str(e["invoice_erp"]).strip()
         e_core = e["__core"]
@@ -138,26 +139,45 @@ def match_invoices(erp_df, ven_df):
             v_amt = round(float(v["__amt"]), 2)
             v_date = v.get("date_ven")
 
-            # === exact core match ===
-            exact_match = e_core == v_core
-
-            # === strict last-3-digits rule (endswith only) ===
-            last3_match = (
-                len(e_core) >= 3 and len(v_core) >= 3
-                and e_core.endswith(v_core[-3:])
-                and v_core.endswith(e_core[-3:])
-            )
-
-            # === fuzzy similarity for safety ===
             fuzzy = fuzz.ratio(e_inv, v_inv)
             amt_close = abs(e_amt - v_amt) < 0.05
 
-            # Compute score only if real match
+            # --- Rule 1: Exact core match
+            exact_match = e_core == v_core
+
+            # --- Rule 2: Strict 3-digit unique match
+            last3_match = False
+            if len(e_core) >= 3 and len(v_core) >= 3:
+                last3_match = (
+                    e_core.endswith(v_core[-3:]) and
+                    v_core.endswith(e_core[-3:])
+                )
+
+            # --- Rule 3: Short numeric match (e.g. INV0002 ↔ 2)
+            short_match = False
+            if len(e_core) >= len(v_core):
+                short_match = e_core.endswith(v_core)
+            elif len(v_core) > len(e_core):
+                short_match = v_core.endswith(e_core)
+
+            # --- Uniqueness check for 3-digit endings
+            def is_unique_end(core, all_cores):
+                if len(core) < 3:
+                    return True
+                suffix = core[-3:]
+                return sum(1 for c in all_cores if str(c).endswith(suffix)) == 1
+
+            unique_erp = is_unique_end(e_core, erp_use["__core"])
+            unique_ven = is_unique_end(v_core, ven_use["__core"])
+
+            # --- Scoring logic
             score = 0
             if exact_match:
                 score = 200
-            elif last3_match and amt_close:
+            elif last3_match and amt_close and unique_erp and unique_ven:
                 score = 150
+            elif short_match and amt_close:
+                score = 130
             elif fuzzy > 90 and amt_close:
                 score = 120
 
@@ -181,7 +201,6 @@ def match_invoices(erp_df, ven_df):
                 "Difference": diff,
                 "Status": status
             })
-
 
     # ====== BUILD MISSING TABLES ======
     def extract_tokens(s: str):
