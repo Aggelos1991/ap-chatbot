@@ -241,7 +241,7 @@ def match_invoices(erp_df, ven_df):
         missing_vendor_final = pd.DataFrame(columns=["Date", "Invoice", "Amount"])
 
     # --- Cleanup ---
-    if isinstance(matched, list):
+        if isinstance(matched, list):
         matched = pd.DataFrame(matched)
     if not isinstance(missing_erp_final, pd.DataFrame):
         missing_erp_final = pd.DataFrame(missing_erp_final)
