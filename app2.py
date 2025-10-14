@@ -221,19 +221,34 @@ def match_invoices(erp_df, ven_df):
             unique_ven = is_unique_end(v_core, ven_use["__core"])
 
             # --- Scoring logic
-            score = 0
-            if exact_match:
-                score = 200
-            elif last3_match and amt_close and unique_erp and unique_ven:
-                score = 150
-            elif short_match and amt_close:
-                score = 130
-            elif fuzzy > 90 and amt_close:
-                score = 120
+                   # --- Uniqueness check for 3-digit endings
+            def is_unique_end(core, all_cores):
+                """Check if the last 3 digits are unique within all ERP/Vendor cores."""
+                if len(core) < 3:
+                    return True
+                ending = core[-3:]
+                return sum(1 for c in all_cores if c.endswith(ending)) == 1
+
+            # Check uniqueness in both datasets
+            unique_3_erp = is_unique_end(e_core, erp_use["__core"])
+            unique_3_vendor = is_unique_end(v_core, ven_use["__core"])
+
+            # --- Combined logic ---
+            three_match = last3_match and unique_3_erp and unique_3_vendor
+
+            # --- Composite scoring priority ---
+            score = (
+                (130 if exact_match else 0) +    # full match first
+                (90 if three_match else 0) +     # unique 3-digit match next
+                (70 if short_match else 0) +     # numeric suffix (INV0002 vs 2)
+                (50 if amt_close else 0) +       # amount near equal
+                fuzzy                            # fuzzy similarity bonus
+            )
 
             if score > best_score:
                 best_score = score
                 best_v = (v_idx, v_inv, v_core, v_amt, v_date)
+
 
         if best_v and best_score >= 120:
             v_idx, v_inv, v_core, v_amt, v_date = best_v
