@@ -163,17 +163,17 @@ def match_invoices(erp_df, ven_df):
                     prefix_match = (
                         e_num.endswith(v_num) or v_num.endswith(e_num)
                     )
-
-# --- Weighted scoring ---
-score = 0
-if exact_match:
-    score = 200
-elif three_match:
-    score = 150
-elif prefix_match:
-    score = 130
-elif fuzzy > 90 and amt_close:
-    score = 120
+            
+            # --- Weighted scoring ---
+            score = 0
+            if exact_match:
+                score = 200
+            elif three_match:
+                score = 150
+            elif prefix_match:
+                score = 130
+            elif fuzzy > 90 and amt_close:
+                score = 120
 
             
 
