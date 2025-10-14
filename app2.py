@@ -96,17 +96,17 @@ def match_invoices(erp_df, ven_df):
     matched = []
     used_vendor_rows = set()
 
-     # ====== ERP PREP ======
-    erp_df["__doctype"] = erp_df.apply(
-        lambda r: "CN" if normalize_number(r.get("credit_erp")) < 0
-        else ("INV" if normalize_number(r.get("credit_erp")) > 0 else "UNKNOWN"),
-        axis=1
-    )
-
-    erp_df["__amt"] = erp_df.apply(
-        lambda r: abs(normalize_number(r["credit_erp"])) * (-1 if normalize_number(r["credit_erp"]) < 0 else 1),
-        axis=1
-    )
+# ====== ERP PREP ======
+erp_df["__doctype"] = erp_df.apply(
+    lambda r: "CN" if normalize_number(r.get("debit_erp")) > 0
+    else ("INV" if normalize_number(r.get("credit_erp")) > 0 else "UNKNOWN"),
+    axis=1
+)
+erp_df["__amt"] = erp_df.apply(
+    lambda r: normalize_number(r["credit_erp"]) if r["__doctype"] == "INV"
+    else (-normalize_number(r["debit_erp"]) if r["__doctype"] == "CN" else 0.0),
+    axis=1
+)
 
 
     # ====== VENDOR PREP ======
