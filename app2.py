@@ -99,56 +99,49 @@ def match_invoices(erp_df, ven_df):
     matched = []
     used_vendor_rows = set()
 
-    # ====== ERP PREP ======
-    erp_df["__doctype"] = erp_df.apply(
-        lambda r: "CN" if normalize_number(r.get("debit_erp")) > 0
-        else ("INV" if normalize_number(r.get("credit_erp")) > 0 else "UNKNOWN"),
-        axis=1
-    )
+       # ====== ERP PREP ======
+    def detect_doc_type(row, tag):
+        """Determine document type (INV or CN) using sign and multilingual keywords."""
+        text = " ".join(str(row.get(c, "")).lower() for c in row.index if "reason" in c or "desc" in c)
+        # Spanish + English keywords that indicate a credit note
+        cn_keywords = [
+            "abono", "nota credito", "nota de crédito", "cancellation", "cancelación",
+            "credit note", "refund", "reembolso", "devolucion", "devolución"
+        ]
+
+        debit_val = normalize_number(row.get("debit_" + tag))
+        credit_val = normalize_number(row.get("credit_" + tag))
+
+        # 1️⃣ text-based detection
+        if any(k in text for k in cn_keywords):
+            return "CN"
+        # 2️⃣ negative values indicate CN
+        elif credit_val < 0 or debit_val < 0:
+            return "CN"
+        # 3️⃣ otherwise positive means INV
+        elif abs(credit_val) > 0:
+            return "INV"
+        elif abs(debit_val) > 0:
+            return "INV"
+        else:
+            return "UNKNOWN"
+
+    # --- apply to ERP ---
+    erp_df["__doctype"] = erp_df.apply(lambda r: detect_doc_type(r, "erp"), axis=1)
     erp_df["__amt"] = erp_df.apply(
-        lambda r: normalize_number(r["credit_erp"]) if r["__doctype"] == "INV"
-        else (-normalize_number(r["debit_erp"]) if r["__doctype"] == "CN" else 0.0),
+        lambda r: -abs(normalize_number(r["credit_erp"])) if r["__doctype"] == "CN"
+        else abs(normalize_number(r["credit_erp"])),
         axis=1
     )
 
     # ====== VENDOR PREP ======
-    ven_df["__doctype"] = ven_df.apply(
-        lambda r: "CN" if normalize_number(r.get("debit_ven")) < 0 else "INV",
+    ven_df["__doctype"] = ven_df.apply(lambda r: detect_doc_type(r, "ven"), axis=1)
+    ven_df["__amt"] = ven_df.apply(
+        lambda r: -abs(normalize_number(r["debit_ven"])) if r["__doctype"] == "CN"
+        else abs(normalize_number(r["debit_ven"])),
         axis=1
     )
-    ven_df["__amt"] = ven_df.apply(lambda r: abs(normalize_number(r.get("debit_ven"))), axis=1)
 
-    erp_use = erp_df[erp_df["__doctype"].isin(["INV", "CN"])].copy()
-    ven_use = ven_df[ven_df["__doctype"].isin(["INV", "CN"])].copy()
-
-    # ====== CLEAN NUMERIC CORE ======
-    def clean_core(v):
-        s = re.sub(r"[^0-9]", "", str(v or ""))
-        return s[-6:] if len(s) >= 6 else s
-
-    erp_use["__core"] = erp_use["invoice_erp"].apply(clean_core)
-    ven_use["__core"] = ven_use["invoice_ven"].apply(clean_core)
-        # ====== REMOVE CANCELLED OR DUPLICATE INVOICES ======
-    def remove_cancellations(df):
-        """Remove invoices where positive & negative entries cancel out, keeping only final valid ones."""
-        cleaned = []
-        grouped = df.groupby("invoice_erp" if "invoice_erp" in df.columns else "invoice_ven", dropna=False)
-        for inv, g in grouped:
-            if g.empty:
-                continue
-            # If both positive and negative of same absolute value exist → skip both
-            amounts = g["__amt"].round(2).tolist()
-            has_cancel_pair = any(a == -b for a in amounts for b in amounts if a != 0)
-            if has_cancel_pair:
-                # keep only entries not fully cancelled (e.g. small residuals or new final invoice)
-                g = g[~g["__amt"].isin([-x for x in amounts])]
-            # keep the last (usually latest) row if still duplicates
-            if not g.empty:
-                cleaned.append(g.iloc[-1])
-        return pd.DataFrame(cleaned)
-
-    erp_use = remove_cancellations(erp_use)
-    ven_use = remove_cancellations(ven_use)
 
 
     # ====== INDEX BY LAST 3 DIGITS FOR SAFE UNIQUE MATCHES ======
