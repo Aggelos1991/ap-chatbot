@@ -216,8 +216,15 @@ def match_invoices(erp_df, ven_df):
         m["ERP Invoice"] = str(m["ERP Invoice"]).strip().replace(".0", "")
         m["Vendor Invoice"] = str(m["Vendor Invoice"]).strip().replace(".0", "")
 
-    # ====== BUILD MISSING TABLES ======
-    # ====== BUILD MISSING TABLES (SAFE) ======
+    # ====== BUILD MISSING TABLES (SAFE + CORRECT LOGIC) ======
+    # Normalize all invoice IDs for accurate comparison
+    erp_use["invoice_erp"] = erp_use["invoice_erp"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
+    ven_use["invoice_ven"] = ven_use["invoice_ven"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
+    
+    for m in matched:
+        m["ERP Invoice"] = str(m["ERP Invoice"]).strip().replace(".0", "")
+        m["Vendor Invoice"] = str(m["Vendor Invoice"]).strip().replace(".0", "")
+    
     matched_erp = {m["ERP Invoice"] for m in matched}
     matched_ven = {m["Vendor Invoice"] for m in matched}
     
@@ -228,21 +235,25 @@ def match_invoices(erp_df, ven_df):
     erp_cols = safe_cols(erp_use, ["date_erp", "invoice_erp", "__amt"])
     ven_cols = safe_cols(ven_use, ["date_ven", "invoice_ven", "__amt"])
     
-    erp_missing = erp_use[~erp_use["invoice_erp"].isin(matched_erp)][erp_cols] if "invoice_erp" in erp_use.columns else pd.DataFrame()
-    ven_missing = ven_use[~ven_use["invoice_ven"].isin(matched_ven)][ven_cols] if "invoice_ven" in ven_use.columns else pd.DataFrame()
+    # ❌ Missing in ERP → exists in Vendor, not in ERP
+    missing_in_erp = ven_use[~ven_use["invoice_ven"].isin(matched_ven)][ven_cols] if "invoice_ven" in ven_use.columns else pd.DataFrame()
     
-    if not erp_missing.empty:
-        erp_missing = erp_missing.rename(columns={"date_erp": "Date", "invoice_erp": "Invoice", "__amt": "Amount"})
-    else:
-        erp_missing = pd.DataFrame(columns=["Date", "Invoice", "Amount"])
+    # ❌ Missing in Vendor → exists in ERP, not in Vendor
+    missing_in_vendor = erp_use[~erp_use["invoice_erp"].isin(matched_erp)][erp_cols] if "invoice_erp" in erp_use.columns else pd.DataFrame()
     
-    if not ven_missing.empty:
-        ven_missing = ven_missing.rename(columns={"date_ven": "Date", "invoice_ven": "Invoice", "__amt": "Amount"})
+    if not missing_in_erp.empty:
+        missing_in_erp = missing_in_erp.rename(columns={"date_ven": "Date", "invoice_ven": "Invoice", "__amt": "Amount"})
     else:
-        ven_missing = pd.DataFrame(columns=["Date", "Invoice", "Amount"])
+        missing_in_erp = pd.DataFrame(columns=["Date", "Invoice", "Amount"])
+    
+    if not missing_in_vendor.empty:
+        missing_in_vendor = missing_in_vendor.rename(columns={"date_erp": "Date", "invoice_erp": "Invoice", "__amt": "Amount"})
+    else:
+        missing_in_vendor = pd.DataFrame(columns=["Date", "Invoice", "Amount"])
     
     matched_df = pd.DataFrame(matched)
-    return matched_df, erp_missing, ven_missing
+    return matched_df, missing_in_erp, missing_in_vendor
+
 
 
 
