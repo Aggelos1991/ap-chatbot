@@ -305,7 +305,7 @@ ven_missing_list.append(row)
 
     # --- Create clean DataFrames ---
     # --- Create clean DataFrames (remove NaN/None rows) ---
-    if ven_missing_list:
+        if ven_missing_list:
         combined_rows = []
         for r in ven_missing_list:
             rec = {}
