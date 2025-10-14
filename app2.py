@@ -208,17 +208,33 @@ def match_invoices(erp_df, ven_df):
             break
 
     # ====== BUILD MISSING TABLES ======
+    # ====== BUILD MISSING TABLES (SAFE) ======
     matched_erp = {m["ERP Invoice"] for m in matched}
     matched_ven = {m["Vendor Invoice"] for m in matched}
-
-    erp_missing = erp_use[~erp_use["invoice_erp"].isin(matched_erp)][["date_erp", "invoice_erp", "__amt"]]
-    erp_missing.columns = ["Date", "Invoice", "Amount"]
-
-    ven_missing = ven_use[~ven_use["invoice_ven"].isin(matched_ven)][["date_ven", "invoice_ven", "__amt"]]
-    ven_missing.columns = ["Date", "Invoice", "Amount"]
-
+    
+    def safe_cols(df, possible_cols):
+        """Return only columns that actually exist in df."""
+        return [c for c in possible_cols if c in df.columns]
+    
+    erp_cols = safe_cols(erp_use, ["date_erp", "invoice_erp", "__amt"])
+    ven_cols = safe_cols(ven_use, ["date_ven", "invoice_ven", "__amt"])
+    
+    erp_missing = erp_use[~erp_use["invoice_erp"].isin(matched_erp)][erp_cols] if "invoice_erp" in erp_use.columns else pd.DataFrame()
+    ven_missing = ven_use[~ven_use["invoice_ven"].isin(matched_ven)][ven_cols] if "invoice_ven" in ven_use.columns else pd.DataFrame()
+    
+    if not erp_missing.empty:
+        erp_missing = erp_missing.rename(columns={"date_erp": "Date", "invoice_erp": "Invoice", "__amt": "Amount"})
+    else:
+        erp_missing = pd.DataFrame(columns=["Date", "Invoice", "Amount"])
+    
+    if not ven_missing.empty:
+        ven_missing = ven_missing.rename(columns={"date_ven": "Date", "invoice_ven": "Invoice", "__amt": "Amount"})
+    else:
+        ven_missing = pd.DataFrame(columns=["Date", "Invoice", "Amount"])
+    
     matched_df = pd.DataFrame(matched)
     return matched_df, erp_missing, ven_missing
+
 
 
 # ======================================
