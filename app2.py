@@ -181,34 +181,49 @@ def match_invoices(erp_df, ven_df):
         best_v = None
 
         for v_idx, v in ven_use.iterrows():
-            if v_idx in used_vendor_rows:
-                continue
+            # === Matching rules priority ===
+            # 1️⃣ Exact invoice match
+            exact_match = e_inv.lower().strip() == v_inv.lower().strip()
 
-            v_inv = str(v["invoice_ven"]).strip()
-            v_core = v["__core"]
-            v_amt = round(float(v["__amt"]), 2)
-            v_date = v.get("date_ven")
+            # 2️⃣ Extract numeric cores
+            e_nums = re.findall(r"\d+", e_core)
+            v_nums = re.findall(r"\d+", v_core)
+            e_last = e_nums[-1] if e_nums else ""
+            v_last = v_nums[-1] if v_nums else ""
+
+            # 3️⃣ Check 3-digit ending rule — stricter version
+            three_match = (
+                len(e_last) >= 3 and len(v_last) >= 3 and
+                e_last[-3:] == v_last[-3:] and
+                abs(len(e_last) - len(v_last)) <= 1  # prevents 1016xxx ≠ 1001xxx
+            )
+
+            # 4️⃣ Short numeric suffix (INV0002 ↔ 2)
+            short_match = False
+            try:
+                e_suffix = re.search(r'(\d{1,4})$', e_core)
+                v_suffix = re.search(r'(\d{1,4})$', v_core)
+                if e_suffix and v_suffix:
+                    short_match = e_suffix.group(1).lstrip("0") == v_suffix.group(1).lstrip("0")
+            except:
+                short_match = False
 
             fuzzy = fuzz.ratio(e_inv, v_inv)
             amt_close = abs(e_amt - v_amt) < 0.05
 
-            # --- Rule 1: Exact core match
-            exact_match = e_core == v_core
+            # --- Weighted scoring ---
+            score = (
+                (140 if exact_match else 0) +
+                (100 if three_match else 0) +
+                (80 if short_match else 0) +
+                (50 if amt_close else 0) +
+                fuzzy
+            )
 
-            # --- Rule 2: Strict 3-digit unique match
-            last3_match = False
-            if len(e_core) >= 3 and len(v_core) >= 3:
-                last3_match = (
-                    e_core.endswith(v_core[-3:]) and
-                    v_core.endswith(e_core[-3:])
-                )
+            if score > best_score:
+                best_score = score
+                best_v = (v_idx, v_inv, v_core, v_amt, v_date)
 
-            # --- Rule 3: Short numeric match (e.g. INV0002 ↔ 2)
-            short_match = False
-            if len(e_core) >= len(v_core):
-                short_match = e_core.endswith(v_core)
-            elif len(v_core) > len(e_core):
-                short_match = v_core.endswith(e_core)
 
             # --- Uniqueness check for 3-digit endings
             def is_unique_end(core, all_cores):
