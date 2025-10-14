@@ -33,7 +33,7 @@ def normalize_number(v):
 
 
 def normalize_columns(df, tag):
-    """Map multilingual headers to unified names — works with Spanish vendor statements."""
+    """Ensure column names follow consistent naming."""
     mapping = {
         "invoice": ["invoice", "factura", "num", "numero", "document", "ref"],
         "credit": ["credit", "haber", "credito", "crédito"],
@@ -41,13 +41,16 @@ def normalize_columns(df, tag):
         "cif": ["cif", "nif", "vat", "iva", "tax"],
         "date": ["date", "fecha", "fech", "data"],
     }
+
     rename_map = {}
     for k, vals in mapping.items():
         for col in df.columns:
             c = str(col).strip().lower()
             if any(v in c for v in vals):
                 rename_map[col] = f"{k}_{tag}"
+
     out = df.rename(columns=rename_map)
+
     for required in ["debit", "credit"]:
         cname = f"{required}_{tag}"
         if cname not in out.columns:
@@ -69,8 +72,8 @@ def match_invoices(erp_df, ven_df):
         axis=1
     )
     erp_df["__amt"] = erp_df.apply(
-        lambda r: normalize_number(r["credit_erp"]) if r["__doctype"] == "INV"
-        else (-normalize_number(r["debit_erp"]) if r["__doctype"] == "CN" else 0.0),
+        lambda r: normalize_number(r.get("credit_erp")) if r["__doctype"] == "INV"
+        else (-normalize_number(r.get("debit_erp"))) if r["__doctype"] == "CN" else 0.0,
         axis=1
     )
 
@@ -81,12 +84,22 @@ def match_invoices(erp_df, ven_df):
     )
     ven_df["__amt"] = ven_df.apply(lambda r: abs(normalize_number(r.get("debit_ven"))), axis=1)
 
+    # --- SAFEGUARD column existence ---
+    if "invoice_erp" not in erp_df.columns or "invoice_ven" not in ven_df.columns:
+        st.error("❌ Missing invoice columns. Please ensure 'invoice_erp' and 'invoice_ven' exist.")
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+
     erp_use = erp_df.copy()
     ven_use = ven_df.copy()
 
     # --- CLEAN NUMERIC CORE ---
+    def safe_value(v):
+        if isinstance(v, (pd.Series, list, dict)):
+            return ""
+        return str(v) if v is not None else ""
+
     def clean_core(v):
-        s = re.sub(r"[^0-9]", "", str(v or ""))
+        s = re.sub(r"[^0-9]", "", safe_value(v))
         return s[-6:] if len(s) >= 6 else s
 
     erp_use["__core"] = erp_use["invoice_erp"].apply(clean_core)
@@ -94,10 +107,10 @@ def match_invoices(erp_df, ven_df):
 
     # --- MATCHING RULES ---
     for e_idx, e in erp_use.iterrows():
-        e_inv = str(e["invoice_erp"]).strip()
-        e_core = e["__core"]
-        e_amt = round(float(e["__amt"]), 2)
-        e_date = e.get("date_erp")
+        e_inv = safe_value(e.get("invoice_erp")).strip()
+        e_core = e.get("__core", "")
+        e_amt = round(float(e.get("__amt", 0)), 2)
+        e_date = e.get("date_erp", "")
 
         best_match = None
         best_score = 0
@@ -106,10 +119,10 @@ def match_invoices(erp_df, ven_df):
             if v_idx in used_vendor_rows:
                 continue
 
-            v_inv = str(v["invoice_ven"]).strip()
-            v_core = v["__core"]
-            v_amt = round(float(v["__amt"]), 2)
-            v_date = v.get("date_ven")
+            v_inv = safe_value(v.get("invoice_ven")).strip()
+            v_core = v.get("__core", "")
+            v_amt = round(float(v.get("__amt", 0)), 2)
+            v_date = v.get("date_ven", "")
 
             amt_close = abs(e_amt - v_amt) < 0.05
             score = 0
@@ -126,7 +139,6 @@ def match_invoices(erp_df, ven_df):
             elif e_core.endswith(v_core) or v_core.endswith(e_core):
                 score = 150
 
-            # Boost if amount close
             if amt_close:
                 score += 30
 
@@ -134,7 +146,6 @@ def match_invoices(erp_df, ven_df):
                 best_score = score
                 best_match = (v_idx, v_inv, v_amt, v_date)
 
-        # --- Store match ---
         if best_match and best_score >= 150:
             v_idx, v_inv, v_amt, v_date = best_match
             used_vendor_rows.add(v_idx)
@@ -151,9 +162,11 @@ def match_invoices(erp_df, ven_df):
                 "Status": status
             })
 
+    matched_df = pd.DataFrame(matched)
+
     # --- MISSING TABLES ---
-    matched_erp_invs = {m["ERP Invoice"] for m in matched}
-    matched_ven_invs = {m["Vendor Invoice"] for m in matched}
+    matched_erp_invs = set(matched_df["ERP Invoice"]) if not matched_df.empty else set()
+    matched_ven_invs = set(matched_df["Vendor Invoice"]) if not matched_df.empty else set()
 
     # Missing in ERP
     missing_erp = ven_use[~ven_use["invoice_ven"].isin(matched_ven_invs)].copy()
@@ -171,7 +184,7 @@ def match_invoices(erp_df, ven_df):
         "Amount": missing_vendor.get("__amt", pd.Series(dtype=float))
     })
 
-    return pd.DataFrame(matched), missing_erp_final, missing_vendor_final
+    return matched_df, missing_erp_final, missing_vendor_final
 
 
 # ======================================
