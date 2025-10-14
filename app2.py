@@ -338,18 +338,8 @@ for _, row in erp_use.iterrows():
     # Missing in Vendor now always empty
       # Missing in Vendor now always empty
    # --- Create Vendor Missing DataFrame ---
-if vendor_missing_list:
-    vendor_combined = []
-    for r in vendor_missing_list:
-        rec = {}
-        rec["Date"] = r.get("date_erp")
-        rec["Invoice"] = r.get("invoice_erp")
-        rec["Amount"] = r.get("__amt")
-        if rec["Invoice"] and str(rec["Invoice"]).lower() != "none":
-            vendor_combined.append(rec)
-    missing_vendor_final = pd.DataFrame(vendor_combined)
-else:
-    missing_vendor_final = pd.DataFrame(columns=["Date", "Invoice", "Amount"])
+missing_vendor_final = pd.DataFrame(columns=["Date", "Invoice", "Amount"])
+
 
 
    # ✅ Ensure all outputs are DataFrames
