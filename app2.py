@@ -192,35 +192,47 @@ def match_invoices(erp_df, ven_df):
    # ====== MATCHING (3 RULES ONLY) ======
         # ====== MATCHING (3 RULES ONLY) ======
         # ====== MATCHING (Full + Prefixless Rules Only) ======
+        # ====== MATCHING (Full + Strong Prefix/Suffix Rules) ======
+    def extract_digits(v):
+        """Extract only numeric parts for flexible comparison."""
+        return re.sub(r"\D", "", str(v or "")).lstrip("0")
+
     for e_idx, e in erp_use.iterrows():
         e_inv = str(e["invoice_erp"]).strip()
-        e_core = e["__core"]
         e_amt = round(float(e["__amt"]), 2)
         e_date = e.get("date_erp")
+        e_digits = extract_digits(e_inv)
 
         for v_idx, v in ven_use.iterrows():
             if v_idx in used_vendor_rows:
                 continue
 
             v_inv = str(v["invoice_ven"]).strip()
-            v_core = v["__core"]
             v_amt = round(float(v["__amt"]), 2)
             v_date = v.get("date_ven")
+            v_digits = extract_digits(v_inv)
 
             diff = round(e_amt - v_amt, 2)
-            amt_close = abs(diff) < 0.05  # ±5 cent tolerance
+            amt_close = abs(diff) < 0.05
 
-            # ✅ RULE 1: Full invoice number match (always include, even if amount differs)
+            # ✅ RULE 1: Full invoice number match (always include)
             if e_inv == v_inv:
                 match_type = "Full"
                 status = "Match" if amt_close else "Difference"
 
-            # ✅ RULE 2: Prefixless numeric match (compare after removing leading zeros)
-            elif e_core.lstrip("0") == v_core.lstrip("0"):
-                match_type = "Prefixless"
+            # ✅ RULE 2: Strong numeric core match (handles prefixes, suffixes, slashes, etc.)
+            elif (
+                e_digits
+                and v_digits
+                and (
+                    e_digits.endswith(v_digits)
+                    or v_digits.endswith(e_digits)
+                    or e_digits[-3:] == v_digits[-3:]
+                )
+            ):
+                match_type = "StrongCore"
                 status = "Match" if amt_close else "Difference"
 
-            # 🚫 No match — skip to next vendor line
             else:
                 continue
 
@@ -237,10 +249,8 @@ def match_invoices(erp_df, ven_df):
                 "MatchType": match_type
             })
 
-            # Prevent reusing vendor row
             used_vendor_rows.add(v_idx)
             break
-
     # ====== NORMALIZE AND BUILD MISSING TABLES ======
     erp_use["invoice_erp"] = erp_use["invoice_erp"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
     ven_use["invoice_ven"] = ven_use["invoice_ven"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
