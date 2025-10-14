@@ -136,8 +136,8 @@ ven_df["__doctype"] = ven_df.apply(detect_vendor_doc_type, axis=1)
 ven_df["__amt"] = ven_df.apply(calc_vendor_amount, axis=1)
     
 
-    erp_use = erp_df[erp_df["__doctype"].isin(["INV", "CN"])].copy()
-    ven_use = ven_df[ven_df["__doctype"].isin(["INV", "CN"])].copy()
+erp_use = erp_df[erp_df["__doctype"].isin(["INV", "CN"])].copy()
+ven_use = ven_df[ven_df["__doctype"].isin(["INV", "CN"])].copy()
 
     # ====== MERGE ERP CREDIT/INVOICE PAIRS ======
     merged_rows = []
