@@ -189,8 +189,8 @@ def match_invoices(erp_df, ven_df):
             v_amt = round(float(v["__amt"]), 2)
             v_date = v.get("date_ven")
 
-            fuzzy = fuzz.ratio(e_inv, v_inv)
-            amt_close = abs(e_amt - v_amt) < 0.05
+            # fuzzy = fuzz.ratio(e_inv, v_inv)
+            # amt_close = abs(e_amt - v_amt) < 0.05
 
             # --- Rule 1: Exact core match
             exact_match = e_core == v_core
@@ -228,8 +228,8 @@ def match_invoices(erp_df, ven_df):
                 score = 150
             elif short_match and amt_close:
                 score = 130
-            elif fuzzy > 90 and amt_close:
-                score = 120
+            # elif fuzzy > 90 and amt_close:
+            #     score = 120
 
             if score > best_score:
                 best_score = score
