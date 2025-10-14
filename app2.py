@@ -92,18 +92,16 @@ def match_invoices(erp_df, ven_df):
     erp_use = erp_df.copy()
     ven_use = ven_df.copy()
 
-    # --- CLEAN NUMERIC CORE ---
-    def safe_value(v):
-        if isinstance(v, (pd.Series, list, dict)):
-            return ""
-        return str(v) if v is not None else ""
+  def clean_core(v):
+    s = safe_value(v)
+    # extract all numeric sequences
+    nums = re.findall(r"\d+", s)
+    if not nums:
+        return ""
+    # take the longest numeric sequence (main invoice core)
+    core = max(nums, key=len)
+    return core[-4:] if len(core) > 4 else core
 
-    def clean_core(v):
-        s = re.sub(r"[^0-9]", "", safe_value(v))
-        return s[-6:] if len(s) >= 6 else s
-
-    erp_use["__core"] = erp_use["invoice_erp"].apply(clean_core)
-    ven_use["__core"] = ven_use["invoice_ven"].apply(clean_core)
 
     # --- MATCHING RULES ---
     for e_idx, e in erp_use.iterrows():
