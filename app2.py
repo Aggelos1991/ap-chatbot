@@ -92,7 +92,10 @@ def normalize_columns(df, tag):
     return out
 
 
-# ======================================
+def match_invoices(erp_df, ven_df):
+    matched = []
+    used_vendor_rows = set()
+
     # ====== ERP PREP ======
     erp_df["__doctype"] = erp_df.apply(
         lambda r: "CN" if normalize_number(r.get("debit_erp")) > 0
@@ -110,34 +113,20 @@ def normalize_columns(df, tag):
         lambda r: "CN" if normalize_number(r.get("debit_ven")) < 0 else "INV",
         axis=1
     )
-    ven_df["__amt"] = ven_df.apply(
-        lambda r: abs(normalize_number(r.get("debit_ven"))), axis=1
-    )
+    ven_df["__amt"] = ven_df.apply(lambda r: abs(normalize_number(r.get("debit_ven"))), axis=1)
 
+    erp_use = erp_df[erp_df["__doctype"].isin(["INV", "CN"])].copy()
+    ven_use = ven_df[ven_df["__doctype"].isin(["INV", "CN"])].copy()
 
+    # ====== CLEAN NUMERIC CORE ======
+    def clean_core(v):
+        s = re.sub(r"[^0-9]", "", str(v or ""))
+        return s[-6:] if len(s) >= 6 else s
 
-    # ====== INDEX BY LAST 3 DIGITS FOR SAFE UNIQUE MATCHES ======
-    def last3_index(series):
-        index = {}
-        for i, val in series.items():
-            key = str(val)[-3:]
-            index.setdefault(key, []).append(i)
-        return index
-
-    erp_last3 = last3_index(erp_use["__core"])
-    ven_last3 = last3_index(ven_use["__core"])
-
-    def unique_last3_match(e_idx, e_core):
-        """Return vendor index if last3 unique in both sides."""
-        if len(e_core) < 3:
-            return None
-        last3 = e_core[-3:]
-        if last3 in erp_last3 and len(erp_last3[last3]) == 1 and last3 in ven_last3 and len(ven_last3[last3]) == 1:
-            return ven_last3[last3][0]
-        return None
+    erp_use["__core"] = erp_use["invoice_erp"].apply(clean_core)
+    ven_use["__core"] = ven_use["invoice_ven"].apply(clean_core)
 
     # ====== MATCHING (pick best vendor per ERP) ======
-       # ====== MATCHING (enhanced last-digit rules) ======
     for e_idx, e in erp_use.iterrows():
         e_inv = str(e["invoice_erp"]).strip()
         e_core = e["__core"]
@@ -156,53 +145,24 @@ def normalize_columns(df, tag):
             v_amt = round(float(v["__amt"]), 2)
             v_date = v.get("date_ven")
 
+            # === numeric overlap rule ===
+            digits_erp = re.findall(r"\d{3,}", e_core)
+            digits_ven = re.findall(r"\d{3,}", v_core)
+            three_match = any(
+                d in v_core or v_core.endswith(d) or e_core.endswith(d)
+                for d in digits_erp if len(d) >= 3
+            )
+
             fuzzy = fuzz.ratio(e_inv, v_inv)
             amt_close = abs(e_amt - v_amt) < 0.05
 
-            # --- Rule 1: Exact core match
-            exact_match = e_core == v_core
-
-            # --- Rule 2: Strict 3-digit unique match
-            last3_match = False
-            if len(e_core) >= 3 and len(v_core) >= 3:
-                last3_match = (
-                    e_core.endswith(v_core[-3:]) and
-                    v_core.endswith(e_core[-3:])
-                )
-
-            # --- Rule 3: Short numeric match (e.g. INV0002 ↔ 2)
-            short_match = False
-            if len(e_core) >= len(v_core):
-                short_match = e_core.endswith(v_core)
-            elif len(v_core) > len(e_core):
-                short_match = v_core.endswith(e_core)
-
-            # --- Uniqueness check for 3-digit endings
-            def is_unique_end(core, all_cores):
-                if len(core) < 3:
-                    return True
-                suffix = core[-3:]
-                return sum(1 for c in all_cores if str(c).endswith(suffix)) == 1
-
-            unique_erp = is_unique_end(e_core, erp_use["__core"])
-            unique_ven = is_unique_end(v_core, ven_use["__core"])
-
-            # --- Scoring logic
-            score = 0
-            if exact_match:
-                score = 200
-            elif last3_match and amt_close and unique_erp and unique_ven:
-                score = 150
-            elif short_match and amt_close:
-                score = 130
-            elif fuzzy > 90 and amt_close:
-                score = 120
+            score = fuzzy + (80 if three_match or e_core == v_core else 0) + (50 if amt_close else 0)
 
             if score > best_score:
                 best_score = score
                 best_v = (v_idx, v_inv, v_core, v_amt, v_date)
 
-        if best_v and best_score >= 120:
+        if best_v and best_score >= 120:  # threshold for confident match
             v_idx, v_inv, v_core, v_amt, v_date = best_v
             used_vendor_rows.add(v_idx)
             diff = round(e_amt - v_amt, 2)
