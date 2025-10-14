@@ -101,40 +101,11 @@ def match_invoices(erp_df, ven_df):
 
     # ====== VENDOR PREP ======
     # ====== VENDOR PREP ======
-def detect_vendor_doc_type(row):
-    debit = normalize_number(row.get("debit_ven"))
-    credit = normalize_number(row.get("credit_ven"))
-
-    # ✅ Case 1: Credit Note explicitly in Credit column
-    if credit > 0:
-        return "CN"
-    # ✅ Case 2: Negative debit also means a Credit Note
-    elif debit < 0:
-        return "CN"
-    # ✅ Case 3: Normal invoice (positive debit)
-    elif debit > 0:
-        return "INV"
-    else:
-        return "UNKNOWN"
-
-
-def calc_vendor_amount(row):
-    debit = normalize_number(row.get("debit_ven"))
-    credit = normalize_number(row.get("credit_ven"))
-    doc = row.get("__doctype", "")
-
-    if doc == "INV":
-        return abs(debit)
-    elif doc == "CN":
-        # Always return negative for CN, regardless of where it appeared
-        return -abs(credit if credit > 0 else debit)
-    else:
-        return 0.0
-
-
-# Apply to vendor dataframe
-ven_df["__doctype"] = ven_df.apply(detect_vendor_doc_type, axis=1)
-ven_df["__amt"] = ven_df.apply(calc_vendor_amount, axis=1)›
+ven_df["__doctype"] = ven_df.apply(
+    lambda r: "CN" if normalize_number(r.get("debit_ven")) < 0 else "INV",
+    axis=1
+)
+ven_df["__amt"] = ven_df.apply(lambda r: abs(normalize_number(r.get("debit_ven"))), axis=1)
 
     erp_use = erp_df[erp_df["__doctype"].isin(["INV", "CN"])].copy()
     ven_use = ven_df[ven_df["__doctype"].isin(["INV", "CN"])].copy()
