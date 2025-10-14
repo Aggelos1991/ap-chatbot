@@ -230,15 +230,17 @@ def match_invoices(erp_df, ven_df):
 
 
             # --- Scoring logic
+            # --- Scoring logic
             score = 0
             if exact_match:
                 score = 200
-            elif last3_match and amt_close and unique_erp and unique_ven:
+            elif three_match:
                 score = 150
-            elif short_match and amt_close:
+            elif prefix_match:
                 score = 130
             elif fuzzy > 90 and amt_close:
                 score = 120
+
 
             if score > best_score:
                 best_score = score
