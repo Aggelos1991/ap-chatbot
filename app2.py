@@ -118,6 +118,33 @@ def match_invoices(erp_df, ven_df):
 
     erp_use = erp_df[erp_df["__doctype"].isin(["INV", "CN"])].copy()
     ven_use = ven_df[ven_df["__doctype"].isin(["INV", "CN"])].copy()
+        # ====== MERGE ERP CREDIT/INVOICE PAIRS ======
+    merged_rows = []
+    grouped = erp_use.groupby("invoice_erp", dropna=False)
+
+    for inv, group in grouped:
+        if len(group) == 1:
+            merged_rows.append(group.iloc[0])
+            continue
+
+        inv_rows = group[group["__doctype"] == "INV"]
+        cn_rows = group[group["__doctype"] == "CN"]
+
+        if not inv_rows.empty and not cn_rows.empty:
+            total_inv = inv_rows["__amt"].sum()
+            total_cn = cn_rows["__amt"].sum()
+            net = round(total_inv + total_cn, 2)  # CN amounts are negative in ERP
+
+            # Keep one line with net amount
+            base_row = inv_rows.iloc[0].copy()
+            base_row["__amt"] = net
+            merged_rows.append(base_row)
+        else:
+            # If only invoices or only CNs exist, keep all
+            for _, row in group.iterrows():
+                merged_rows.append(row)
+
+    erp_use = pd.DataFrame(merged_rows).reset_index(drop=True)
 
     # ====== CLEAN NUMERIC CORE ======
     def clean_core(v):
