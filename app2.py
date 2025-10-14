@@ -55,7 +55,7 @@ def normalize_columns(df, tag):
             "observaciones", "comentario", "comentarios", "explicacion"
         ],
         "cif": [
-            "cif", "nif", "vat", "iva", "tax", "id fiscal", "número fiscal", "num fiscal"
+            "cif", "nif", "vat", "iva", "tax", "id fiscal", "número fiscal", "num fiscal","code"
         ],
         "date": [
             "date", "fecha", "fech", "data", "fecha factura", "fecha doc", "fecha documento"
