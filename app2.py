@@ -192,33 +192,42 @@ def match_invoices(erp_df, ven_df):
             fuzzy = fuzz.ratio(e_inv, v_inv)
             amt_close = abs(e_amt - v_amt) < 0.05
 
-            # --- Rule 1: Exact core match
-            exact_match = e_core == v_core
+            # === Matching rules priority ===
+            # 1️⃣ Exact invoice match
+            exact_match = e_inv.lower().strip() == v_inv.lower().strip()
 
-            # --- Rule 2: Strict 3-digit unique match
-            last3_match = False
-            if len(e_core) >= 3 and len(v_core) >= 3:
-                last3_match = (
-                    e_core.endswith(v_core[-3:]) and
-                    v_core.endswith(e_core[-3:])
+            # 2️⃣ Extract numeric sequences
+            e_nums = re.findall(r"\d+", e_inv)
+            v_nums = re.findall(r"\d+", v_inv)
+
+            # Get the longest numeric part near the end (e.g. 12345)
+            e_num = e_nums[-1] if e_nums else ""
+            v_num = v_nums[-1] if v_nums else ""
+
+            # 3️⃣ Check 3-digit ending rule
+            three_match = (
+                len(e_num) >= 3 and len(v_num) >= 3 and
+                e_num[-3:] == v_num[-3:]
+            )
+
+            # 4️⃣ Check short prefix/ending match for cases like PSF000001 ↔ 1
+            prefix_match = False
+            if e_num and v_num:
+                prefix_match = (
+                    e_num.endswith(v_num) or v_num.endswith(e_num)
                 )
 
-            # --- Rule 3: Short numeric match (e.g. INV0002 ↔ 2)
-            short_match = False
-            if len(e_core) >= len(v_core):
-                short_match = e_core.endswith(v_core)
-            elif len(v_core) > len(e_core):
-                short_match = v_core.endswith(e_core)
+            # --- Weighted scoring ---
+            score = 0
+            if exact_match:
+                score = 200
+            elif three_match:
+                score = 150
+            elif prefix_match:
+                score = 130
+            elif fuzzy > 90 and amt_close:
+                score = 120
 
-            # --- Uniqueness check for 3-digit endings
-            def is_unique_end(core, all_cores):
-                if len(core) < 3:
-                    return True
-                suffix = core[-3:]
-                return sum(1 for c in all_cores if str(c).endswith(suffix)) == 1
-
-            unique_erp = is_unique_end(e_core, erp_use["__core"])
-            unique_ven = is_unique_end(v_core, ven_use["__core"])
 
             # --- Scoring logic
             score = 0
