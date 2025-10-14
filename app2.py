@@ -3,6 +3,15 @@ import pandas as pd
 from fuzzywuzzy import fuzz
 import re
 
+def normalize_invoice(inv):
+    """Normalize invoice numbers for flexible matching."""
+    inv = str(inv).strip().lower()
+    # Keep only alphanumeric characters
+    inv_clean = re.sub(r'[^a-z0-9]', '', inv)
+    # Return both full and last 3 digits for possible match
+    return inv_clean, inv_clean[-3:] if len(inv_clean) >= 3 else inv_clean
+
+
 # ======================================
 # CONFIG
 # ======================================
