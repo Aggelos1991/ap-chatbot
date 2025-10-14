@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-from fuzzywuzzy import fuzz
 import re
 
 # ======================================
@@ -34,61 +33,36 @@ def normalize_number(v):
 
 
 def normalize_columns(df, tag):
-    """Map multilingual headers to unified names — fully optimized for Spanish vendor statements."""
+    """Map multilingual headers to unified names — works with Spanish vendor statements."""
     mapping = {
-        "invoice": [
-            "invoice", "factura", "fact", "nº", "num", "numero", "número",
-            "document", "doc", "ref", "referencia", "nº factura", "num factura"
-        ],
-        "credit": [
-            "credit", "haber", "credito", "crédito", "nota de crédito", "nota crédito",
-            "abono", "abonos", "importe haber", "valor haber"
-        ],
-        "debit": [
-            "debit", "debe", "cargo", "importe", "importe total", "valor", "monto",
-            "amount", "document value", "charge",
-            "total", "totale", "totales", "totals",
-            "base imponible", "importe factura", "importe neto"
-        ],
-        "reason": [
-            "reason", "motivo", "concepto", "descripcion", "descripción",
-            "descriptivo", "detalle", "detalles", "razon", "razón",
-            "observaciones", "comentario", "comentarios", "explicacion"
-        ],
-        "cif": [
-            "cif", "nif", "vat", "iva", "tax", "id fiscal", "número fiscal", "num fiscal"
-        ],
-        "date": [
-            "date", "fecha", "fech", "data", "fecha factura", "fecha doc", "fecha documento"
-        ],
+        "invoice": ["invoice", "factura", "num", "numero", "document", "ref"],
+        "credit": ["credit", "haber", "credito", "crédito"],
+        "debit": ["debit", "debe", "cargo", "importe", "amount"],
+        "cif": ["cif", "nif", "vat", "iva", "tax"],
+        "date": ["date", "fecha", "fech", "data"],
     }
-
     rename_map = {}
-    cols_lower = {c: str(c).strip().lower() for c in df.columns}
-
     for k, vals in mapping.items():
-        for col, low in cols_lower.items():
-            if any(v in low for v in vals):
+        for col in df.columns:
+            c = str(col).strip().lower()
+            if any(v in c for v in vals):
                 rename_map[col] = f"{k}_{tag}"
-
     out = df.rename(columns=rename_map)
-
     for required in ["debit", "credit"]:
         cname = f"{required}_{tag}"
         if cname not in out.columns:
             out[cname] = 0.0
-
     return out
 
 
 # ======================================
-# CORE MATCHING LOGIC
+# MAIN MATCHING LOGIC
 # ======================================
 def match_invoices(erp_df, ven_df):
     matched = []
     used_vendor_rows = set()
 
-    # ====== ERP PREP ======
+    # --- ERP AMOUNT LOGIC ---
     erp_df["__doctype"] = erp_df.apply(
         lambda r: "CN" if normalize_number(r.get("debit_erp")) > 0
         else ("INV" if normalize_number(r.get("credit_erp")) > 0 else "UNKNOWN"),
@@ -100,17 +74,17 @@ def match_invoices(erp_df, ven_df):
         axis=1
     )
 
-    # ====== VENDOR PREP ======
+    # --- VENDOR AMOUNT LOGIC ---
     ven_df["__doctype"] = ven_df.apply(
         lambda r: "CN" if normalize_number(r.get("debit_ven")) < 0 else "INV",
         axis=1
     )
     ven_df["__amt"] = ven_df.apply(lambda r: abs(normalize_number(r.get("debit_ven"))), axis=1)
 
-    erp_use = erp_df[erp_df["__doctype"].isin(["INV", "CN"])].copy()
-    ven_use = ven_df[ven_df["__doctype"].isin(["INV", "CN"])].copy()
+    erp_use = erp_df.copy()
+    ven_use = ven_df.copy()
 
-    # ====== CLEAN NUMERIC CORE ======
+    # --- CLEAN NUMERIC CORE ---
     def clean_core(v):
         s = re.sub(r"[^0-9]", "", str(v or ""))
         return s[-6:] if len(s) >= 6 else s
@@ -118,15 +92,15 @@ def match_invoices(erp_df, ven_df):
     erp_use["__core"] = erp_use["invoice_erp"].apply(clean_core)
     ven_use["__core"] = ven_use["invoice_ven"].apply(clean_core)
 
-    # ====== MAIN MATCHING (exact → last3 → prefix) ======
+    # --- MATCHING RULES ---
     for e_idx, e in erp_use.iterrows():
         e_inv = str(e["invoice_erp"]).strip()
         e_core = e["__core"]
         e_amt = round(float(e["__amt"]), 2)
         e_date = e.get("date_erp")
 
-        best_score = 0
         best_match = None
+        best_score = 0
 
         for v_idx, v in ven_use.iterrows():
             if v_idx in used_vendor_rows:
@@ -140,19 +114,19 @@ def match_invoices(erp_df, ven_df):
             amt_close = abs(e_amt - v_amt) < 0.05
             score = 0
 
-            # Rule 1: Exact invoice match
+            # 1️⃣ Exact match
             if e_inv.lower() == v_inv.lower():
                 score = 300
 
-            # Rule 2: Match by last 3 digits
+            # 2️⃣ Last 3 digits
             elif len(e_core) >= 3 and len(v_core) >= 3 and e_core[-3:] == v_core[-3:]:
                 score = 200
 
-            # Rule 3: Prefix numeric rule (PSF000001 ↔ 1)
+            # 3️⃣ Prefix numeric (PSF000001 ↔ 1)
             elif e_core.endswith(v_core) or v_core.endswith(e_core):
                 score = 150
 
-            # Slight boost if amount nearly equal
+            # Boost if amount close
             if amt_close:
                 score += 30
 
@@ -160,13 +134,12 @@ def match_invoices(erp_df, ven_df):
                 best_score = score
                 best_match = (v_idx, v_inv, v_amt, v_date)
 
-        # Add matched pair if found
+        # --- Store match ---
         if best_match and best_score >= 150:
             v_idx, v_inv, v_amt, v_date = best_match
             used_vendor_rows.add(v_idx)
             diff = round(e_amt - v_amt, 2)
             status = "Match" if abs(diff) < 0.05 else "Difference"
-
             matched.append({
                 "Date (ERP)": e_date,
                 "Date (Vendor)": v_date,
@@ -178,27 +151,25 @@ def match_invoices(erp_df, ven_df):
                 "Status": status
             })
 
-    # ====== BUILD MISSING TABLES ======
+    # --- MISSING TABLES ---
     matched_erp_invs = {m["ERP Invoice"] for m in matched}
     matched_ven_invs = {m["Vendor Invoice"] for m in matched}
 
-    # Missing in ERP (found in Vendor but not ERP)
+    # Missing in ERP
     missing_erp = ven_use[~ven_use["invoice_ven"].isin(matched_ven_invs)].copy()
-    if not missing_erp.empty:
-        missing_erp_final = missing_erp.rename(
-            columns={"date_ven": "Date", "invoice_ven": "Invoice", "__amt": "Amount"}
-        )[["Date", "Invoice", "Amount"]]
-    else:
-        missing_erp_final = pd.DataFrame(columns=["Date", "Invoice", "Amount"])
+    missing_erp_final = pd.DataFrame({
+        "Date": missing_erp.get("date_ven", pd.Series(dtype=str)),
+        "Invoice": missing_erp.get("invoice_ven", pd.Series(dtype=str)),
+        "Amount": missing_erp.get("__amt", pd.Series(dtype=float))
+    })
 
-    # Missing in Vendor (found in ERP but not Vendor)
+    # Missing in Vendor
     missing_vendor = erp_use[~erp_use["invoice_erp"].isin(matched_erp_invs)].copy()
-    if not missing_vendor.empty:
-        missing_vendor_final = missing_vendor.rename(
-            columns={"date_erp": "Date", "invoice_erp": "Invoice", "__amt": "Amount"}
-        )[["Date", "Invoice", "Amount"]]
-    else:
-        missing_vendor_final = pd.DataFrame(columns=["Date", "Invoice", "Amount"])
+    missing_vendor_final = pd.DataFrame({
+        "Date": missing_vendor.get("date_erp", pd.Series(dtype=str)),
+        "Invoice": missing_vendor.get("invoice_erp", pd.Series(dtype=str)),
+        "Amount": missing_vendor.get("__amt", pd.Series(dtype=float))
+    })
 
     return pd.DataFrame(matched), missing_erp_final, missing_vendor_final
 
@@ -249,24 +220,21 @@ if uploaded_erp and uploaded_vendor:
 
     st.subheader("❌ Missing in ERP (invoices found in vendor but not ERP)")
     if not erp_missing.empty:
-        st.dataframe(
-            erp_missing.style.applymap(lambda _: "background-color: #c62828; color: white"),
-            use_container_width=True,
-        )
+        st.dataframe(erp_missing.style.applymap(lambda _: "background-color: #c62828; color: white"),
+                     use_container_width=True)
     else:
         st.success("✅ No missing invoices in ERP.")
 
     st.subheader("❌ Missing in Vendor (invoices found in ERP but not vendor)")
     if not ven_missing.empty:
-        st.dataframe(
-            ven_missing.style.applymap(lambda _: "background-color: #c62828; color: white"),
-            use_container_width=True,
-        )
+        st.dataframe(ven_missing.style.applymap(lambda _: "background-color: #c62828; color: white"),
+                     use_container_width=True)
     else:
         st.success("✅ No missing invoices in Vendor file.")
 
     st.download_button("⬇️ Matched CSV", matched.to_csv(index=False).encode("utf-8"), "matched.csv", "text/csv")
     st.download_button("⬇️ Missing ERP CSV", erp_missing.to_csv(index=False).encode("utf-8"), "missing_erp.csv", "text/csv")
     st.download_button("⬇️ Missing Vendor CSV", ven_missing.to_csv(index=False).encode("utf-8"), "missing_vendor.csv", "text/csv")
+
 else:
     st.info("Please upload both ERP and Vendor files to begin.")
