@@ -109,34 +109,6 @@ def match_invoices(erp_df, ven_df):
 
     erp_use = erp_df[erp_df["__doctype"].isin(["INV", "CN"])].copy()
     ven_use = ven_df[ven_df["__doctype"].isin(["INV", "CN"])].copy()
-        # ====== MERGE ERP CREDIT/INVOICE PAIRS ======
-    merged_rows = []
-    grouped = erp_use.groupby("invoice_erp", dropna=False)
-
-    for inv, group in grouped:
-        if len(group) == 1:
-            merged_rows.append(group.iloc[0])
-            continue
-
-        inv_rows = group[group["__doctype"] == "INV"]
-        cn_rows = group[group["__doctype"] == "CN"]
-
-        if not inv_rows.empty and not cn_rows.empty:
-            total_inv = inv_rows["__amt"].sum()
-            total_cn = cn_rows["__amt"].sum()
-            net = round(total_inv + total_cn, 2)  # CN amounts are negative in ERP
-
-            # Keep one line with net amount
-            base_row = inv_rows.iloc[0].copy()
-            base_row["__amt"] = net
-            merged_rows.append(base_row)
-        else:
-            # If only invoices or only CNs exist, keep all
-            for _, row in group.iterrows():
-                merged_rows.append(row)
-
-    erp_use = pd.DataFrame(merged_rows).reset_index(drop=True)
-
 
     # ====== CLEAN NUMERIC CORE ======
     def clean_core(v):
@@ -145,32 +117,8 @@ def match_invoices(erp_df, ven_df):
 
     erp_use["__core"] = erp_use["invoice_erp"].apply(clean_core)
     ven_use["__core"] = ven_use["invoice_ven"].apply(clean_core)
-        # ====== REMOVE CANCELLED OR DUPLICATE INVOICES ======
-    def remove_cancellations(df):
-        """Remove invoices where positive & negative entries cancel out, keeping only final valid ones."""
-        cleaned = []
-        grouped = df.groupby("invoice_erp" if "invoice_erp" in df.columns else "invoice_ven", dropna=False)
-        for inv, g in grouped:
-            if g.empty:
-                continue
-            # If both positive and negative of same absolute value exist → skip both
-            amounts = g["__amt"].round(2).tolist()
-            has_cancel_pair = any(a == -b for a in amounts for b in amounts if a != 0)
-            if has_cancel_pair:
-                # keep only entries not fully cancelled (e.g. small residuals or new final invoice)
-                g = g[~g["__amt"].isin([-x for x in amounts])]
-            # keep the last (usually latest) row if still duplicates
-            if not g.empty:
-                cleaned.append(g.iloc[-1])
-        return pd.DataFrame(cleaned)
 
-    erp_use = remove_cancellations(erp_use)
-    ven_use = remove_cancellations(ven_use)
-
-
-    # ====== MATCHING ======
-        # ====== MATCHING (strict rules with safe last-3 fallback) ======
-        # ====== MATCHING (enhanced last-digit rules) ======
+    # ====== MATCHING (strict + fuzzy hybrid) ======
     for e_idx, e in erp_use.iterrows():
         e_inv = str(e["invoice_erp"]).strip()
         e_core = e["__core"]
@@ -181,6 +129,17 @@ def match_invoices(erp_df, ven_df):
         best_v = None
 
         for v_idx, v in ven_use.iterrows():
+            if v_idx in used_vendor_rows:
+                continue
+
+            v_inv = str(v["invoice_ven"]).strip()
+            v_core = v["__core"]
+            v_amt = round(float(v["__amt"]), 2)
+            v_date = v.get("date_ven")
+
+            fuzzy = fuzz.ratio(e_inv, v_inv)
+            amt_close = abs(e_amt - v_amt) < 0.05
+
             # === Matching rules priority ===
             # 1️⃣ Exact invoice match
             exact_match = e_inv.lower().strip() == v_inv.lower().strip()
@@ -195,7 +154,7 @@ def match_invoices(erp_df, ven_df):
             three_match = (
                 len(e_last) >= 3 and len(v_last) >= 3 and
                 e_last[-3:] == v_last[-3:] and
-                abs(len(e_last) - len(v_last)) <= 1  # prevents 1016xxx ≠ 1001xxx
+                abs(len(e_last) - len(v_last)) <= 1
             )
 
             # 4️⃣ Short numeric suffix (INV0002 ↔ 2)
@@ -207,9 +166,6 @@ def match_invoices(erp_df, ven_df):
                     short_match = e_suffix.group(1).lstrip("0") == v_suffix.group(1).lstrip("0")
             except:
                 short_match = False
-
-            fuzzy = fuzz.ratio(e_inv, v_inv)
-            amt_close = abs(e_amt - v_amt) < 0.05
 
             # --- Weighted scoring ---
             score = (
@@ -223,47 +179,6 @@ def match_invoices(erp_df, ven_df):
             if score > best_score:
                 best_score = score
                 best_v = (v_idx, v_inv, v_core, v_amt, v_date)
-
-
-            # --- Uniqueness check for 3-digit endings
-            def is_unique_end(core, all_cores):
-                if len(core) < 3:
-                    return True
-                suffix = core[-3:]
-                return sum(1 for c in all_cores if str(c).endswith(suffix)) == 1
-
-            unique_erp = is_unique_end(e_core, erp_use["__core"])
-            unique_ven = is_unique_end(v_core, ven_use["__core"])
-
-            # --- Scoring logic
-                   # --- Uniqueness check for 3-digit endings
-            def is_unique_end(core, all_cores):
-                """Check if the last 3 digits are unique within all ERP/Vendor cores."""
-                if len(core) < 3:
-                    return True
-                ending = core[-3:]
-                return sum(1 for c in all_cores if c.endswith(ending)) == 1
-
-            # Check uniqueness in both datasets
-            unique_3_erp = is_unique_end(e_core, erp_use["__core"])
-            unique_3_vendor = is_unique_end(v_core, ven_use["__core"])
-
-            # --- Combined logic ---
-            three_match = last3_match and unique_3_erp and unique_3_vendor
-
-            # --- Composite scoring priority ---
-            score = (
-                (130 if exact_match else 0) +    # full match first
-                (90 if three_match else 0) +     # unique 3-digit match next
-                (70 if short_match else 0) +     # numeric suffix (INV0002 vs 2)
-                (50 if amt_close else 0) +       # amount near equal
-                fuzzy                            # fuzzy similarity bonus
-            )
-
-            if score > best_score:
-                best_score = score
-                best_v = (v_idx, v_inv, v_core, v_amt, v_date)
-
 
         if best_v and best_score >= 120:
             v_idx, v_inv, v_core, v_amt, v_date = best_v
@@ -296,7 +211,6 @@ def match_invoices(erp_df, ven_df):
     all_erp_tokens = set().union(*erp_tokens.values()) if len(erp_tokens) else set()
     all_ven_tokens = set().union(*ven_tokens.values()) if len(ven_tokens) else set()
 
-    # --- Missing in ERP ---
     ven_missing_list = []
     for _, row in ven_use.iterrows():
         inv = str(row["invoice_ven"])
@@ -306,7 +220,6 @@ def match_invoices(erp_df, ven_df):
         if len(extract_tokens(core) & all_erp_tokens) == 0:
             ven_missing_list.append(row)
 
-    # --- Missing in Vendor ---
     vendor_missing_list = []
     for _, row in erp_use.iterrows():
         inv = str(row["invoice_erp"])
@@ -316,7 +229,6 @@ def match_invoices(erp_df, ven_df):
         if len(extract_tokens(core) & all_ven_tokens) == 0:
             vendor_missing_list.append(row)
 
-    # --- Create ERP Missing DataFrame ---
     if ven_missing_list:
         combined_rows = []
         for r in ven_missing_list:
@@ -330,7 +242,6 @@ def match_invoices(erp_df, ven_df):
     else:
         missing_erp_final = pd.DataFrame(columns=["Date", "Invoice", "Amount"])
 
-    # --- Create Vendor Missing DataFrame ---
     if vendor_missing_list:
         vendor_combined = []
         for r in vendor_missing_list:
@@ -344,7 +255,6 @@ def match_invoices(erp_df, ven_df):
     else:
         missing_vendor_final = pd.DataFrame(columns=["Date", "Invoice", "Amount"])
 
-    # --- Cleanup ---
     if isinstance(matched, list):
         matched = pd.DataFrame(matched)
     if not isinstance(missing_erp_final, pd.DataFrame):
