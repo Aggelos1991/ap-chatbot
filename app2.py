@@ -149,6 +149,7 @@ def match_invoices(erp_df, ven_df):
     core = max(nums, key=len)
     return core[-4:] if len(core) > 4 else core
 
+
         # ====== REMOVE CANCELLED OR DUPLICATE INVOICES ======
     def remove_cancellations(df):
         """Remove invoices where positive & negative entries cancel out, keeping only final valid ones."""
