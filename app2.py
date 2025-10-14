@@ -36,39 +36,28 @@ def normalize_number(v):
 def normalize_columns(df, tag):
     """Map multilingual headers to unified names — fully optimized for Spanish vendor statements."""
     mapping = {
-        # 🔢 Invoice / Document number detection
         "invoice": [
             "invoice", "factura", "fact", "nº", "num", "numero", "número",
             "document", "doc", "ref", "referencia", "nº factura", "num factura"
         ],
-
-        # 💳 Credit note / Abono / Haber detection
         "credit": [
             "credit", "haber", "credito", "crédito", "nota de crédito", "nota crédito",
             "abono", "abonos", "importe haber", "valor haber"
         ],
-
-        # 💰 Debit / Document Value / Total detection
         "debit": [
             "debit", "debe", "cargo", "importe", "importe total", "valor", "monto",
             "amount", "document value", "charge",
             "total", "totale", "totales", "totals",
             "base imponible", "importe factura", "importe neto"
         ],
-
-        # 🗒️ Reason / Description detection
         "reason": [
             "reason", "motivo", "concepto", "descripcion", "descripción",
             "descriptivo", "detalle", "detalles", "razon", "razón",
             "observaciones", "comentario", "comentarios", "explicacion"
         ],
-
-        # 🧾 CIF / VAT / NIF detection
         "cif": [
             "cif", "nif", "vat", "iva", "tax", "id fiscal", "número fiscal", "num fiscal"
         ],
-
-        # 📅 Date detection
         "date": [
             "date", "fecha", "fech", "data", "fecha factura", "fecha doc", "fecha documento"
         ],
@@ -92,6 +81,9 @@ def normalize_columns(df, tag):
     return out
 
 
+# ======================================
+# CORE MATCHING
+# ======================================
 def match_invoices(erp_df, ven_df):
     matched = []
     used_vendor_rows = set()
@@ -192,7 +184,7 @@ def match_invoices(erp_df, ven_df):
     all_erp_tokens = set().union(*erp_tokens.values()) if len(erp_tokens) else set()
     all_ven_tokens = set().union(*ven_tokens.values()) if len(ven_tokens) else set()
 
-    # --- Missing in ERP (vendor invoices with no shared 3+ digits in ANY ERP invoice) ---
+    # --- Missing in ERP ---
     ven_missing_list = []
     for _, row in ven_use.iterrows():
         inv = str(row["invoice_ven"])
@@ -202,7 +194,7 @@ def match_invoices(erp_df, ven_df):
         if len(extract_tokens(core) & all_erp_tokens) == 0:
             ven_missing_list.append(row)
 
-    # --- Missing in Vendor (ERP invoices with no shared 3+ digits in ANY vendor invoice) ---
+    # --- Missing in Vendor ---
     vendor_missing_list = []
     for _, row in erp_use.iterrows():
         inv = str(row["invoice_erp"])
@@ -241,56 +233,6 @@ def match_invoices(erp_df, ven_df):
         missing_vendor_final = pd.DataFrame(columns=["Date", "Invoice", "Amount"])
 
     # --- Cleanup ---
-        if isinstance(matched, list):
-        matched = pd.DataFrame(matched)
-    if not isinstance(missing_erp_final, pd.DataFrame):
-        missing_erp_final = pd.DataFrame(missing_erp_final)
-    if not isinstance(missing_vendor_final, pd.DataFrame):
-        missing_vendor_final = pd.DataFrame(missing_vendor_final)
-
-    for df in [matched, missing_erp_final, missing_vendor_final]:
-        if not df.empty and "Invoice" in df.columns:
-            df["Invoice"] = df["Invoice"].astype(str).str.strip()
-
-    return matched, missing_erp_final, missing_vendor_final
-
-
-
-
-    # --- Create clean DataFrames ---
-    # --- Create clean DataFrames (remove NaN/None rows) ---
-    if ven_missing_list:
-        combined_rows = []
-        for r in ven_missing_list:
-            rec = {}
-            # unify column names whether it came from ERP or Vendor
-            rec["Date"] = r.get("date_ven") or r.get("date_erp")
-            rec["Invoice"] = r.get("invoice_ven") or r.get("invoice_erp")
-            rec["Amount"] = r.get("__amt")
-            # skip completely empty or None rows
-            if rec["Invoice"] and str(rec["Invoice"]).lower() != "none":
-                combined_rows.append(rec)
-        missing_erp_final = pd.DataFrame(combined_rows)
-    else:
-        missing_erp_final = pd.DataFrame(columns=["Date", "Invoice", "Amount"])
-
-    # Remove any accidental blank or duplicate rows
-    if not missing_erp_final.empty:
-        missing_erp_final = (
-            missing_erp_final.dropna(subset=["Invoice"])
-            .query("Invoice != 'None'")
-            .drop_duplicates(subset=["Invoice"])
-            .reset_index(drop=True)
-        )
-
-    # Missing in Vendor now always empty
-      # Missing in Vendor now always empty
-   # --- Create Vendor Missing DataFrame ---
-missing_vendor_final = pd.DataFrame(columns=["Date", "Invoice", "Amount"])
-
-
-
-   # ✅ Ensure all outputs are DataFrames
     if isinstance(matched, list):
         matched = pd.DataFrame(matched)
     if not isinstance(missing_erp_final, pd.DataFrame):
@@ -298,7 +240,6 @@ missing_vendor_final = pd.DataFrame(columns=["Date", "Invoice", "Amount"])
     if not isinstance(missing_vendor_final, pd.DataFrame):
         missing_vendor_final = pd.DataFrame(missing_vendor_final)
 
-    # ✅ Force Invoice column to string (important for codes like AB123)
     for df in [matched, missing_erp_final, missing_vendor_final]:
         if not df.empty and "Invoice" in df.columns:
             df["Invoice"] = df["Invoice"].astype(str).str.strip()
@@ -309,14 +250,12 @@ missing_vendor_final = pd.DataFrame(columns=["Date", "Invoice", "Amount"])
 # ======================================
 # STREAMLIT UI
 # ======================================
-
 uploaded_erp = st.file_uploader("📂 Upload ERP Export (Excel)", type=["xlsx"])
 uploaded_vendor = st.file_uploader("📂 Upload Vendor Statement (Excel)", type=["xlsx"])
 
 if uploaded_erp and uploaded_vendor:
     erp_raw = pd.read_excel(uploaded_erp, dtype=str)
     ven_raw = pd.read_excel(uploaded_vendor, dtype=str)
-
 
     erp_df = normalize_columns(erp_raw, "erp")
     ven_df = normalize_columns(ven_raw, "ven")
@@ -354,15 +293,19 @@ if uploaded_erp and uploaded_vendor:
 
     st.subheader("❌ Missing in ERP (invoices found in vendor but not ERP)")
     if not erp_missing.empty:
-        st.dataframe(erp_missing.style.applymap(lambda _: "background-color: #c62828; color: white"),
-                     use_container_width=True)
+        st.dataframe(
+            erp_missing.style.applymap(lambda _: "background-color: #c62828; color: white"),
+            use_container_width=True,
+        )
     else:
         st.success("✅ No missing invoices in ERP.")
 
     st.subheader("❌ Missing in Vendor (invoices found in ERP but not vendor)")
     if not ven_missing.empty:
-        st.dataframe(ven_missing.style.applymap(lambda _: "background-color: #c62828; color: white"),
-                     use_container_width=True)
+        st.dataframe(
+            ven_missing.style.applymap(lambda _: "background-color: #c62828; color: white"),
+            use_container_width=True,
+        )
     else:
         st.success("✅ No missing invoices in Vendor file.")
 
