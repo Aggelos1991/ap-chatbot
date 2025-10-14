@@ -253,12 +253,24 @@ def match_invoices(erp_df, ven_df):
         )
 
     # Missing in Vendor now always empty
+      # Missing in Vendor now always empty
     missing_vendor_final = pd.DataFrame(columns=["Date", "Invoice", "Amount"])
- # ✅ Convert Amount column to numeric (if text)
+
+    # ✅ Ensure all outputs are DataFrames
+    if isinstance(matched, list):
+        matched = pd.DataFrame(matched)
+    if not isinstance(missing_erp_final, pd.DataFrame):
+        missing_erp_final = pd.DataFrame(missing_erp_final)
+    if not isinstance(missing_vendor_final, pd.DataFrame):
+        missing_vendor_final = pd.DataFrame(missing_vendor_final)
+
+    # ✅ Convert Amount column to numeric (if exists)
     for df in [matched, missing_erp_final, missing_vendor_final]:
-        if "Amount" in df.columns:
+        if not df.empty and "Amount" in df.columns:
             df["Amount"] = pd.to_numeric(df["Amount"], errors="coerce").fillna(0.0)
-    return pd.DataFrame(matched), missing_erp_final, missing_vendor_final
+
+    return matched, missing_erp_final, missing_vendor_final
+
 # ======================================
 # STREAMLIT UI
 # ======================================
