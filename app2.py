@@ -55,7 +55,7 @@ def normalize_columns(df, tag):
             "observaciones", "comentario", "comentarios", "explicacion"
         ],
         "cif": [
-            "cif", "nif", "vat", "iva", "tax", "id fiscal", "número fiscal", "num fiscal","code"
+            "cif", "nif", "vat", "iva", "tax", "id fiscal", "número fiscal", "num fiscal", "code"
         ],
         "date": [
             "date", "fecha", "fech", "data", "fecha factura", "fecha doc", "fecha documento"
@@ -100,12 +100,11 @@ def match_invoices(erp_df, ven_df):
     )
 
     # ====== VENDOR PREP ======
-    # ====== VENDOR PREP ======
-ven_df["__doctype"] = ven_df.apply(
-    lambda r: "CN" if normalize_number(r.get("debit_ven")) < 0 else "INV",
-    axis=1
-)
-ven_df["__amt"] = ven_df.apply(lambda r: abs(normalize_number(r.get("debit_ven"))), axis=1)
+    ven_df["__doctype"] = ven_df.apply(
+        lambda r: "CN" if normalize_number(r.get("debit_ven")) < 0 else "INV",
+        axis=1
+    )
+    ven_df["__amt"] = ven_df.apply(lambda r: abs(normalize_number(r.get("debit_ven"))), axis=1)
 
     erp_use = erp_df[erp_df["__doctype"].isin(["INV", "CN"])].copy()
     ven_use = ven_df[ven_df["__doctype"].isin(["INV", "CN"])].copy()
@@ -218,14 +217,6 @@ ven_df["__amt"] = ven_df.apply(lambda r: abs(normalize_number(r.get("debit_ven")
         m["Vendor Invoice"] = str(m["Vendor Invoice"]).strip().replace(".0", "")
 
     # ====== BUILD MISSING TABLES (SAFE + CORRECT LOGIC) ======
-    # Normalize all invoice IDs for accurate comparison
-    erp_use["invoice_erp"] = erp_use["invoice_erp"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
-    ven_use["invoice_ven"] = ven_use["invoice_ven"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
-    
-    for m in matched:
-        m["ERP Invoice"] = str(m["ERP Invoice"]).strip().replace(".0", "")
-        m["Vendor Invoice"] = str(m["Vendor Invoice"]).strip().replace(".0", "")
-    
     matched_erp = {m["ERP Invoice"] for m in matched}
     matched_ven = {m["Vendor Invoice"] for m in matched}
     
@@ -236,10 +227,7 @@ ven_df["__amt"] = ven_df.apply(lambda r: abs(normalize_number(r.get("debit_ven")
     erp_cols = safe_cols(erp_use, ["date_erp", "invoice_erp", "__amt"])
     ven_cols = safe_cols(ven_use, ["date_ven", "invoice_ven", "__amt"])
     
-    # ❌ Missing in ERP → exists in Vendor, not in ERP
     missing_in_erp = ven_use[~ven_use["invoice_ven"].isin(matched_ven)][ven_cols] if "invoice_ven" in ven_use.columns else pd.DataFrame()
-    
-    # ❌ Missing in Vendor → exists in ERP, not in Vendor
     missing_in_vendor = erp_use[~erp_use["invoice_erp"].isin(matched_erp)][erp_cols] if "invoice_erp" in erp_use.columns else pd.DataFrame()
     
     if not missing_in_erp.empty:
@@ -254,8 +242,6 @@ ven_df["__amt"] = ven_df.apply(lambda r: abs(normalize_number(r.get("debit_ven")
     
     matched_df = pd.DataFrame(matched)
     return matched_df, missing_in_erp, missing_in_vendor
-
-
 
 
 # ======================================
