@@ -128,6 +128,28 @@ def match_invoices(erp_df, ven_df):
 
     erp_use["__core"] = erp_use["invoice_erp"].apply(clean_core)
     ven_use["__core"] = ven_use["invoice_ven"].apply(clean_core)
+        # ====== REMOVE CANCELLED OR DUPLICATE INVOICES ======
+    def remove_cancellations(df):
+        """Remove invoices where positive & negative entries cancel out, keeping only final valid ones."""
+        cleaned = []
+        grouped = df.groupby("invoice_erp" if "invoice_erp" in df.columns else "invoice_ven", dropna=False)
+        for inv, g in grouped:
+            if g.empty:
+                continue
+            # If both positive and negative of same absolute value exist → skip both
+            amounts = g["__amt"].round(2).tolist()
+            has_cancel_pair = any(a == -b for a in amounts for b in amounts if a != 0)
+            if has_cancel_pair:
+                # keep only entries not fully cancelled (e.g. small residuals or new final invoice)
+                g = g[~g["__amt"].isin([-x for x in amounts])]
+            # keep the last (usually latest) row if still duplicates
+            if not g.empty:
+                cleaned.append(g.iloc[-1])
+        return pd.DataFrame(cleaned)
+
+    erp_use = remove_cancellations(erp_use)
+    ven_use = remove_cancellations(ven_use)
+
 
     # ====== INDEX BY LAST 3 DIGITS FOR SAFE UNIQUE MATCHES ======
     def last3_index(series):
