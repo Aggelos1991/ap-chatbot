@@ -179,26 +179,16 @@ def match_invoices(erp_df, ven_df):
             })
 
     # ====== BUILD MISSING TABLES ======
-    # ====== BUILD MISSING TABLES (3+ digit overlap aware) ======
-
-        # ====== BUILD MISSING TABLES (final fix) ======
-
-       # ====== BUILD MISSING TABLES (final symmetric logic) ======
-
-        # ====== BUILD MISSING TABLES (final clean symmetric fix) ======
-
     def extract_tokens(s: str):
         """Extract all 3+ digit sequences from an invoice string."""
         return set(re.findall(r"\d{3,}", str(s or "")))
 
-    # Build token sets for ERP and Vendor
     erp_tokens = {str(e): extract_tokens(e) for e in erp_use["__core"]}
     ven_tokens = {str(v): extract_tokens(v) for v in ven_use["__core"]}
 
     matched_erp_invs = {m["ERP Invoice"] for m in matched}
     matched_ven_invs = {m["Vendor Invoice"] for m in matched}
 
-    # Combine token pools
     all_erp_tokens = set().union(*erp_tokens.values()) if len(erp_tokens) else set()
     all_ven_tokens = set().union(*ven_tokens.values()) if len(ven_tokens) else set()
 
@@ -209,14 +199,61 @@ def match_invoices(erp_df, ven_df):
         core = str(row["__core"])
         if inv in matched_ven_invs:
             continue
-        # Missing if no 3-digit overlap with any ERP core
         if len(extract_tokens(core) & all_erp_tokens) == 0:
             ven_missing_list.append(row)
 
     # --- Missing in Vendor (ERP invoices with no shared 3+ digits in ANY vendor invoice) ---
-    # 👇 We merge this logic into Missing in ERP instead
-    # --- Missing in Vendor (ERP invoices with no shared 3+ digits in ANY vendor invoice) ---
-ven_missing_list.append(row)
+    vendor_missing_list = []
+    for _, row in erp_use.iterrows():
+        inv = str(row["invoice_erp"])
+        core = str(row["__core"])
+        if inv in matched_erp_invs:
+            continue
+        if len(extract_tokens(core) & all_ven_tokens) == 0:
+            vendor_missing_list.append(row)
+
+    # --- Create ERP Missing DataFrame ---
+    if ven_missing_list:
+        combined_rows = []
+        for r in ven_missing_list:
+            rec = {}
+            rec["Date"] = r.get("date_ven") or r.get("date_erp")
+            rec["Invoice"] = r.get("invoice_ven") or r.get("invoice_erp")
+            rec["Amount"] = r.get("__amt")
+            if rec["Invoice"] and str(rec["Invoice"]).lower() != "none":
+                combined_rows.append(rec)
+        missing_erp_final = pd.DataFrame(combined_rows)
+    else:
+        missing_erp_final = pd.DataFrame(columns=["Date", "Invoice", "Amount"])
+
+    # --- Create Vendor Missing DataFrame ---
+    if vendor_missing_list:
+        vendor_combined = []
+        for r in vendor_missing_list:
+            rec = {}
+            rec["Date"] = r.get("date_erp")
+            rec["Invoice"] = r.get("invoice_erp")
+            rec["Amount"] = r.get("__amt")
+            if rec["Invoice"] and str(rec["Invoice"]).lower() != "none":
+                vendor_combined.append(rec)
+        missing_vendor_final = pd.DataFrame(vendor_combined)
+    else:
+        missing_vendor_final = pd.DataFrame(columns=["Date", "Invoice", "Amount"])
+
+    # --- Cleanup ---
+    if isinstance(matched, list):
+        matched = pd.DataFrame(matched)
+    if not isinstance(missing_erp_final, pd.DataFrame):
+        missing_erp_final = pd.DataFrame(missing_erp_final)
+    if not isinstance(missing_vendor_final, pd.DataFrame):
+        missing_vendor_final = pd.DataFrame(missing_vendor_final)
+
+    for df in [matched, missing_erp_final, missing_vendor_final]:
+        if not df.empty and "Invoice" in df.columns:
+            df["Invoice"] = df["Invoice"].astype(str).str.strip()
+
+    return matched, missing_erp_final, missing_vendor_final
+
 
 
 
