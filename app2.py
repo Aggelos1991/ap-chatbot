@@ -190,36 +190,40 @@ def match_invoices(erp_df, ven_df):
     ven_use = remove_cancellations(ven_use)
 
    # ====== MATCHING (3 RULES ONLY) ======
+        # ====== MATCHING (3 RULES ONLY) ======
     for e_idx, e in erp_use.iterrows():
         e_inv = str(e["invoice_erp"]).strip()
         e_core = e["__core"]
         e_amt = round(float(e["__amt"]), 2)
         e_date = e.get("date_erp")
-    
+
         for v_idx, v in ven_use.iterrows():
             if v_idx in used_vendor_rows:
                 continue
-    
+
             v_inv = str(v["invoice_ven"]).strip()
             v_core = v["__core"]
             v_amt = round(float(v["__amt"]), 2)
             v_date = v.get("date_ven")
-    
-            # ✅ Always consider same invoice number as potential match
-            if e_inv == v_inv:
+
+            amt_close = abs(e_amt - v_amt) < 0.05
+
+            # Rule 1: Full invoice match
+            if e_inv == v_inv and amt_close:
                 match_type = "Full"
-            # ✅ Otherwise try relaxed matching
-            elif len(e_core) >= 3 and len(v_core) >= 3 and e_core[-3:] == v_core[-3:]:
+            # Rule 2: Last 3-digit match
+            elif len(e_core) >= 3 and len(v_core) >= 3 and e_core[-3:] == v_core[-3:] and amt_close:
                 match_type = "Last3"
-            elif e_core.lstrip("0") == v_core.lstrip("0"):
+            # Rule 3: Prefixless numeric match
+            elif e_core.lstrip("0") == v_core.lstrip("0") and amt_close:
                 match_type = "Prefixless"
             else:
                 continue
-    
-            # Difference logic (keeps both on main table)
+
+            used_vendor_rows.add(v_idx)
             diff = round(e_amt - v_amt, 2)
             status = "Match" if abs(diff) < 0.05 else "Difference"
-    
+
             matched.append({
                 "Date (ERP)": e_date,
                 "Date (Vendor)": v_date,
@@ -231,8 +235,6 @@ def match_invoices(erp_df, ven_df):
                 "Status": status,
                 "MatchType": match_type
             })
-    
-            used_vendor_rows.add(v_idx)
             break
 
     # ====== NORMALIZE AND BUILD MISSING TABLES ======
