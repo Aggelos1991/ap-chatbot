@@ -129,6 +129,26 @@ def match_invoices(erp_df, ven_df):
     erp_use["__core"] = erp_use["invoice_erp"].apply(clean_core)
     ven_use["__core"] = ven_use["invoice_ven"].apply(clean_core)
 
+    # ====== INDEX BY LAST 3 DIGITS FOR SAFE UNIQUE MATCHES ======
+    def last3_index(series):
+        index = {}
+        for i, val in series.items():
+            key = str(val)[-3:]
+            index.setdefault(key, []).append(i)
+        return index
+
+    erp_last3 = last3_index(erp_use["__core"])
+    ven_last3 = last3_index(ven_use["__core"])
+
+    def unique_last3_match(e_idx, e_core):
+        """Return vendor index if last3 unique in both sides."""
+        if len(e_core) < 3:
+            return None
+        last3 = e_core[-3:]
+        if last3 in erp_last3 and len(erp_last3[last3]) == 1 and last3 in ven_last3 and len(ven_last3[last3]) == 1:
+            return ven_last3[last3][0]
+        return None
+
     # ====== MATCHING (pick best vendor per ERP) ======
     for e_idx, e in erp_use.iterrows():
         e_inv = str(e["invoice_erp"]).strip()
@@ -148,10 +168,12 @@ def match_invoices(erp_df, ven_df):
             v_amt = round(float(v["__amt"]), 2)
             v_date = v.get("date_ven")
 
-            # === numeric overlap rule ===
             digits_erp = re.findall(r"\d{3,}", e_core)
             digits_ven = re.findall(r"\d{3,}", v_core)
-            three_match = any(d in v_core or v_core.endswith(d) or e_core.endswith(d) for d in digits_erp if len(d) >= 3)
+            three_match = any(
+                d in v_core or v_core.endswith(d) or e_core.endswith(d)
+                for d in digits_erp if len(d) >= 3
+            )
 
             fuzzy = fuzz.ratio(e_inv, v_inv)
             amt_close = abs(e_amt - v_amt) < 0.05
@@ -162,7 +184,15 @@ def match_invoices(erp_df, ven_df):
                 best_score = score
                 best_v = (v_idx, v_inv, v_core, v_amt, v_date)
 
-        if best_v and best_score >= 120:  # threshold for confident match
+        # === fallback: unique last-3 rule ===
+        if (not best_v or best_score < 120) and len(e_core) >= 3:
+            uidx = unique_last3_match(e_idx, e_core)
+            if uidx is not None:
+                v = ven_use.loc[uidx]
+                best_v = (uidx, v["invoice_ven"], v["__core"], v["__amt"], v.get("date_ven"))
+                best_score = 150  # confident unique last3 match
+
+        if best_v and best_score >= 120:
             v_idx, v_inv, v_core, v_amt, v_date = best_v
             used_vendor_rows.add(v_idx)
             diff = round(e_amt - v_amt, 2)
