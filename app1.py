@@ -66,7 +66,6 @@ def extract_raw_lines(uploaded_pdf):
 # ==========================================================
 def extract_with_gpt(lines):
     """Analyze extracted lines using GPT-4o-mini for structure & DEBE detection."""
-    # Split into manageable batches (to avoid token overflow)
     BATCH_SIZE = 200
     all_records = []
 
@@ -110,20 +109,22 @@ Lines:
             val = normalize_number(row.get("Document Value"))
             if val == "":
                 continue
-        reason = str(row.get("Reason", "")).lower()
-        alt_doc = str(row.get("Alternative Document", "")).lower()
 
-        # detect CN keywords anywhere (Reason or Document name)
-        is_credit = any(k in reason or k in alt_doc for k in [
-        "abono", "nota de crédito", "nota credito", "credit", "crédito", "nc", "cn"
-])
+            reason = str(row.get("Reason", "")).lower()
+            alt_doc = str(row.get("Alternative Document", "")).lower()
 
-# also if value comes from HABER or TOT/negative DEBE type line
-if (val < 0) or is_credit:
-    val = -abs(val)
-    reason = "Credit Note"
-else:
-    reason = "Invoice"
+            # detect CN keywords anywhere (Reason or Document name)
+            is_credit = any(k in reason or k in alt_doc for k in [
+                "abono", "nota de crédito", "nota credito", "credit", "crédito", "nc", "cn"
+            ])
+
+            # also if value comes from HABER or TOT/negative DEBE type line
+            if (val < 0) or is_credit:
+                val = -abs(val)
+                reason = "Credit Note"
+            else:
+                reason = "Invoice"
+
             all_records.append({
                 "Alternative Document": row.get("Alternative Document", "").strip(),
                 "Date": row.get("Date", "").strip(),
