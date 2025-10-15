@@ -51,7 +51,7 @@ def normalize_columns(df, tag):
         ],
         "reason": [
             "reason", "motivo", "concepto", "descripcion", "descripción",
-            "detalle", "razon", "razón",
+            "descriptivo", "detalle", "detalles", "razon", "razón",
             "observaciones", "comentario", "comentarios", "explicacion"
         ],
         "cif": [
@@ -93,21 +93,24 @@ def match_invoices(erp_df, ven_df):
         charge = normalize_number(row.get("debit_erp"))
         credit = normalize_number(row.get("credit_erp"))
 
-        # Ignore payments or transfers
-        if any(k in reason for k in [
+        # 🚫 Ignore payments / transfers (English + Spanish + prefixes)
+        if any(re.search(rf"\b{kw}", reason) for kw in [
             "pay", "paid", "payment", "repay", "prepay",
             "pago", "pag", "pagado", "pagos", "transfer", "transferencia", "transf",
             "bank", "saldo", "balance", "ajuste", "adjust", "trf"
         ]):
             return "IGNORE"
 
-        # Credit Note
-        elif any(k in reason for k in [
-            "credit", "credit note", "abono", "nota", "crédito", "nota crédito", "cn"
+        # 🔹 Credit Note (English + Spanish + abbreviations)
+        elif any(re.search(rf"\b{kw}", reason) for kw in [
+            "credit", "creditnote", "credit note", "credit-memo", "creditmemo",
+            "cred", "memo", "memo credito", "nota credito", "nota de credito",
+            "nota crédito", "nota de crédito", "nota abono", "abono", "nc",
+            "crédito", "credito", "cn"
         ]) or (charge > 0 and credit == 0):
             return "CN"
 
-        # Invoice
+        # 🔹 Invoice
         elif credit > 0 or any(k in reason for k in ["factura", "invoice", "inv", "rn:"]):
             return "INV"
 
@@ -122,9 +125,6 @@ def match_invoices(erp_df, ven_df):
         if doc == "INV":
             return abs(credit)
         elif doc == "CN":
-            # handle cases where CNs appear as negative credit or positive debit
-            if credit < 0:
-                return credit
             return -abs(charge if charge > 0 else credit)
         else:
             return 0.0
@@ -138,21 +138,24 @@ def match_invoices(erp_df, ven_df):
         debit = normalize_number(row.get("debit_ven"))
         credit = normalize_number(row.get("credit_ven"))
 
-        # Ignore payments / transfers
-        if any(k in reason for k in [
+        # 🚫 Ignore payments / transfers (English + Spanish + prefixes)
+        if any(re.search(rf"\b{kw}", reason) for kw in [
             "pay", "paid", "payment", "repay", "prepay",
             "pago", "pag", "pagado", "pagos", "transfer", "transferencia", "transf",
             "bank", "saldo", "balance", "ajuste", "adjust", "trf"
         ]):
             return "IGNORE"
 
-        # Credit Note logic
-        elif any(k in reason for k in [
-            "abono", "nota de crédito", "nota credito", "credit", "crédito", "cn", "nc"
-        ]) or credit > 0 or debit < 0:
+        # 🔹 Credit Note (English + Spanish + abbreviations)
+        elif any(re.search(rf"\b{kw}", reason) for kw in [
+            "credit", "creditnote", "credit note", "credit-memo", "creditmemo",
+            "cred", "memo", "memo credito", "nota credito", "nota de credito",
+            "nota crédito", "nota de crédito", "nota abono", "abono", "nc",
+            "crédito", "credito", "cn"
+        ]) or credit > 0:
             return "CN"
 
-        # Invoice
+        # 🔹 Invoice
         elif any(k in reason for k in ["factura", "invoice", "inv", "rn:"]) or debit > 0:
             return "INV"
 
@@ -167,8 +170,6 @@ def match_invoices(erp_df, ven_df):
         if doc == "INV":
             return abs(debit)
         elif doc == "CN":
-            if debit < 0:
-                return debit
             return -abs(credit if credit > 0 else debit)
         else:
             return 0.0
@@ -176,7 +177,7 @@ def match_invoices(erp_df, ven_df):
     ven_df["__doctype"] = ven_df.apply(detect_vendor_doc_type, axis=1)
     ven_df["__amt"] = ven_df.apply(calc_vendor_amount, axis=1)
 
-    # ====== FILTER ======
+    # ====== CONTINUE NORMAL FLOW ======
     erp_use = erp_df[erp_df["__doctype"].isin(["INV", "CN"])].copy()
     ven_use = ven_df[ven_df["__doctype"].isin(["INV", "CN"])].copy()
 
@@ -207,7 +208,8 @@ def match_invoices(erp_df, ven_df):
 
     # ====== CLEAN NUMERIC CORE ======
     def clean_core(v):
-        return re.sub(r"[^0-9]", "", str(v or ""))
+        s = re.sub(r"[^0-9]", "", str(v or ""))
+        return s
 
     erp_use["__core"] = erp_use["invoice_erp"].apply(clean_core)
     ven_use["__core"] = ven_use["invoice_ven"].apply(clean_core)
@@ -232,10 +234,12 @@ def match_invoices(erp_df, ven_df):
 
     # ====== MATCHING ======
     def extract_digits(v):
-        return re.sub(r"\D", "", str(v or "")).lstrip("0")
+        digits = re.sub(r"\D", "", str(v or ""))
+        return digits.lstrip("0")
 
     for e_idx, e in erp_use.iterrows():
-        e_inv, e_amt = str(e["invoice_erp"]).strip(), round(float(e["__amt"]), 2)
+        e_inv = str(e["invoice_erp"]).strip()
+        e_amt = round(float(e["__amt"]), 2)
         e_date = e.get("date_erp")
         e_digits = extract_digits(e_inv)
 
@@ -243,7 +247,8 @@ def match_invoices(erp_df, ven_df):
             if v_idx in used_vendor_rows:
                 continue
 
-            v_inv, v_amt = str(v["invoice_ven"]).strip(), round(float(v["__amt"]), 2)
+            v_inv = str(v["invoice_ven"]).strip()
+            v_amt = round(float(v["__amt"]), 2)
             v_date = v.get("date_ven")
             v_digits = extract_digits(v_inv)
 
@@ -253,10 +258,12 @@ def match_invoices(erp_df, ven_df):
             if e_inv == v_inv:
                 match_type = "Full"
                 status = "Match" if amt_close else "Difference"
-            elif e_digits and v_digits and (
-                e_digits == v_digits or
-                e_digits.endswith(v_digits) or
-                v_digits.endswith(e_digits)
+            elif (
+                e_digits and v_digits and (
+                    e_digits == v_digits or
+                    e_digits.endswith(v_digits) or
+                    v_digits.endswith(e_digits)
+                )
             ):
                 match_type = "StrongCore"
                 status = "Match" if amt_close else "Difference"
@@ -274,26 +281,41 @@ def match_invoices(erp_df, ven_df):
                 "Status": status,
                 "MatchType": match_type
             })
+
             used_vendor_rows.add(v_idx)
             break
 
-    # ====== BUILD MISSING TABLES ======
+    # ====== NORMALIZE AND BUILD MISSING TABLES ======
     erp_use["invoice_erp"] = erp_use["invoice_erp"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
     ven_use["invoice_ven"] = ven_use["invoice_ven"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
 
-    matched_df = pd.DataFrame(matched)
+    for m in matched:
+        m["ERP Invoice"] = str(m["ERP Invoice"]).strip().replace(".0", "")
+        m["Vendor Invoice"] = str(m["Vendor Invoice"]).strip().replace(".0", "")
+
     matched_erp = {m["ERP Invoice"] for m in matched}
     matched_ven = {m["Vendor Invoice"] for m in matched}
 
-    erp_cols = ["date_erp", "invoice_erp", "__amt"]
-    ven_cols = ["date_ven", "invoice_ven", "__amt"]
+    def safe_cols(df, possible_cols):
+        return [c for c in possible_cols if c in df.columns]
 
-    missing_in_erp = ven_use[~ven_use["invoice_ven"].isin(matched_ven)][ven_cols]
-    missing_in_vendor = erp_use[~erp_use["invoice_erp"].isin(matched_erp)][erp_cols]
+    erp_cols = safe_cols(erp_use, ["date_erp", "invoice_erp", "__amt"])
+    ven_cols = safe_cols(ven_use, ["date_ven", "invoice_ven", "__amt"])
 
-    missing_in_erp = missing_in_erp.rename(columns={"date_ven": "Date", "invoice_ven": "Invoice", "__amt": "Amount"})
-    missing_in_vendor = missing_in_vendor.rename(columns={"date_erp": "Date", "invoice_erp": "Invoice", "__amt": "Amount"})
+    missing_in_erp = ven_use[~ven_use["invoice_ven"].isin(matched_ven)][ven_cols] if "invoice_ven" in ven_use.columns else pd.DataFrame()
+    missing_in_vendor = erp_use[~erp_use["invoice_erp"].isin(matched_erp)][erp_cols] if "invoice_erp" in erp_use.columns else pd.DataFrame()
 
+    if not missing_in_erp.empty:
+        missing_in_erp = missing_in_erp.rename(columns={"date_ven": "Date", "invoice_ven": "Invoice", "__amt": "Amount"})
+    else:
+        missing_in_erp = pd.DataFrame(columns=["Date", "Invoice", "Amount"])
+
+    if not missing_in_vendor.empty:
+        missing_in_vendor = missing_in_vendor.rename(columns={"date_erp": "Date", "invoice_erp": "Invoice", "__amt": "Amount"})
+    else:
+        missing_in_vendor = pd.DataFrame(columns=["Date", "Invoice", "Amount"])
+
+    matched_df = pd.DataFrame(matched)
     return matched_df, missing_in_erp, missing_in_vendor
 
 
