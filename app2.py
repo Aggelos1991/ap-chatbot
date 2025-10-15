@@ -1,188 +1,366 @@
-import os, re, json
-import pdfplumber
-import pandas as pd
 import streamlit as st
-from io import BytesIO
-from openai import OpenAI
+import pandas as pd
+import re
 
-# ==========================================================
-# CONFIGURATION
-# ==========================================================
-st.set_page_config(page_title="🦅 DataFalcon Pro — Hybrid GPT Extractor", layout="wide")
-st.title("🦅 DataFalcon Pro — Hybrid Vendor Statement Extractor (Optimized)")
+# ======================================
+# CONFIG
+# ======================================
+st.set_page_config(page_title="🦖 ReconRaptor — Vendor Reconciliation", layout="wide")
+st.title("🦖 ReconRaptor — Vendor Invoice Reconciliation")
 
-# Load API key
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except:
-    pass
-
-api_key = os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY")
-if not api_key:
-    st.error("❌ No OpenAI API key found. Add it to .env or Streamlit Secrets.")
-    st.stop()
-
-client = OpenAI(api_key=api_key)
-MODEL = "gpt-4o-mini"
-
-# ==========================================================
+# ======================================
 # HELPERS
-# ==========================================================
-def normalize_number(value):
-    """Normalize decimals like 1.234,56 → 1234.56"""
-    if not value:
-        return ""
-    s = str(value).strip().replace(" ", "")
-    if "," in s and "." in s:
-        if s.rfind(",") > s.rfind("."):
+# ======================================
+def normalize_number(v):
+    """Convert numeric strings like '1.234,56' or '1,234.56' safely to float."""
+    if v is None:
+        return 0.0
+    s = str(v).strip()
+    s = re.sub(r"[^\d,.\-]", "", s)
+    if s.count(",") == 1 and s.count(".") == 1:
+        if s.find(",") > s.find("."):
             s = s.replace(".", "").replace(",", ".")
         else:
             s = s.replace(",", "")
-    elif "," in s:
+    elif s.count(",") == 1:
         s = s.replace(",", ".")
-    s = re.sub(r"[^\d.\-]", "", s)
+    elif s.count(".") > 1:
+        s = s.replace(".", "", s.count(".") - 1)
     try:
-        return round(float(s), 2)
+        return float(s)
     except:
-        return ""
+        return 0.0
 
-def extract_raw_lines(uploaded_pdf):
-    """Extract all text lines from every page of the PDF."""
-    all_lines = []
-    with pdfplumber.open(uploaded_pdf) as pdf:
-        for p_i, page in enumerate(pdf.pages, start=1):
-            text = page.extract_text()
-            if not text:
-                continue
-            for line in text.split("\n"):
-                if re.search(r"\d{1,3}(?:[.,]\d{3})*[.,]\d{2}", line):
-                    clean_line = " ".join(line.split())
-                    all_lines.append(clean_line)
-    return all_lines
 
-# ==========================================================
-# GPT EXTRACTOR
-# ==========================================================
-def extract_with_gpt(lines):
-    """Analyze extracted lines using GPT-4o-mini for structure & DEBE detection."""
-    # Split into manageable batches (to avoid token overflow)
-    BATCH_SIZE = 200
-    all_records = []
+def normalize_columns(df, tag):
+    """Map multilingual headers to unified names — optimized for Spanish vendor statements."""
+    mapping = {
+        "invoice": [
+            "invoice", "factura", "fact", "nº", "num", "numero", "número",
+            "document", "doc", "ref", "referencia", "nº factura", "num factura"
+        ],
+        "credit": [
+            "credit", "haber", "credito", "crédito", "nota de crédito", "nota crédito",
+            "abono", "abonos", "importe haber", "valor haber"
+        ],
+        "debit": [
+            "debit", "debe", "cargo", "importe", "importe total", "valor", "monto",
+            "amount", "document value", "charge",
+            "total", "totale", "totales", "totals",
+            "base imponible", "importe factura", "importe neto"
+        ],
+        "reason": [
+            "reason", "motivo", "concepto", "descripcion", "descripción",
+            "detalle", "razon", "razón",
+            "observaciones", "comentario", "comentarios", "explicacion"
+        ],
+        "cif": [
+            "cif", "nif", "vat", "iva", "tax", "id fiscal", "número fiscal", "num fiscal", "code"
+        ],
+        "date": [
+            "date", "fecha", "fech", "data", "fecha factura", "fecha doc", "fecha documento"
+        ],
+    }
 
-    for i in range(0, len(lines), BATCH_SIZE):
-        batch = lines[i:i + BATCH_SIZE]
-        text_block = "\n".join(batch)
+    rename_map = {}
+    cols_lower = {c: str(c).strip().lower() for c in df.columns}
 
-        prompt = f"""
-You are an expert Spanish accountant.
+    for k, vals in mapping.items():
+        for col, low in cols_lower.items():
+            if any(v in low for v in vals):
+                rename_map[col] = f"{k}_{tag}"
 
-Below are text lines from a vendor statement.
-Each line may contain multiple numbers — usually a DEBE (second-to-last) and a SALDO (last).
-Your job:
-1. Extract only the valid invoice or credit note lines.
-2. For each, return:
-   - "Alternative Document": invoice/reference number (e.g. 6--483, SerieFactura-Precodigo-Num FactCliente)
-   - "Date": dd/mm/yy or dd/mm/yyyy
-   - "Reason": "Invoice" or "Credit Note"
-   - "Document Value": the DEBE amount (second-to-last numeric value in the line)
-     • If line mentions ABONO, NOTA DE CRÉDITO, or CREDIT, make it negative.
-3. Ignore "Saldo", "Cobro", "Pago", "Remesa", "Banco", "Total", "Saldo Anterior".
-4. Output valid JSON array only.
-5. Ensure Document Value uses '.' for decimals and exactly two digits.
+    out = df.rename(columns=rename_map)
 
-Lines:
-\"\"\"{text_block}\"\"\"
-"""
+    for required in ["debit", "credit"]:
+        cname = f"{required}_{tag}"
+        if cname not in out.columns:
+            out[cname] = 0.0
 
-        try:
-            response = client.responses.create(model=MODEL, input=prompt)
-            content = response.output_text.strip()
-            json_match = re.search(r"\[.*\]", content, re.DOTALL)
-            json_text = json_match.group(0) if json_match else content
-            data = json.loads(json_text)
-        except Exception as e:
-            st.warning(f"⚠️ GPT failed on batch {i//BATCH_SIZE + 1}: {e}")
+    return out
+
+
+# ======================================
+# CORE MATCHING
+# ======================================
+def match_invoices(erp_df, ven_df):
+    matched = []
+    used_vendor_rows = set()
+
+    # ====== ERP PREP ======
+    def detect_erp_doc_type(row):
+        reason = str(row.get("reason_erp", "")).lower()
+        charge = normalize_number(row.get("debit_erp"))
+        credit = normalize_number(row.get("credit_erp"))
+
+        # Ignore payments or transfers
+        if any(k in reason for k in [
+            "pay", "paid", "payment", "repay", "prepay",
+            "pago", "pag", "pagado", "pagos", "transfer", "transferencia", "transf",
+            "bank", "saldo", "balance", "ajuste", "adjust", "trf"
+        ]):
+            return "IGNORE"
+
+        # Credit Note
+        elif any(k in reason for k in [
+            "credit", "credit note", "abono", "nota", "crédito", "nota crédito", "cn"
+        ]) or (charge > 0 and credit == 0):
+            return "CN"
+
+        # Invoice
+        elif credit > 0 or any(k in reason for k in ["factura", "invoice", "inv", "rn:"]):
+            return "INV"
+
+        else:
+            return "UNKNOWN"
+
+    def calc_erp_amount(row):
+        doc = row.get("__doctype", "")
+        charge = normalize_number(row.get("debit_erp"))
+        credit = normalize_number(row.get("credit_erp"))
+
+        if doc == "INV":
+            return abs(credit)
+        elif doc == "CN":
+            # handle cases where CNs appear as negative credit or positive debit
+            if credit < 0:
+                return credit
+            return -abs(charge if charge > 0 else credit)
+        else:
+            return 0.0
+
+    erp_df["__doctype"] = erp_df.apply(detect_erp_doc_type, axis=1)
+    erp_df["__amt"] = erp_df.apply(calc_erp_amount, axis=1)
+
+    # ====== VENDOR PREP ======
+    def detect_vendor_doc_type(row):
+        reason = str(row.get("reason_ven", "")).lower()
+        debit = normalize_number(row.get("debit_ven"))
+        credit = normalize_number(row.get("credit_ven"))
+
+        # Ignore payments / transfers
+        if any(k in reason for k in [
+            "pay", "paid", "payment", "repay", "prepay",
+            "pago", "pag", "pagado", "pagos", "transfer", "transferencia", "transf",
+            "bank", "saldo", "balance", "ajuste", "adjust", "trf"
+        ]):
+            return "IGNORE"
+
+        # Credit Note logic
+        elif any(k in reason for k in [
+            "abono", "nota de crédito", "nota credito", "credit", "crédito", "cn", "nc"
+        ]) or credit > 0 or debit < 0:
+            return "CN"
+
+        # Invoice
+        elif any(k in reason for k in ["factura", "invoice", "inv", "rn:"]) or debit > 0:
+            return "INV"
+
+        else:
+            return "UNKNOWN"
+
+    def calc_vendor_amount(row):
+        debit = normalize_number(row.get("debit_ven"))
+        credit = normalize_number(row.get("credit_ven"))
+        doc = row.get("__doctype", "")
+
+        if doc == "INV":
+            return abs(debit)
+        elif doc == "CN":
+            if debit < 0:
+                return debit
+            return -abs(credit if credit > 0 else debit)
+        else:
+            return 0.0
+
+    ven_df["__doctype"] = ven_df.apply(detect_vendor_doc_type, axis=1)
+    ven_df["__amt"] = ven_df.apply(calc_vendor_amount, axis=1)
+
+    # ====== FILTER ======
+    erp_use = erp_df[erp_df["__doctype"].isin(["INV", "CN"])].copy()
+    ven_use = ven_df[ven_df["__doctype"].isin(["INV", "CN"])].copy()
+
+    # ====== MERGE ERP CREDIT/INVOICE PAIRS ======
+    merged_rows = []
+    grouped = erp_use.groupby("invoice_erp", dropna=False)
+
+    for inv, group in grouped:
+        if len(group) == 1:
+            merged_rows.append(group.iloc[0])
             continue
 
-        # ======================================================
-        # ENHANCED CREDIT DETECTION LOGIC (ONLY THIS PART CHANGED)
-        # ======================================================
-        for row in data:
-            val = normalize_number(row.get("Document Value"))
-            if val == "":
+        inv_rows = group[group["__doctype"] == "INV"]
+        cn_rows = group[group["__doctype"] == "CN"]
+
+        if not inv_rows.empty and not cn_rows.empty:
+            total_inv = inv_rows["__amt"].sum()
+            total_cn = cn_rows["__amt"].sum()
+            net = round(total_inv + total_cn, 2)
+            base_row = inv_rows.iloc[0].copy()
+            base_row["__amt"] = net
+            merged_rows.append(base_row)
+        else:
+            for _, row in group.iterrows():
+                merged_rows.append(row)
+
+    erp_use = pd.DataFrame(merged_rows).reset_index(drop=True)
+
+    # ====== CLEAN NUMERIC CORE ======
+    def clean_core(v):
+        return re.sub(r"[^0-9]", "", str(v or ""))
+
+    erp_use["__core"] = erp_use["invoice_erp"].apply(clean_core)
+    ven_use["__core"] = ven_use["invoice_ven"].apply(clean_core)
+
+    # ====== REMOVE CANCELLED ======
+    def remove_cancellations(df):
+        cleaned = []
+        grouped = df.groupby("invoice_erp" if "invoice_erp" in df.columns else "invoice_ven", dropna=False)
+        for inv, g in grouped:
+            if g.empty:
+                continue
+            amounts = g["__amt"].round(2).tolist()
+            has_cancel_pair = any(a == -b for a in amounts for b in amounts if a != 0)
+            if has_cancel_pair:
+                g = g[~g["__amt"].isin([-x for x in amounts])]
+            if not g.empty:
+                cleaned.append(g.iloc[-1])
+        return pd.DataFrame(cleaned)
+
+    erp_use = remove_cancellations(erp_use)
+    ven_use = remove_cancellations(ven_use)
+
+    # ====== MATCHING ======
+    def extract_digits(v):
+        return re.sub(r"\D", "", str(v or "")).lstrip("0")
+
+    for e_idx, e in erp_use.iterrows():
+        e_inv, e_amt = str(e["invoice_erp"]).strip(), round(float(e["__amt"]), 2)
+        e_date = e.get("date_erp")
+        e_digits = extract_digits(e_inv)
+
+        for v_idx, v in ven_use.iterrows():
+            if v_idx in used_vendor_rows:
                 continue
 
-            reason_raw = row.get("Reason", "").lower()
-            alt_doc = row.get("Alternative Document", "").strip().lower()
+            v_inv, v_amt = str(v["invoice_ven"]).strip(), round(float(v["__amt"]), 2)
+            v_date = v.get("date_ven")
+            v_digits = extract_digits(v_inv)
 
-            credit_keywords = ["abono", "credit", "nota de crédito", "nc", "notacredito"]
-            payment_keywords = ["pago", "pagos", "cobro", "transferencia", "remesa", "banco", "saldo", "total", "totales"]
+            diff = round(e_amt - v_amt, 2)
+            amt_close = abs(diff) < 0.05
 
-            # ✅ Rule 1: Credit keywords → Credit Note
-            if any(k in reason_raw for k in credit_keywords):
-                val = -abs(val)
-                reason = "Credit Note"
-
-            # 🚫 Rule 2: Ignore payment/bank transactions
-            elif any(k in reason_raw for k in payment_keywords) or any(k in alt_doc for k in payment_keywords):
-                continue
-
-            # ⚖️ Rule 3: Credit column hints ("haber" or "credit")
-            elif any(k in reason_raw for k in ["haber", "credit"]):
-                val = -abs(val)
-                reason = "Credit Note"
-
-            # 🧾 Rule 4: Default → Invoice
+            if e_inv == v_inv:
+                match_type = "Full"
+                status = "Match" if amt_close else "Difference"
+            elif e_digits and v_digits and (
+                e_digits == v_digits or
+                e_digits.endswith(v_digits) or
+                v_digits.endswith(e_digits)
+            ):
+                match_type = "StrongCore"
+                status = "Match" if amt_close else "Difference"
             else:
-                reason = "Invoice"
+                continue
 
-            all_records.append({
-                "Alternative Document": row.get("Alternative Document", "").strip(),
-                "Date": row.get("Date", "").strip(),
-                "Reason": reason,
-                "Document Value": val
+            matched.append({
+                "Date (ERP)": e_date,
+                "Date (Vendor)": v_date,
+                "ERP Invoice": e_inv,
+                "Vendor Invoice": v_inv,
+                "ERP Amount": e_amt,
+                "Vendor Amount": v_amt,
+                "Difference": diff,
+                "Status": status,
+                "MatchType": match_type
             })
-        # ======================================================
+            used_vendor_rows.add(v_idx)
+            break
 
-    return all_records
+    # ====== BUILD MISSING TABLES ======
+    erp_use["invoice_erp"] = erp_use["invoice_erp"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
+    ven_use["invoice_ven"] = ven_use["invoice_ven"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
 
-def to_excel_bytes(records):
-    df = pd.DataFrame(records)
-    buf = BytesIO()
-    df.to_excel(buf, index=False)
-    buf.seek(0)
-    return buf
+    matched_df = pd.DataFrame(matched)
+    matched_erp = {m["ERP Invoice"] for m in matched}
+    matched_ven = {m["Vendor Invoice"] for m in matched}
 
-# ==========================================================
-# STREAMLIT APP
-# ==========================================================
-uploaded_pdf = st.file_uploader("📂 Upload Vendor Statement (PDF)", type=["pdf"])
+    erp_cols = ["date_erp", "invoice_erp", "__amt"]
+    ven_cols = ["date_ven", "invoice_ven", "__amt"]
 
-if uploaded_pdf:
-    with st.spinner("📄 Extracting text from all pages..."):
-        lines = extract_raw_lines(uploaded_pdf)
+    missing_in_erp = ven_use[~ven_use["invoice_ven"].isin(matched_ven)][ven_cols]
+    missing_in_vendor = erp_use[~erp_use["invoice_erp"].isin(matched_erp)][erp_cols]
 
-    if not lines:
-        st.warning("⚠️ No readable text lines found. Check if the PDF is scanned.")
+    missing_in_erp = missing_in_erp.rename(columns={"date_ven": "Date", "invoice_ven": "Invoice", "__amt": "Amount"})
+    missing_in_vendor = missing_in_vendor.rename(columns={"date_erp": "Date", "invoice_erp": "Invoice", "__amt": "Amount"})
+
+    return matched_df, missing_in_erp, missing_in_vendor
+
+
+# ======================================
+# STREAMLIT UI
+# ======================================
+uploaded_erp = st.file_uploader("📂 Upload ERP Export (Excel)", type=["xlsx"])
+uploaded_vendor = st.file_uploader("📂 Upload Vendor Statement (Excel)", type=["xlsx"])
+
+if uploaded_erp and uploaded_vendor:
+    erp_raw = pd.read_excel(uploaded_erp, dtype=str)
+    ven_raw = pd.read_excel(uploaded_vendor, dtype=str)
+
+    erp_df = normalize_columns(erp_raw, "erp")
+    ven_df = normalize_columns(ven_raw, "ven")
+
+    if "cif_ven" not in ven_df.columns or "cif_erp" not in erp_df.columns:
+        st.error("❌ Missing CIF/VAT columns.")
+        st.stop()
+
+    vendor_cifs = sorted({str(x).strip().upper() for x in ven_df["cif_ven"].dropna().unique() if str(x).strip()})
+    selected_cif = vendor_cifs[0] if len(vendor_cifs) == 1 else st.selectbox("Select Vendor CIF:", vendor_cifs)
+
+    erp_df = erp_df[erp_df["cif_erp"].astype(str).str.strip().str.upper() == selected_cif]
+    ven_df = ven_df[ven_df["cif_ven"].astype(str).str.strip().str.upper() == selected_cif]
+
+    with st.spinner("Reconciling invoices..."):
+        matched, erp_missing, ven_missing = match_invoices(erp_df, ven_df)
+
+    total_match = len(matched[matched["Status"] == "Match"]) if not matched.empty else 0
+    total_diff = len(matched[matched["Status"] == "Difference"]) if not matched.empty else 0
+    st.success(f"✅ Recon complete for CIF {selected_cif}: {total_match} matched, {total_diff} differences")
+
+    def highlight_row(row):
+        if row.get("Status") == "Match":
+            return ['background-color: #2e7d32; color: white'] * len(row)
+        elif row.get("Status") == "Difference":
+            return ['background-color: #f9a825; color: black'] * len(row)
+        else:
+            return [''] * len(row)
+
+    st.subheader("📊 Matched / Differences")
+    if not matched.empty:
+        st.dataframe(matched.style.apply(highlight_row, axis=1), use_container_width=True)
     else:
-        st.text_area("📄 Preview (first 25 lines):", "\n".join(lines[:25]), height=250)
+        st.info("No matches found.")
 
-        if st.button("🤖 Run Hybrid Extraction"):
-            with st.spinner("Analyzing data with GPT-4o-mini..."):
-                data = extract_with_gpt(lines)
+    st.subheader("❌ Missing in ERP (invoices found in vendor but not ERP)")
+    if not erp_missing.empty:
+        st.dataframe(
+            erp_missing.style.applymap(lambda _: "background-color: #c62828; color: white"),
+            use_container_width=True,
+        )
+    else:
+        st.success("✅ No missing invoices in ERP.")
 
-            if not data:
-                st.warning("⚠️ No structured invoice data detected.")
-            else:
-                df = pd.DataFrame(data)
-                st.success(f"✅ Extraction complete — {len(df)} valid records found.")
-                st.dataframe(df, use_container_width=True)
-                st.download_button(
-                    "⬇️ Download Excel",
-                    data=to_excel_bytes(data),
-                    file_name="vendor_statement_hybrid.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                )
+    st.subheader("❌ Missing in Vendor (invoices found in ERP but not vendor)")
+    if not ven_missing.empty:
+        st.dataframe(
+            ven_missing.style.applymap(lambda _: "background-color: #c62828; color: white"),
+            use_container_width=True,
+        )
+    else:
+        st.success("✅ No missing invoices in Vendor file.")
+
+    st.download_button("⬇️ Matched CSV", matched.to_csv(index=False).encode("utf-8"), "matched.csv", "text/csv")
+    st.download_button("⬇️ Missing ERP CSV", erp_missing.to_csv(index=False).encode("utf-8"), "missing_erp.csv", "text/csv")
+    st.download_button("⬇️ Missing Vendor CSV", ven_missing.to_csv(index=False).encode("utf-8"), "missing_vendor.csv", "text/csv")
 else:
-    st.info("Please upload a vendor statement PDF to begin.")
+    st.info("Please upload both ERP and Vendor files to begin.")
