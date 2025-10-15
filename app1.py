@@ -110,12 +110,20 @@ Lines:
             val = normalize_number(row.get("Document Value"))
             if val == "":
                 continue
-            reason = row.get("Reason", "").lower()
-            if any(k in reason for k in ["abono", "credit", "nota de crédito", "nc"]):
-                val = -abs(val)
-                reason = "Credit Note"
-            else:
-                reason = "Invoice"
+        reason = str(row.get("Reason", "")).lower()
+        alt_doc = str(row.get("Alternative Document", "")).lower()
+
+        # detect CN keywords anywhere (Reason or Document name)
+        is_credit = any(k in reason or k in alt_doc for k in [
+        "abono", "nota de crédito", "nota credito", "credit", "crédito", "nc", "cn"
+])
+
+# also if value comes from HABER or TOT/negative DEBE type line
+if (val < 0) or is_credit:
+    val = -abs(val)
+    reason = "Credit Note"
+else:
+    reason = "Invoice"
             all_records.append({
                 "Alternative Document": row.get("Alternative Document", "").strip(),
                 "Date": row.get("Date", "").strip(),
