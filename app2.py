@@ -101,9 +101,12 @@ def match_invoices(erp_df, ven_df):
         ]):
             return "IGNORE"
 
-        # 🔹 Credit Note
-        elif any(k in reason for k in [
-            "credit", "credit note", "abono", "nota", "crédito", "nota crédito", "cn"
+        # 🔹 Credit Note (English + Spanish + abbreviations)
+        elif any(re.search(rf"\b{kw}", reason) for kw in [
+            "credit", "creditnote", "credit note", "credit-memo", "creditmemo",
+            "cred", "memo", "memo credito", "nota credito", "nota de credito",
+            "nota crédito", "nota de crédito", "nota abono", "abono", "nc",
+            "crédito", "credito", "cn"
         ]) or (charge > 0 and credit == 0):
             return "CN"
 
@@ -143,9 +146,12 @@ def match_invoices(erp_df, ven_df):
         ]):
             return "IGNORE"
 
-        # 🔹 Credit Note
-        elif any(k in reason for k in [
-            "credit", "credit note", "nota", "nota credito", "crédito", "abono", "cn"
+        # 🔹 Credit Note (English + Spanish + abbreviations)
+        elif any(re.search(rf"\b{kw}", reason) for kw in [
+            "credit", "creditnote", "credit note", "credit-memo", "creditmemo",
+            "cred", "memo", "memo credito", "nota credito", "nota de credito",
+            "nota crédito", "nota de crédito", "nota abono", "abono", "nc",
+            "crédito", "credito", "cn"
         ]) or credit > 0:
             return "CN"
 
@@ -226,7 +232,7 @@ def match_invoices(erp_df, ven_df):
     erp_use = remove_cancellations(erp_use)
     ven_use = remove_cancellations(ven_use)
 
-    # ====== MATCHING (3 RULES ONLY) ======
+    # ====== MATCHING ======
     def extract_digits(v):
         digits = re.sub(r"\D", "", str(v or ""))
         return digits.lstrip("0")
