@@ -78,8 +78,48 @@ def normalize_columns(df, tag):
             out[cname] = 0.0
 
     return out
+def detect_doc_type(row):
+    reason = str(row.get("reason", "")).lower()
+    charge = normalize_number(row.get("charge"))
+    credit = normalize_number(row.get("credit"))
 
+    # 🚫 Ignore payments / transfers
+    if any(k in reason for k in [
+        "paid", "payment", "pago", "transfer", "transferencia", 
+        "bank", "saldo", "balance", "trf", "compensacion", "ajuste", "adjustment"
+    ]):
+        return "IGNORE"
 
+    # 🔹 Detect Credit Notes (Credit Notes can appear in charge or credit column)
+    elif (
+        any(k in reason for k in [
+            "credit", "credit note", "nota", "nota credito", "crédito", "abono", "cn"
+        ])
+        or charge > 0 and credit == 0  # charge only, typical credit note
+        or credit < 0                  # negative credit value, means reversal/credit
+    ):
+        return "CN"
+
+    # 🔹 Detect Invoices
+    elif credit > 0 or any(k in reason for k in [
+        "factura", "invoice", "inv", "rn:"
+    ]):
+        return "INV"
+
+    else:
+        return "UNKNOWN"
+def calc_amount(row):
+    doc = row.get("__doctype", "")
+    charge = normalize_number(row.get("charge"))
+    credit = normalize_number(row.get("credit"))
+
+    if doc == "INV":
+        return abs(credit)   # positive → we owe
+    elif doc == "CN":
+        # if credit note is found in charge or negative credit, make it negative
+        return -abs(charge if charge > 0 else credit)
+    else:
+        return 0.0           # ignore payments etc.
 # ======================================
 # CORE MATCHING
 # ======================================
@@ -88,47 +128,15 @@ def match_invoices(erp_df, ven_df):
     used_vendor_rows = set()
 
     # ====== ERP PREP ======
-    erp_df["__doctype"] = erp_df.apply(
-        lambda r: "CN" if normalize_number(r.get("debit_erp")) > 0
-        else ("INV" if normalize_number(r.get("credit_erp")) > 0 else "UNKNOWN"),
-        axis=1
-    )
-    erp_df["__amt"] = erp_df.apply(
-        lambda r: normalize_number(r["credit_erp"]) if r["__doctype"] == "INV"
-        else (-normalize_number(r["debit_erp"]) if r["__doctype"] == "CN" else 0.0),
-        axis=1
-    )
+    erp_df["__doctype"] = erp_df.apply(detect_doc_type, axis=1)
+    erp_df["__amt"] = erp_df.apply(calc_amount, axis=1)
+      
 
     # ====== VENDOR PREP ======
-    def detect_vendor_doc_type(row):
-        debit = normalize_number(row.get("debit_ven"))
-        credit = normalize_number(row.get("credit_ven"))
-
-        # ✅ Case 1: Credit Note explicitly in Credit column
-        if credit > 0:
-            return "CN"
-        # ✅ Case 2: Negative debit also means a Credit Note
-        elif debit < 0:
-            return "CN"
-        # ✅ Case 3: Normal invoice (positive debit)
-        elif debit > 0:
-            return "INV"
-        else:
-            return "UNKNOWN"
-
-    def calc_vendor_amount(row):
-        debit = normalize_number(row.get("debit_ven"))
-        credit = normalize_number(row.get("credit_ven"))
-        doc = row.get("__doctype", "")
-
-        if doc == "INV":
-            # Normal invoice = positive amount (we owe the vendor)
-            return abs(debit)
-        elif doc == "CN":
-            # Credit note = always negative impact
-            return -abs(credit if credit > 0 else debit)
-        else:
-            return 0.0
+    # ====== VENDOR PREP ======
+    ven_df["__doctype"] = ven_df.apply(detect_doc_type, axis=1)
+    ven_df["__amt"] = ven_df.apply(calc_amount, axis=1)
+    
 
     # Apply to vendor dataframe
     ven_df["__doctype"] = ven_df.apply(detect_vendor_doc_type, axis=1)
