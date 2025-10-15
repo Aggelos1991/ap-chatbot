@@ -56,7 +56,6 @@ def extract_raw_lines(uploaded_pdf):
             if not text:
                 continue
             for line in text.split("\n"):
-                # keep only lines with amounts (DEBE/HABER etc)
                 if re.search(r"\d{1,3}(?:[.,]\d{3})*[.,]\d{2}", line):
                     clean_line = " ".join(line.split())
                     all_lines.append(clean_line)
@@ -67,6 +66,7 @@ def extract_raw_lines(uploaded_pdf):
 # ==========================================================
 def extract_with_gpt(lines):
     """Analyze extracted lines using GPT-4o-mini for structure & DEBE detection."""
+    # Split into manageable batches (to avoid token overflow)
     BATCH_SIZE = 200
     all_records = []
 
@@ -84,9 +84,9 @@ Your job:
 2. For each, return:
    - "Alternative Document": invoice/reference number (e.g. 6--483, SerieFactura-Precodigo-Num FactCliente)
    - "Date": dd/mm/yy or dd/mm/yyyy
-   - "Reason": description text (e.g. Invoice, Credit Note, Pago, etc.)
+   - "Reason": "Invoice" or "Credit Note"
    - "Document Value": the DEBE amount (second-to-last numeric value in the line)
-   - "Credit": optional HABER value if present.
+     • If line mentions ABONO, NOTA DE CRÉDITO, or CREDIT, make it negative.
 3. Ignore "Saldo", "Cobro", "Pago", "Remesa", "Banco", "Total", "Saldo Anterior".
 4. Output valid JSON array only.
 5. Ensure Document Value uses '.' for decimals and exactly two digits.
@@ -110,31 +110,12 @@ Lines:
             val = normalize_number(row.get("Document Value"))
             if val == "":
                 continue
-
-            reason = str(row.get("Reason", "")).lower()
-            alt_doc = str(row.get("Alternative Document", "")).lower()
-            credit_val = normalize_number(row.get("Credit", ""))  # check if a HABER-like value exists
-
-            reason_text = reason + " " + alt_doc
-
-            # detect credit note keywords
-            is_credit = any(k in reason_text for k in [
-                "abono", "nota de crédito", "nota credito", "credit", "crédito", "nc", "cn"
-            ])
-
-            # detect payment/transfer to exclude
-            is_payment = any(k in reason_text for k in [
-                "pago", "pagos", "pagado", "cobro", "transfer", "transferencia",
-                "banco", "remesa", "saldo", "ajuste", "adjust", "trf"
-            ])
-
-            # classify
-            if ((val < 0) or is_credit or (credit_val and credit_val > 0)) and not is_payment:
+            reason = row.get("Reason", "").lower()
+            if any(k in reason for k in ["abono", "credit", "nota de crédito", "nc"]):
                 val = -abs(val)
                 reason = "Credit Note"
             else:
                 reason = "Invoice"
-
             all_records.append({
                 "Alternative Document": row.get("Alternative Document", "").strip(),
                 "Date": row.get("Date", "").strip(),
@@ -182,4 +163,4 @@ if uploaded_pdf:
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
 else:
-    st.info("Please upload a vendor statement PDF to begin.")
+    st.info("Please upload a vendor statement PDF to begin.") 
