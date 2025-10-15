@@ -88,85 +88,49 @@ def match_invoices(erp_df, ven_df):
     used_vendor_rows = set()
 
     # ====== ERP PREP ======
-    def detect_erp_doc_type(row):
-        reason = str(row.get("reason_erp", "")).lower()
-        debit = normalize_number(row.get("debit_erp"))
-        credit = normalize_number(row.get("credit_erp"))
-
-        # 🚫 Ignore payments / transfers
-        if any(k in reason for k in [
-            "payment", "paid", "transfer", "transferencia", "pago",
-            "bank", "saldo", "balance", "ajuste", "adjustment", "trf"
-        ]):
-            return "IGNORE"
-
-        # 🔹 Credit Note detection logic (based on text or value position)
-        elif any(k in reason for k in [
-            "credit", "credit note", "abono", "nota", "crédito", "nota crédito", "cn"
-        ]) or debit > 0 and credit == 0 or credit < 0:
-            return "CN"
-
-        # 🔹 Invoice (normal case)
-        elif credit > 0 or any(k in reason for k in ["factura", "invoice", "inv", "rn:"]):
-            return "INV"
-
-        else:
-            return "UNKNOWN"
-
-    def calc_erp_amount(row):
-        doc = row.get("__doctype", "")
-        debit = normalize_number(row.get("debit_erp"))
-        credit = normalize_number(row.get("credit_erp"))
-
-        if doc == "INV":
-            return abs(credit)   # invoice → positive
-        elif doc == "CN":
-            # credit note → negative (may appear in debit or as negative credit)
-            return -abs(debit if debit > 0 else credit)
-        else:
-            return 0.0           # ignore payments, etc.
-
-    erp_df["__doctype"] = erp_df.apply(detect_erp_doc_type, axis=1)
-    erp_df["__amt"] = erp_df.apply(calc_erp_amount, axis=1)
+    erp_df["__doctype"] = erp_df.apply(
+        lambda r: "CN" if normalize_number(r.get("debit_erp")) > 0
+        else ("INV" if normalize_number(r.get("credit_erp")) > 0 else "UNKNOWN"),
+        axis=1
+    )
+    erp_df["__amt"] = erp_df.apply(
+        lambda r: normalize_number(r["credit_erp"]) if r["__doctype"] == "INV"
+        else (-normalize_number(r["debit_erp"]) if r["__doctype"] == "CN" else 0.0),
+        axis=1
+    )
 
     # ====== VENDOR PREP ======
     def detect_vendor_doc_type(row):
-        reason = str(row.get("reason_ven", "")).lower()
         debit = normalize_number(row.get("debit_ven"))
         credit = normalize_number(row.get("credit_ven"))
 
-        # 🚫 Ignore payments / transfers
-        if any(k in reason for k in [
-            "payment", "paid", "transfer", "transferencia", "pago",
-            "bank", "saldo", "balance", "ajuste", "adjustment", "trf"
-        ]):
-            return "IGNORE"
-
-        # 🔹 Credit Note detection
-        elif any(k in reason for k in [
-            "credit", "credit note", "abono", "nota", "crédito", "nota crédito", "cn"
-        ]) or debit > 0 and credit == 0 or credit < 0:
+        # ✅ Case 1: Credit Note explicitly in Credit column
+        if credit > 0:
             return "CN"
-
-        # 🔹 Invoice detection
-        elif credit > 0 or any(k in reason for k in ["factura", "invoice", "inv", "rn:"]):
+        # ✅ Case 2: Negative debit also means a Credit Note
+        elif debit < 0:
+            return "CN"
+        # ✅ Case 3: Normal invoice (positive debit)
+        elif debit > 0:
             return "INV"
-
         else:
             return "UNKNOWN"
 
     def calc_vendor_amount(row):
-        doc = row.get("__doctype", "")
         debit = normalize_number(row.get("debit_ven"))
         credit = normalize_number(row.get("credit_ven"))
+        doc = row.get("__doctype", "")
 
         if doc == "INV":
-            return abs(credit)   # invoice → positive
+            # Normal invoice = positive amount (we owe the vendor)
+            return abs(debit)
         elif doc == "CN":
-            return -abs(debit if debit > 0 else credit)
+            # Credit note = always negative impact
+            return -abs(credit if credit > 0 else debit)
         else:
             return 0.0
 
+    # Apply to vendor dataframe
     ven_df["__doctype"] = ven_df.apply(detect_vendor_doc_type, axis=1)
     ven_df["__amt"] = ven_df.apply(calc_vendor_amount, axis=1)
 
@@ -225,8 +189,11 @@ def match_invoices(erp_df, ven_df):
     erp_use = remove_cancellations(erp_use)
     ven_use = remove_cancellations(ven_use)
 
-    # ====== MATCHING (3 RULES ONLY) ======
+   # ====== MATCHING (3 RULES ONLY) ======
+      
+        # ====== MATCHING (Full + Strong Prefix/Suffix Rules) ======
     def extract_digits(v):
+        """Extract numeric core from invoice codes."""
         digits = re.sub(r"\D", "", str(v or ""))
         return digits.lstrip("0")
 
@@ -246,14 +213,27 @@ def match_invoices(erp_df, ven_df):
             v_digits = extract_digits(v_inv)
 
             diff = round(e_amt - v_amt, 2)
-            amt_close = abs(diff) < 0.05
+            amt_close = abs(diff) < 0.05  # ±5 cent tolerance
 
+            # ✅ RULE 1: Full invoice number match (always include)
             if e_inv == v_inv:
                 match_type = "Full"
                 status = "Match" if amt_close else "Difference"
-            elif e_digits and v_digits and (e_digits == v_digits or e_digits.endswith(v_digits) or v_digits.endswith(e_digits)):
+
+            # ✅ RULE 2: Strong prefix/suffix match (only if not full match)
+            elif (
+                e_digits
+                and v_digits
+                and (
+                    e_digits == v_digits
+                    or e_digits.endswith(v_digits)
+                    or v_digits.endswith(e_digits)
+                )
+            ):
                 match_type = "StrongCore"
                 status = "Match" if amt_close else "Difference"
+
+            # 🚫 No match
             else:
                 continue
 
@@ -271,7 +251,6 @@ def match_invoices(erp_df, ven_df):
 
             used_vendor_rows.add(v_idx)
             break
-
     # ====== NORMALIZE AND BUILD MISSING TABLES ======
     erp_use["invoice_erp"] = erp_use["invoice_erp"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
     ven_use["invoice_ven"] = ven_use["invoice_ven"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
