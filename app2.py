@@ -97,7 +97,7 @@ def match_invoices(erp_df, ven_df):
         if any(re.search(rf"\b{kw}", reason) for kw in [
             "pay", "paid", "payment", "repay", "prepay",
             "pago", "pag", "pagado", "pagos", "transfer", "transferencia", "transf",
-            "bank", "saldo", "balance", "ajuste", "adjust", "trf"
+            "bank", "saldo", "balance", "ajuste", "adjust", "trf","Payment Receipt (e banking)"
         ]):
             return "IGNORE"
 
