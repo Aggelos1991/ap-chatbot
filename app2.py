@@ -138,10 +138,6 @@ def match_invoices(erp_df, ven_df):
     ven_df["__amt"] = ven_df.apply(calc_amount, axis=1)
     
 
-    # Apply to vendor dataframe
-    ven_df["__doctype"] = ven_df.apply(detect_vendor_doc_type, axis=1)
-    ven_df["__amt"] = ven_df.apply(calc_vendor_amount, axis=1)
-
     # ====== CONTINUE NORMAL FLOW ======
     erp_use = erp_df[erp_df["__doctype"].isin(["INV", "CN"])].copy()
     ven_use = ven_df[ven_df["__doctype"].isin(["INV", "CN"])].copy()
