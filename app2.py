@@ -100,21 +100,31 @@ def match_invoices(erp_df, ven_df):
     )
 
     # ====== VENDOR PREP ======
-    def detect_vendor_doc_type(row):
-        debit = normalize_number(row.get("debit_ven"))
-        credit = normalize_number(row.get("credit_ven"))
+   def detect_vendor_doc_type(row):
+    reason = str(row.get("reason_ven", "")).lower()
+    debit = normalize_number(row.get("debit_ven"))
+    credit = normalize_number(row.get("credit_ven"))
 
-        # ✅ Case 1: Credit Note explicitly in Credit column
-        if credit > 0:
-            return "CN"
-        # ✅ Case 2: Negative debit also means a Credit Note
-        elif debit < 0:
-            return "CN"
-        # ✅ Case 3: Normal invoice (positive debit)
-        elif debit > 0:
-            return "INV"
-        else:
-            return "UNKNOWN"
+    # 🚫 Ignore payments / transfers (English + Spanish + prefixes)
+    if any(re.search(rf"\b{kw}", reason) for kw in [
+        "pay", "paid", "payment", "repay", "prepay",
+        "pago", "pag", "pagado", "pagos", "transfer", "transferencia", "transf",
+        "bank", "saldo", "balance", "ajuste", "adjust", "trf"
+    ]):
+        return "IGNORE"
+
+    # 🔹 Credit Note
+    elif any(k in reason for k in [
+        "credit", "credit note", "nota", "nota credito", "crédito", "abono", "cn"
+    ]) or credit > 0:
+        return "CN"
+
+    # 🔹 Invoice
+    elif any(k in reason for k in ["factura", "invoice", "inv", "rn:"]) or debit > 0:
+        return "INV"
+
+    else:
+        return "UNKNOWN"
 
     def calc_vendor_amount(row):
         debit = normalize_number(row.get("debit_ven"))
