@@ -382,8 +382,8 @@ if uploaded_erp and uploaded_vendor:
     ven_df = normalize_columns(ven_raw, "ven")
 
     with st.spinner("Reconciling invoices..."):
-    matched, erp_missing, ven_missing = match_invoices(erp_df, ven_df)
-    erp_pay, ven_pay, matched_pay = extract_payments(erp_df, ven_df)
+        matched, erp_missing, ven_missing = match_invoices(erp_df, ven_df)
+        erp_pay, ven_pay, matched_pay = extract_payments(erp_df, ven_df)
 
     st.success("✅ Reconciliation complete")
 
