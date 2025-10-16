@@ -81,26 +81,29 @@ Below are text lines from a vendor statement.
 Each line may contain multiple numbers — usually labeled as DEBE, TOTAL, or TOTALE (document amount) and SALDO (balance).
 
 Your job:
-1. Extract only the valid invoice or credit note lines.
-2. For each, return:
-   - "Alternative Document": invoice/reference number (e.g. 6--483, SerieFactura-Precodigo-Num FactCliente)
+1. Extract only valid invoice or credit note lines.
+2. For each line, return:
+   - "Alternative Document": the document number (may appear under columns labeled Documento, Num, Nº, Numero, N.º, N°, Factura, or similar)
    - "Date": dd/mm/yy or dd/mm/yyyy
    - "Reason": "Invoice" or "Credit Note"
-   - "Document Value": 
-       • If the line contains a column labeled **DEBE**, take that numeric value.
-       • Otherwise, take the **last numeric value in the line**, which corresponds to **TOTAL** or **TOTALE**.
-       • Do **not** take numbers labeled as "Base", "Base imponible", "IVA", "Tipo", "Impuesto", or "Subtotal".
+   - "Document Value":
+       • If the line contains a column labeled DEBE, take that numeric value.
+       • Otherwise, take the **last numeric value in the line**, corresponding to TOTAL or TOTALE.
+       • Do **not** take numbers labeled as Base, Base imponible, IVA, Tipo, Impuesto, or Subtotal.
        • If the line mentions ABONO, NOTA DE CRÉDITO, or CREDIT, make the amount negative.
-3. Ignore lines containing or referring to any of the following words:
-   "Saldo", "Cobro", "Pago", "Remesa", "Banco", "Base", "Base imponible", "IVA", "Tipo", "Impuesto", "Subtotal", 
-   "Total general", "Saldo anterior", "Impuestos", or "Resumen".
-4. Only include a value if the line **explicitly contains DEBE, TOTAL, or TOTALE**, or if the **last column** represents the total document value.
+3. Ignore lines containing or referring to: 
+   "Saldo", "Cobro", "Pago", "Remesa", "Banco", "Base", "Base imponible", "IVA", "Tipo", "Impuesto", 
+   "Subtotal", "Total general", "Saldo anterior", "Impuestos", "Resumen".
+4. Only include a value if the line explicitly contains DEBE, TOTAL, or TOTALE, 
+   or if the last column represents the total document value.
 5. Output a valid JSON array only.
 6. Ensure "Document Value" uses '.' for decimals and exactly two digits.
+7. Do not return empty or null values for the document number — always capture it if visible.
 
 Lines:
 \"\"\"{text_block}\"\"\"
 """
+
 
 
         try:
