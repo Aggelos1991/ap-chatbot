@@ -103,17 +103,27 @@ def match_invoices(erp_df, ven_df):
         reason = str(row.get("reason_erp", "")).lower()
         charge = normalize_number(row.get("debit_erp"))
         credit = normalize_number(row.get("credit_erp"))
-        payment_words = ["pago", "payment", "transfer", "bank", "saldo", "trf",
-                         "πληρωμή", "μεταφορά", "τράπεζα", "τραπεζικό έμβασμα"]
-        credit_words = ["credit", "nota", "abono", "cn", "πιστωτικό", "πίστωση"]
-        invoice_words = ["factura", "invoice", "inv", "τιμολόγιο", "παραστατικό"]
-        if any(k in reason for k in payment_words):
+        payment_patterns = [
+                r"^πληρωμ",            # Greek "Πληρωμή", "Απόδειξη πληρωμής"
+                r"^απόδειξη\s*πληρωμ", # Greek full phrase
+                r"^payment",            # English: "Payment", "Payment to"
+                r"^bank\s*transfer",    # "Bank Transfer"
+                r"^trf",                # "TRF ..."
+                r"^remesa",             # Spanish
+                r"^pago",               # Spanish "Pago"
+                r"^transferencia",      # Spanish "Transferencia"
+            ]
+        if any(re.search(p, reason) for p in payment_patterns):
             return "IGNORE"
-        elif any(k in reason for k in credit_words):
-            return "CN"
-        elif any(k in reason for k in invoice_words) or credit > 0:
-            return "INV"
-        return "UNKNOWN"
+                credit_words = ["credit", "nota", "abono", "cn", "πιστωτικό", "πίστωση"]
+                invoice_words = ["factura", "invoice", "inv", "τιμολόγιο", "παραστατικό"]
+                if any(k in reason for k in payment_words):
+                    return "IGNORE"
+                elif any(k in reason for k in credit_words):
+                    return "CN"
+                elif any(k in reason for k in invoice_words) or credit > 0:
+                    return "INV"
+                return "UNKNOWN"
 
     def calc_erp_amount(row):
         doc = row.get("__doctype", "")
