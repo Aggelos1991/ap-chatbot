@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import re
-from datetime import datetime
 
 # ======================================
 # CONFIGURATION
@@ -230,75 +229,82 @@ if uploaded_erp and uploaded_vendor:
     erp_df = normalize_columns(erp_raw, "erp")
     ven_df = normalize_columns(ven_raw, "ven")
 
-    # ====== PREVIOUS YEAR CHECK ======
-    if "reason_erp" in erp_df.columns:
-        erp_df["reason_erp"] = erp_df["reason_erp"].astype(str).str.strip().str.lower()
-        if "credit_erp" in erp_df.columns or "debit_erp" in erp_df.columns:
-            credit_vals = erp_df["credit_erp"].apply(normalize_number) if "credit_erp" in erp_df else pd.Series(0)
-            debit_vals = erp_df["debit_erp"].apply(normalize_number) if "debit_erp" in erp_df else pd.Series(0)
-    
-            prev_mask = erp_df["reason_erp"].str.contains("previous year", na=False)
-            combined_vals = credit_vals.combine_first(debit_vals)
-    
-            # Filter only the rows with "previous year"
-            prev_rows = combined_vals[prev_mask]
-    
-            if not prev_rows.empty:
-                total_prev = prev_rows.sum()
-                if total_prev > 0:
-                    st.warning(f"⚠️ You have open amounts from previous years totaling **{total_prev:,.2f} EUR**.")
-                    if not st.button("✅ OK, continue"):
-                        st.stop()
-                elif total_prev < 0:
-                    st.warning(f"⚠️ You have a balance carried from previous years totaling **{total_prev:,.2f} EUR**.")
-                    if not st.button("✅ OK, continue"):
-                        st.stop()
-
-    # ====== FILE VALIDATION ======
-    if "cif_erp" not in erp_df.columns or "cif_ven" not in ven_df.columns:
-        st.error("❌ Missing CIF/VAT columns.")
-        st.stop()
-
-    vendor_cifs = sorted({str(x).strip().upper() for x in ven_df["cif_ven"].dropna().unique()})
-    selected_cif = vendor_cifs[0] if len(vendor_cifs) == 1 else st.selectbox("Select Vendor CIF:", vendor_cifs)
-
-    erp_df = erp_df[erp_df["cif_erp"].astype(str).str.upper() == selected_cif]
-    ven_df = ven_df[ven_df["cif_ven"].astype(str).str.upper() == selected_cif]
-
-    # ====== RECONCILIATION ======
     with st.spinner("Reconciling invoices..."):
         matched, erp_missing, ven_missing = match_invoices(erp_df, ven_df)
         erp_pay, ven_pay, matched_pay = extract_payments(erp_df, ven_df)
 
-    st.success(f"✅ Reconciliation complete for CIF {selected_cif}")
+    st.success("✅ Reconciliation complete")
 
-    # ====== TABLES ======
+    # ====== HIGHLIGHTING ======
+    def highlight_row(row):
+        if row["Status"] == "Match":
+            return ['background-color: #2e7d32; color: white'] * len(row)
+        elif row["Status"] == "Difference":
+            return ['background-color: #f9a825; color: black'] * len(row)
+        return [''] * len(row)
+
+    # ====== MATCHED ======
     st.subheader("📊 Matched / Differences")
     if not matched.empty:
-        st.dataframe(matched, use_container_width=True)
+        st.dataframe(matched.style.apply(highlight_row, axis=1), use_container_width=True)
     else:
         st.info("No matches found.")
+
+    # ====== MISSING ======
+    st.subheader("❌ Missing in ERP (found in vendor but not in ERP)")
+    if not erp_missing.empty:
+        st.dataframe(
+            erp_missing.style.applymap(lambda _: "background-color: #c62828; color: white"),
+            use_container_width=True,
+        )
+    else:
+        st.success("✅ No missing invoices in ERP.")
+
+    st.subheader("❌ Missing in Vendor (found in ERP but not in vendor)")
+    if not ven_missing.empty:
+        st.dataframe(
+            ven_missing.style.applymap(lambda _: "background-color: #c62828; color: white"),
+            use_container_width=True,
+        )
+    else:
+        st.success("✅ No missing invoices in Vendor.")
 
     # ====== PAYMENTS ======
     st.subheader("🏦 Payment Transactions (Identified in both sides)")
     col1, col2 = st.columns(2)
     with col1:
-        st.markdown("**ERP Payments**")
-        st.dataframe(erp_pay, use_container_width=True)
+        st.markdown("**💼 ERP Payments**")
         if not erp_pay.empty:
+            st.dataframe(
+                erp_pay.style.applymap(lambda _: "background-color: #004d40; color: white"),
+                use_container_width=True,
+            )
             st.markdown(f"**Total ERP Payments:** {erp_pay['Amount'].sum():,.2f} EUR")
-    with col2:
-        st.markdown("**Vendor Payments**")
-        st.dataframe(ven_pay, use_container_width=True)
-        if not ven_pay.empty:
-            st.markdown(f"**Total Vendor Payments:** {ven_pay['Amount'].sum():,.2f} EUR")
+        else:
+            st.info("No ERP payments found.")
 
+    with col2:
+        st.markdown("**🧾 Vendor Payments**")
+        if not ven_pay.empty:
+            st.dataframe(
+                ven_pay.style.applymap(lambda _: "background-color: #1565c0; color: white"),
+                use_container_width=True,
+            )
+            st.markdown(f"**Total Vendor Payments:** {ven_pay['Amount'].sum():,.2f} EUR")
+        else:
+            st.info("No Vendor payments found.")
+
+    st.markdown("### ✅ Matched Payments")
     if not matched_pay.empty:
-        st.markdown("### ✅ Matched Payments")
-        st.dataframe(matched_pay, use_container_width=True)
-        st.markdown(f"**Total Matched ERP Payments:** {matched_pay['ERP Amount'].sum():,.2f} EUR")
-        st.markdown(f"**Total Matched Vendor Payments:** {matched_pay['Vendor Amount'].sum():,.2f} EUR")
-        diff_total = abs(matched_pay['ERP Amount'].sum() - matched_pay['Vendor Amount'].sum())
+        st.dataframe(
+            matched_pay.style.applymap(lambda _: "background-color: #2e7d32; color: white"),
+            use_container_width=True,
+        )
+        total_erp = matched_pay["ERP Amount"].sum()
+        total_vendor = matched_pay["Vendor Amount"].sum()
+        diff_total = abs(total_erp - total_vendor)
+        st.markdown(f"**Total Matched ERP Payments:** {total_erp:,.2f} EUR")
+        st.markdown(f"**Total Matched Vendor Payments:** {total_vendor:,.2f} EUR")
         st.markdown(f"**Difference Between ERP and Vendor Payments:** {diff_total:,.2f} EUR")
     else:
         st.info("No matching payments found.")
