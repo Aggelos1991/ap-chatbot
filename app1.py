@@ -65,7 +65,7 @@ def extract_raw_lines(uploaded_pdf):
 # GPT EXTRACTOR
 # ==========================================================
 def extract_with_gpt(lines):
-    """Analyze extracted lines using GPT-4o-mini for structure & DEBE/Χρέωση detection."""
+    """Analyze extracted lines using GPT-4o-mini for invoices, credit notes, and payment detections."""
     BATCH_SIZE = 200
     all_records = []
 
@@ -79,29 +79,27 @@ You are a multilingual accountant specializing in Spanish and Greek vendor state
 Below are text lines from a vendor statement (possibly in Spanish, Greek, or English).
 
 Each line may contain multiple numbers — usually labeled as:
-- Spanish: DEBE, TOTAL, TOTALE, SALDO
-- Greek: ΧΡΕΩΣΗ, ΠΙΣΤΩΣΗ, ΣΥΝΟΛΟ, ΥΠΟΛΟΙΠΟ
+- Spanish: DEBE, HABER, TOTAL, TOTALE, SALDO, COBRO, PAGO, EFECTO, REMESA
+- Greek: ΧΡΕΩΣΗ, ΠΙΣΤΩΣΗ, ΣΥΝΟΛΟ, ΥΠΟΛΟΙΠΟ, ΠΛΗΡΩΜΗ, ΤΡΑΠΕΖΑ, ΤΡΑΠΕΖΙΚΟ ΕΜΒΑΣΜΑ, ΜΕΤΑΦΟΡΑ
 
 Your job:
-1. Extract only valid invoice or credit note lines.
+1. Extract only valid **invoice**, **credit note**, or **payment** lines.
 2. For each line, return:
-   - "Alternative Document": the document number (under labels Documento, Num, Nº, Numero, N.º, N°, Factura, Τιμολόγιο, Παραστατικό, or similar)
+   - "Alternative Document": document number (under Documento, Num, Nº, Numero, N°, Factura, Τιμολόγιο, Παραστατικό, or similar)
    - "Date": dd/mm/yy or dd/mm/yyyy
-   - "Reason": "Invoice" or "Credit Note"
+   - "Reason": text describing the line (e.g. "Factura", "Abono", "Πληρωμή", "Τραπεζικό Έμβασμα")
    - "Document Value":
-       • If the line contains DEBE, ΧΡΕΩΣΗ, TOTAL, or ΣΥΝΟΛΟ, take that numeric value.
-       • Otherwise, take the **last numeric value** in the line, corresponding to TOTAL/TOTALE/ΣΥΝΟΛΟ.
-       • Do **not** take numbers labeled as Base, Βάση, IVA, ΦΠΑ, Tipo, Impuesto, Subtotal, Υποσύνολο.
-       • If the line mentions ABONO, NOTA DE CRÉDITO, ΠΙΣΤΩΤΙΚΟ, or ΑΚΥΡΩΤΙΚΟ, make the amount negative.
-3. Ignore lines referring to:
-   "Saldo", "Cobro", "Pago", "Remesa", "Banco", 
-   "Base", "Base imponible", "IVA", "Tipo", "Impuesto", 
-   "Subtotal", "Total general", "Saldo anterior", "Impuestos", "Resumen",
-   "Πληρωμή", "Μεταφορά", "Τράπεζα", "Υπόλοιπο", "Προηγούμενο Υπόλοιπο".
-4. Only include a value if the line explicitly contains DEBE, ΧΡΕΩΣΗ, TOTAL, TOTALE, or ΣΥΝΟΛΟ.
-5. Output a valid JSON array only.
-6. Ensure "Document Value" uses '.' for decimals and exactly two digits.
-7. Do not return empty or null values for the document number — always capture it if visible.
+       • If the line contains DEBE, ΧΡΕΩΣΗ, TOTAL, take that numeric value.
+       • If it's a Credit Note (ABONO, NOTA DE CRÉDITO, ΠΙΣΤΩΤΙΚΟ, ΑΚΥΡΩΤΙΚΟ), make the value negative.
+   - "Payment Value":
+       • If the line refers to payment or transfer (Cobro, Pago, Remesa, Efecto, Πληρωμή, Τράπεζα, Τραπεζικό Έμβασμα, Μεταφορά), 
+         extract the HABER / ΠΙΣΤΩΣΗ / CREDIT numeric value.
+       • If both DEBE and HABER appear, assign DEBE to "Document Value" and HABER to "Payment Value".
+3. Ignore lines referring only to summaries:
+   "Saldo anterior", "Total general", "Base", "IVA", "Impuesto", "Resumen", "Υπόλοιπο", "Προηγούμενο Υπόλοιπο", "ΦΠΑ", "Βάση", "Υποσύνολο".
+4. Always output a valid JSON array.
+5. Ensure numeric values use '.' for decimals and exactly two digits.
+6. Do not leave empty or null document numbers when visible.
 
 Lines:
 \"\"\"{text_block}\"\"\"
@@ -119,21 +117,28 @@ Lines:
 
         for row in data:
             val = normalize_number(row.get("Document Value"))
-            if val == "":
+            pay = normalize_number(row.get("Payment Value"))
+
+            if val == "" and pay == "":
                 continue
+
             reason = row.get("Reason", "").lower()
-            # Greek + Spanish credit note terms
-            if any(k in reason for k in ["abono", "credit", "nota de crédito", "nc", "πιστω", "ακυρωτικ"]):
+
+            # --- Classify type ---
+            if any(k in reason for k in ["abono", "credit", "nota de crédito", "nc", "πιστωτικό", "ακυρωτικό"]):
                 val = -abs(val)
-                reason = "Credit Note"
+                doc_type = "Credit Note"
+            elif any(k in reason for k in ["pago", "remesa", "cobro", "efecto", "transferencia", "πληρωμή", "τράπεζα", "έμβασμα", "μεταφορά"]):
+                doc_type = "Payment"
             else:
-                reason = "Invoice"
+                doc_type = "Invoice"
 
             all_records.append({
                 "Alternative Document": row.get("Alternative Document", "").strip(),
                 "Date": row.get("Date", "").strip(),
-                "Reason": reason,
-                "Document Value": val
+                "Reason": doc_type,
+                "Document Value": val,
+                "Payment Value": pay
             })
 
     return all_records
