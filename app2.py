@@ -115,13 +115,7 @@ def match_invoices(erp_df, ven_df):
             return "IGNORE"
         credit_words = ["credit", "nota", "abono", "cn", "πιστωτικό", "πίστωση"]
         invoice_words = ["factura", "invoice", "inv", "τιμολόγιο", "παραστατικό"]
-        if any(k in reason for k in payment_words):
-                    return "IGNORE"
-        elif any(k in reason for k in credit_words):
-                    return "CN"
-        elif any(k in reason for k in invoice_words) or credit > 0:
-                return "INV"
-                return "UNKNOWN"
+       
 
     def calc_erp_amount(row):
         doc = row.get("__doctype", "")
