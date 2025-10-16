@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import re
+from difflib import SequenceMatcher
 
 # ======================================
 # CONFIGURATION
@@ -181,17 +182,24 @@ def match_invoices(erp_df, ven_df):
 
     # ====== NEW SMART MATCHING LOGIC (ONLY CHANGE) ======
     def clean_invoice_code(v):
-        """Normalize invoice numbers by removing prefixes, years, and non-digits."""
-        if not v:
-            return ""
-        s = str(v).strip().lower()
-        # Remove prefixes and common tags
-        s = re.sub(r"^(αρ|τιμ|pf|ab|inv|tim|cn|ar|pa|πφ|πα)\W*", "", s)
-        # Remove year patterns
-        s = re.sub(r"(^20\d{2}[\W/\\-]*)|([\W/\\-]*20\d{2}$)", "", s)
-        # Keep only digits
-        s = re.sub(r"\D", "", s)
-        return s.lstrip("0")
+    """Cleans invoice numbers by removing prefixes, years, special chars, and leading zeros."""
+    if not v:
+        return ""
+    s = str(v).strip().lower()
+
+    # Remove common Greek + Latin prefixes (real AP patterns)
+    s = re.sub(r"^(αρ|τιμ|pf|ab|inv|tim|cn|ar|pa|πφ|πα)\W*", "", s)
+
+    # Remove any year pattern (start or end)
+    s = re.sub(r"(^20\d{2}[\W/\\-]*)|([\W/\\-]*20\d{2}$)", "", s)
+
+    # Remove all special chars
+    s = re.sub(r"[^a-z0-9]", "", s)
+
+    # Remove leading zeros
+    s = re.sub(r"^0+", "", s)
+
+    return s
 
     for e_idx, e in erp_use.iterrows():
         e_inv = str(e.get("invoice_erp", "")).strip()
@@ -214,8 +222,9 @@ def match_invoices(erp_df, ven_df):
                     e_code.endswith(v_code) or v_code.endswith(e_code)
                 )
             )
-
-            if same_full or same_clean or partial_match:
+                # Compute fuzzy similarity ratio between cleaned codes
+            score = SequenceMatcher(None, e_code, v_code).ratio()
+            if same_full or same_clean or partial_match or score > 0.85:
                 matched.append({
                     "ERP Invoice": e_inv,
                     "Vendor Invoice": v_inv,
