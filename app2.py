@@ -104,21 +104,24 @@ def match_invoices(erp_df, ven_df):
         charge = normalize_number(row.get("debit_erp"))
         credit = normalize_number(row.get("credit_erp"))
 
-        # Unified multilingual keywords
-        payment_words = [
-            "pago", "payment", "transfer", "bank", "saldo", "trf",
-            "πληρωμή", "μεταφορά", "τράπεζα", "τραπεζικό έμβασμα"
+        # Unified multilingual keywords/patterns
+        payment_patterns = [
+            r"^πληρωμ",             # Greek "Πληρωμή"
+            r"^απόδειξη\s*πληρωμ",  # Greek "Απόδειξη πληρωμής"
+            r"^payment",            # English: "Payment"
+            r"^bank\s*transfer",    # "Bank Transfer"
+            r"^trf",                # "TRF ..."
+            r"^remesa",             # Spanish
+            r"^pago",               # Spanish
+            r"^transferencia",      # Spanish
         ]
-        credit_words = [
-            "credit", "nota", "abono", "cn", "πιστωτικό", "πίστωση"
-        ]
-        invoice_words = [
-            "factura", "invoice", "inv", "τιμολόγιο", "παραστατικό"
-        ]
-
-        if any(k in reason for k in payment_words):
+        if any(re.search(p, reason) for p in payment_patterns):
             return "IGNORE"
-        elif any(k in reason for k in credit_words):
+
+        credit_words = ["credit", "nota", "abono", "cn", "πιστωτικό", "πίστωση"]
+        invoice_words = ["factura", "invoice", "inv", "τιμολόγιο", "παραστατικό"]
+
+        if any(k in reason for k in credit_words):
             return "CN"
         elif any(k in reason for k in invoice_words) or credit > 0:
             return "INV"
@@ -206,22 +209,48 @@ def match_invoices(erp_df, ven_df):
     def extract_digits(v):
         return re.sub(r"\D", "", str(v or "")).lstrip("0")
 
+    # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+    # Add missing cleaner so we can compute e_code / v_code
+    def clean_invoice_code(v):
+        """
+        Normalize invoice strings for comparison:
+        - drop common prefixes
+        - remove year snippets (20xx)
+        - strip non-alphanumerics
+        - keep only digits and trim leading zeros
+        """
+        if not v:
+            return ""
+        s = str(v).strip().lower()
+        s = re.sub(r"^(αρ|τιμ|pf|ab|inv|tim|cn|ar|pa|πφ|πα|apo|ref|doc|num|no)\W*", "", s)
+        s = re.sub(r"20\d{2}", "", s)
+        s = re.sub(r"[^a-z0-9]", "", s)
+        s = re.sub(r"^0+", "", s)
+        # keep only digits for the final compare (like earlier logic)
+        s = re.sub(r"[^\d]", "", s)
+        return s
+    # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+
     for e_idx, e in erp_use.iterrows():
         e_inv = str(e.get("invoice_erp", "")).strip()
         e_amt = round(float(e["__amt"]), 2)
         e_digits = extract_digits(e_inv)
+        e_code = clean_invoice_code(e_inv)  # <<< compute cleaned code
+
         for v_idx, v in ven_use.iterrows():
             if v_idx in used_vendor_rows:
                 continue
             v_inv = str(v.get("invoice_ven", "")).strip()
             v_amt = round(float(v["__amt"]), 2)
             v_digits = extract_digits(v_inv)
+            v_code = clean_invoice_code(v_inv)  # <<< compute cleaned code
             diff = round(e_amt - v_amt, 2)
             amt_close = abs(diff) < 0.05
+
             # --- Υποψήφιοι έλεγχοι ομοιότητας ---
             same_full  = (e_inv == v_inv)
             same_clean = (e_code == v_code)
-            
+
             len_diff = abs(len(e_code) - len(v_code))
             suffix_ok = (
                 len(e_code) > 2 and len(v_code) > 2 and
@@ -229,19 +258,17 @@ def match_invoices(erp_df, ven_df):
                     e_code.endswith(v_code) or v_code.endswith(e_code)
                 )
             )
-            
+
             same_type = (e["__doctype"] == v["__doctype"])
-            
+
             # --- ΝΕΟΣ κανόνας αποδοχής ---
-            # 1) Αν είναι ακριβές ίδιο string και ίδιο type, δέσμευσέ το (ακόμα κι αν ποσά διαφέρουν)
             if same_type and same_full:
                 take_it = True
-            # 2) Για clean/suffix θέλουμε και εγγύτητα ποσών
             elif same_type and (same_clean or suffix_ok) and amt_close:
                 take_it = True
             else:
                 take_it = False
-            
+
             if take_it:
                 matched.append({
                     "ERP Invoice": e_inv,
