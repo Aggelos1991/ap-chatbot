@@ -82,10 +82,10 @@ Each line may contain multiple numbers — usually a DEBE (second-to-last) and a
 Your job:
 1. Extract only the valid invoice or credit note lines.
 2. For each, return:
-   - "Alternative Document": invoice/reference number (e.g. 6--483, SerieFactura-Precodigo-Num FactCliente)
-   - "Date": dd/mm/yy or dd/mm/yyyy
-   - "Reason": "Invoice" or "Credit Note"
-   - "Document Value": the DEBE amount (second-to-last numeric value in the line)
+    - "Alternative Document": invoice/reference number (e.g. 6--483, SerieFactura-Precodigo-Num FactCliente)
+    - "Date": dd/mm/yy or dd/mm/yyyy
+    - "Reason": "Invoice" or "Credit Note"
+    - "Document Value": the amount shown under DEBE, TOTAL, or TOTALE (normally the second-to-last numeric value in the line)
      • If line mentions ABONO, NOTA DE CRÉDITO, or CREDIT, make it negative.
 3. Ignore "Saldo", "Cobro", "Pago", "Remesa", "Banco", "Base", "Saldo Anterior".
 4. Output valid JSON array only.
