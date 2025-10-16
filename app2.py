@@ -3,6 +3,18 @@ import pandas as pd
 import re
 from datetime import datetime
 
+st.set_option("client.showErrorDetails", False)
+st.markdown(
+    """
+    <style>
+    section.main {scroll-behavior: smooth;}
+    div.stForm {position: sticky; bottom: 0; background-color: #0e1117; padding: 1rem; border-radius: 10px;}
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+
 # ======================================
 # CONFIGURATION
 # ======================================
@@ -330,26 +342,25 @@ if uploaded_erp and uploaded_vendor:
     else:
         st.info("No matching payments found.")
 
-# ====== CHAT PROMPT (Stable & Scroll-Safe) ======
-with st.expander("💬 Ask ReconRaptor about Payments", expanded=True):
-    with st.form("ask_recon_form", clear_on_submit=True):
-        query = st.text_input("Type your question (e.g. 'sum of ERP payments'):")
-        ask_button = st.form_submit_button("Ask")
+# ====== CHAT PROMPT (No reset / scroll-safe) ======
+st.markdown("---")
+with st.form("ask_recon_form", clear_on_submit=False):
+    query = st.text_input("💬 Ask ReconRaptor about Payments (e.g. 'sum of ERP payments'):")
+    ask_button = st.form_submit_button("Ask")
 
-    if ask_button and query:
-        q = query.lower()
-        if "vendor" in q:
-            total = ven_pay["Amount"].sum() if "Amount" in ven_pay else 0
-            st.success(f"💰 Total Vendor Payments: **{total:,.2f} EUR**")
-        elif "erp" in q:
-            total = erp_pay["Amount"].sum() if "Amount" in erp_pay else 0
-            st.success(f"💰 Total ERP Payments: **{total:,.2f} EUR**")
-        elif "difference" in q or "compare" in q:
-            diff = abs(
-                (erp_pay["Amount"].sum() if "Amount" in erp_pay else 0) -
-                (ven_pay["Amount"].sum() if "Amount" in ven_pay else 0)
-            )
-            st.info(f"📊 Difference between ERP and Vendor payments: **{diff:,.2f} EUR**")
-        else:
-            st.warning("I can answer about ERP payments, vendor payments, or differences.")
-
+if ask_button and query:
+    q = query.lower()
+    if "vendor" in q:
+        total = ven_pay["Amount"].sum() if "Amount" in ven_pay else 0
+        st.success(f"💰 Total Vendor Payments: **{total:,.2f} EUR**")
+    elif "erp" in q:
+        total = erp_pay["Amount"].sum() if "Amount" in erp_pay else 0
+        st.success(f"💰 Total ERP Payments: **{total:,.2f} EUR**")
+    elif "difference" in q or "compare" in q:
+        diff = abs(
+            (erp_pay["Amount"].sum() if "Amount" in erp_pay else 0) -
+            (ven_pay["Amount"].sum() if "Amount" in ven_pay else 0)
+        )
+        st.info(f"📊 Difference between ERP and Vendor payments: **{diff:,.2f} EUR**")
+    else:
+        st.warning("I can answer about ERP payments, vendor payments, or differences.")
