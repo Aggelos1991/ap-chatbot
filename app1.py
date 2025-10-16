@@ -87,7 +87,7 @@ Your job:
    - "Reason": "Invoice" or "Credit Note"
    - "Document Value": the DEBE amount (second-to-last numeric value in the line)
      • If line mentions ABONO, NOTA DE CRÉDITO, or CREDIT, make it negative.
-3. Ignore "Saldo", "Cobro", "Pago", "Remesa", "Banco", "Total", "Saldo Anterior".
+3. Ignore "Saldo", "Cobro", "Pago", "Remesa", "Banco", "Base", "Saldo Anterior".
 4. Output valid JSON array only.
 5. Ensure Document Value uses '.' for decimals and exactly two digits.
 
