@@ -99,33 +99,40 @@ def match_invoices(erp_df, ven_df):
     matched = []
     used_vendor_rows = set()
 
-    def detect_erp_doc_type(row):
-        reason = str(row.get("reason_erp", "")).lower()
-        charge = normalize_number(row.get("debit_erp"))
-        credit = normalize_number(row.get("credit_erp"))
+  def detect_erp_doc_type(row):
+    reason = str(row.get("reason_erp", "")).lower()
+    charge = normalize_number(row.get("debit_erp"))
+    credit = normalize_number(row.get("credit_erp"))
 
-        # Unified multilingual keywords/patterns
-        payment_patterns = [
-            r"^πληρωμ",             # Greek "Πληρωμή"
-            r"^απόδειξη\s*πληρωμ",  # Greek "Απόδειξη πληρωμής"
-            r"^payment",            # English: "Payment"
-            r"^bank\s*transfer",    # "Bank Transfer"
-            r"^trf",                # "TRF ..."
-            r"^remesa",             # Spanish
-            r"^pago",               # Spanish
-            r"^transferencia",      # Spanish
-        ]
-        if any(re.search(p, reason) for p in payment_patterns):
-            return "IGNORE"
+    # --- Multilingual payment patterns ---
+    payment_patterns = [
+        r"^πληρωμ",             # Greek "Πληρωμή"
+        r"^απόδειξη\s*πληρωμ",  # Greek "Απόδειξη πληρωμής"
+        r"^payment",            # English
+        r"^bank\s*transfer",    # English
+        r"^trf",                # Abbreviation
+        r"^remesa",             # Spanish
+        r"^pago",               # Spanish
+        r"^transferencia",      # Spanish
+    ]
 
-        credit_words = ["credit", "nota", "abono", "cn", "πιστωτικό", "πίστωση"]
-        invoice_words = ["factura", "invoice", "inv", "τιμολόγιο", "παραστατικό"]
+    # --- Exclusions to prevent false positives ---
+    invoice_exclusions = [
+        "τιμολόγιο", "invoice", "factura", "παραστατικό", "έξοδα", "expenses"
+    ]
 
-        if any(k in reason for k in credit_words):
-            return "CN"
-        elif any(k in reason for k in invoice_words) or credit > 0:
-            return "INV"
-        return "UNKNOWN"
+    # --- Classify document type ---
+    if any(re.search(p, reason) for p in payment_patterns) and not any(x in reason for x in invoice_exclusions):
+        return "IGNORE"
+
+    credit_words = ["credit", "nota", "abono", "cn", "πιστωτικό", "πίστωση"]
+    invoice_words = ["factura", "invoice", "inv", "τιμολόγιο", "παραστατικό"]
+
+    if any(k in reason for k in credit_words):
+        return "CN"
+    elif any(k in reason for k in invoice_words) or credit > 0:
+        return "INV"
+    return "UNKNOWN"
 
     def calc_erp_amount(row):
         doc = row.get("__doctype", "")
@@ -138,29 +145,39 @@ def match_invoices(erp_df, ven_df):
         return 0.0
 
     def detect_vendor_doc_type(row):
-        reason = str(row.get("reason_ven", "")).lower()
-        debit = normalize_number(row.get("debit_ven"))
-        credit = normalize_number(row.get("credit_ven"))
+    reason = str(row.get("reason_ven", "")).lower()
+    debit = normalize_number(row.get("debit_ven"))
+    credit = normalize_number(row.get("credit_ven"))
 
-        # Unified multilingual keywords
-        payment_words = [
-            "pago", "payment", "transfer", "bank", "saldo", "trf",
-            "πληρωμή", "μεταφορά", "τράπεζα", "τραπεζικό έμβασμα"
-        ]
-        credit_words = [
-            "credit", "nota", "abono", "cn", "πιστωτικό", "πίστωση"
-        ]
-        invoice_words = [
-            "factura", "invoice", "inv", "τιμολόγιο", "παραστατικό"
-        ]
+    # --- Multilingual payment patterns ---
+    payment_patterns = [
+        r"^πληρωμ",             # Greek "Πληρωμή"
+        r"^απόδειξη\s*πληρωμ",  # Greek "Απόδειξη πληρωμής"
+        r"^payment",            # English
+        r"^bank\s*transfer",    # English
+        r"^trf",                # Abbreviation
+        r"^remesa",             # Spanish
+        r"^pago",               # Spanish
+        r"^transferencia",      # Spanish
+    ]
 
-        if any(k in reason for k in payment_words):
-            return "IGNORE"
-        elif any(k in reason for k in credit_words) or credit > 0:
-            return "CN"
-        elif any(k in reason for k in invoice_words) or debit > 0:
-            return "INV"
-        return "UNKNOWN"
+    # --- Exclusions to prevent false positives (invoice-like phrases) ---
+    invoice_exclusions = [
+        "τιμολόγιο", "invoice", "factura", "παραστατικό", "έξοδα", "expenses"
+    ]
+
+    # --- Classify document type ---
+    if any(re.search(p, reason) for p in payment_patterns) and not any(x in reason for x in invoice_exclusions):
+        return "IGNORE"
+
+    credit_words = ["credit", "nota", "abono", "cn", "πιστωτικό", "πίστωση"]
+    invoice_words = ["factura", "invoice", "inv", "τιμολόγιο", "παραστατικό"]
+
+    if any(k in reason for k in credit_words) or credit > 0:
+        return "CN"
+    elif any(k in reason for k in invoice_words) or debit > 0:
+        return "INV"
+    return "UNKNOWN"
 
     def calc_vendor_amount(row):
         debit = normalize_number(row.get("debit_ven"))
