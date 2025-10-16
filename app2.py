@@ -235,7 +235,9 @@ def match_invoices(erp_df, ven_df):
                 )
             )
 
-            if same_full or same_clean or partial_match:
+           same_type = e["__doctype"] == v["__doctype"]
+
+            if same_type and (same_full or same_clean or partial_match):
                 matched.append({
                     "ERP Invoice": e_inv,
                     "Vendor Invoice": v_inv,
