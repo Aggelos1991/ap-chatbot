@@ -9,7 +9,7 @@ from openai import OpenAI
 # CONFIGURATION
 # ==========================================================
 st.set_page_config(page_title="🦅 DataFalcon Pro — Hybrid GPT Extractor", layout="wide")
-st.title("🦅 DataFalcon Pro — Hybrid Vendor Statement Extractor (DEBE / HABER Smart Split)")
+st.title("🦅 DataFalcon Pro")
 
 try:
     from dotenv import load_dotenv
