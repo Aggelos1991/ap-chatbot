@@ -221,11 +221,22 @@ def match_invoices(erp_df, ven_df):
             diff = round(e_amt - v_amt, 2)
             amt_close = abs(diff) < 0.05
 
-            same_full = e_inv == v_inv
-            same_clean = e_code == v_code
-            same_suffix = e_code.endswith(v_code) or v_code.endswith(e_code)
-
-            if same_full or same_clean or (same_suffix and len(v_code) >= 3):
+            # --- Matching logic ---
+        same_full = e_inv == v_inv
+        same_clean = e_code == v_code
+        
+        # Allow suffix only if it starts with zeros or year pattern
+        valid_suffix = (
+            (e_code.endswith(v_code) or v_code.endswith(e_code))
+            and (
+                v_code.startswith("0")
+                or e_code.startswith("0")
+                or re.match(r"20\d{2}", e_code[:4])  # year-based prefix
+                or re.match(r"20\d{2}", v_code[:4])
+            )
+        )
+        
+        if same_full or same_clean or valid_suffix:
                 matched.append({
                     "ERP Invoice": e_inv,
                     "Vendor Invoice": v_inv,
