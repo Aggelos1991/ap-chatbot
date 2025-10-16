@@ -99,7 +99,7 @@ def match_invoices(erp_df, ven_df):
     matched = []
     used_vendor_rows = set()
 
-  def detect_erp_doc_type(row):
+def detect_erp_doc_type(row):
     reason = str(row.get("reason_erp", "")).lower()
     charge = normalize_number(row.get("debit_erp"))
     credit = normalize_number(row.get("credit_erp"))
