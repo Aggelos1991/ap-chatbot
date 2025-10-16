@@ -136,9 +136,41 @@ def match_invoices(erp_df, ven_df):
     ven_df["__doctype"] = ven_df.apply(detect_vendor_doc_type, axis=1)
     ven_df["__amt"] = ven_df.apply(calc_vendor_amount, axis=1)
 
-    erp_use = erp_df[erp_df["__doctype"].isin(["INV", "CN"])].copy()
+    # ====== MERGE ERP CREDIT/INVOICE PAIRS (AND HANDLE CANCELLATIONS) ======
+    merged_rows = []
+    grouped = erp_df.groupby("invoice_erp", dropna=False)
+
+    for inv, group in grouped:
+        if group.empty:
+            continue
+
+        # STEP 1: Handle cancellations (pairs like +100 / -100)
+        amounts = group["__amt"].round(2).tolist()
+        has_cancel_pair = any(a == -b for a in amounts for b in amounts if a != 0)
+        if has_cancel_pair:
+            group = group[~group["__amt"].isin([-x for x in amounts])]
+            if not group.empty:
+                group = group.iloc[[-1]]
+
+        # STEP 2: Combine invoice + credit note under same number
+        inv_rows = group[group["__doctype"] == "INV"]
+        cn_rows = group[group["__doctype"] == "CN"]
+
+        if not inv_rows.empty and not cn_rows.empty:
+            total_inv = inv_rows["__amt"].sum()
+            total_cn = cn_rows["__amt"].sum()
+            net = round(total_inv + total_cn, 2)
+            base_row = inv_rows.iloc[0].copy()
+            base_row["__amt"] = net
+            merged_rows.append(base_row)
+        else:
+            for _, row in group.iterrows():
+                merged_rows.append(row)
+
+    erp_use = pd.DataFrame(merged_rows).reset_index(drop=True)
     ven_use = ven_df[ven_df["__doctype"].isin(["INV", "CN"])].copy()
 
+    # ====== MATCHING ======
     def extract_digits(v):
         return re.sub(r"\D", "", str(v or "")).lstrip("0")
 
