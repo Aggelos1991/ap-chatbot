@@ -229,10 +229,12 @@ def match_invoices(erp_df, ven_df):
 
             same_full = e_inv == v_inv
             same_clean = e_code == v_code
+            len_diff = abs(len(e_code) - len(v_code))
             partial_match = (
-                len(e_code) > 2 and len(v_code) > 2 and (
-                    e_code.endswith(v_code) or v_code.endswith(e_code)
-                )
+                len(e_code) > 2
+                and len(v_code) > 2
+                and len_diff <= 2  # prevent huge length gaps like 106 vs 4106
+                and (e_code.endswith(v_code) or v_code.endswith(e_code))
             )
 
             same_type = e["__doctype"] == v["__doctype"]
