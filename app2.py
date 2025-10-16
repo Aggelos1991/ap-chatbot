@@ -330,30 +330,6 @@ if uploaded_erp and uploaded_vendor:
     else:
         st.info("No matching payments found.")
 
-# ====== CHAT PROMPT ======
-st.subheader("💬 Ask ReconRaptor about Payments")
 
-query = st.text_input("Ask something (e.g. 'sum of ERP payments'):")
-
-if query:
-    if "vendor" in query.lower():
-        total = ven_pay["Amount"].sum() if "Amount" in ven_pay else 0
-        st.write(f"💰 Total Vendor Payments: **{total:,.2f} EUR**")
-
-    elif "erp" in query.lower():
-        total = erp_pay["Amount"].sum() if "Amount" in erp_pay else 0
-        st.write(f"💰 Total ERP Payments: **{total:,.2f} EUR**")
-
-    elif "difference" in query.lower() or "compare" in query.lower():
-        diff = abs(
-            (erp_pay["Amount"].sum() if "Amount" in erp_pay else 0) -
-            (ven_pay["Amount"].sum() if "Amount" in ven_pay else 0)
-        )
-        st.write(f"📊 Difference between ERP and Vendor payments: **{diff:,.2f} EUR**")
-
-    else:
-        st.info("I can answer about ERP payments, vendor payments, or differences.")
-else:
-    st.info("Please upload both ERP and Vendor files to begin.")
 
 
