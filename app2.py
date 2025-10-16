@@ -302,23 +302,28 @@ def match_invoices(erp_df, ven_df):
 
 # ======================================
 def extract_payments(erp_df: pd.DataFrame, ven_df: pd.DataFrame):
-    # Λέξεις-κλειδιά που δείχνουν πιθανή πληρωμή
+    # --- λέξεις που δείχνουν πληρωμή ---
     payment_keywords = [
-        "πληρωμή", "payment", "transfer", "bank transfer", "trf",
-        "remesa", "pago", "transferencia", "deposit", "μεταφορά", "έμβασμα"
+        "πληρωμή", "payment", "bank transfer", "transferencia bancaria",
+        "transfer", "trf", "remesa", "pago", "deposit", "μεταφορά", "έμβασμα"
     ]
-    
-    # Λέξεις που δείχνουν ότι ΔΕΝ είναι πληρωμή (π.χ. invoice)
+
+    # --- λέξεις που δείχνουν ότι ΔΕΝ είναι πληρωμή ---
     exclude_keywords = [
-        "τιμολόγιο", "invoice", "παραστατικό", "έξοδα", "expenses",
-        "expense", "invoice of expenses", "expense invoice", "τιμολόγιο εξόδων"
+        "τιμολόγιο", "invoice", "παραστατικό", "έξοδα", "expenses", "expense",
+        "invoice of expenses", "expense invoice", "τιμολόγιο εξόδων",
+        "διόρθωση", "διορθώσεις", "correction", "reclass", "adjustment",
+        "μεταφορά υπολοίπου", "balance transfer"
     ]
 
     def is_real_payment(reason: str) -> bool:
-        """True μόνο αν περιέχει λέξη πληρωμής ΚΑΙ δεν περιέχει καμία εξαιρούμενη λέξη."""
+        """Επιστρέφει True μόνο αν περιέχει λέξη πληρωμής και δεν περιέχει καμία εξαιρούμενη λέξη."""
         text = str(reason or "").lower()
-        return any(k in text for k in payment_keywords) and not any(bad in text for bad in exclude_keywords)
+        has_payment = any(k in text for k in payment_keywords)
+        has_exclusion = any(bad in text for bad in exclude_keywords)
+        return has_payment and not has_exclusion
 
+    # --- Φιλτράρισμα ERP & Vendor ---
     erp_pay = (
         erp_df[erp_df["reason_erp"].apply(is_real_payment)].copy()
         if "reason_erp" in erp_df else pd.DataFrame()
@@ -328,6 +333,7 @@ def extract_payments(erp_df: pd.DataFrame, ven_df: pd.DataFrame):
         if "reason_ven" in ven_df else pd.DataFrame()
     )
 
+    # --- Υπολογισμός ποσών ---
     if not erp_pay.empty:
         erp_pay["Amount"] = erp_pay.apply(
             lambda r: abs(normalize_number(r.get("debit_erp")) - normalize_number(r.get("credit_erp"))),
@@ -339,6 +345,7 @@ def extract_payments(erp_df: pd.DataFrame, ven_df: pd.DataFrame):
             axis=1
         )
 
+    # --- Matching μεταξύ ERP & Vendor ---
     matched_payments = []
     used_vendor = set()
     for _, e in erp_pay.iterrows():
@@ -358,7 +365,6 @@ def extract_payments(erp_df: pd.DataFrame, ven_df: pd.DataFrame):
                 break
 
     return erp_pay, ven_pay, pd.DataFrame(matched_payments)
-
 
 # ======================================
 # STREAMLIT UI
