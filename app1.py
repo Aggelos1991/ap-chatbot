@@ -9,9 +9,8 @@ from openai import OpenAI
 # CONFIGURATION
 # ==========================================================
 st.set_page_config(page_title="🦅 DataFalcon Pro — Hybrid GPT Extractor", layout="wide")
-st.title("🦅 DataFalcon Pro — Hybrid Vendor Statement Extractor (Debit / Credit Split)")
+st.title("🦅 DataFalcon Pro — Hybrid Vendor Statement Extractor (DEBE / HABER Smart Split)")
 
-# Load API key
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -51,22 +50,21 @@ def extract_raw_lines(uploaded_pdf):
     """Extract all text lines from every page of the PDF."""
     all_lines = []
     with pdfplumber.open(uploaded_pdf) as pdf:
-        for p_i, page in enumerate(pdf.pages, start=1):
+        for page in pdf.pages:
             text = page.extract_text()
             if not text:
                 continue
             for line in text.split("\n"):
                 if re.search(r"\d{1,3}(?:[.,]\d{3})*[.,]\d{2}", line):
-                    clean_line = " ".join(line.split())
-                    all_lines.append(clean_line)
+                    all_lines.append(" ".join(line.split()))
     return all_lines
 
 # ==========================================================
-# GPT EXTRACTOR (with Debit + Credit Columns)
+# GPT EXTRACTOR — detect DEBE & HABER columns explicitly
 # ==========================================================
 def extract_with_gpt(lines):
-    """Analyze extracted lines and classify them into Debit (Invoices) and Credit (Credit Notes / Payments)."""
-    BATCH_SIZE = 200
+    """Use GPT to detect Debit (DEBE) and Credit (HABER) from vendor statements."""
+    BATCH_SIZE = 150
     all_records = []
 
     for i in range(0, len(lines), BATCH_SIZE):
@@ -74,28 +72,29 @@ def extract_with_gpt(lines):
         text_block = "\n".join(batch)
 
         prompt = f"""
-You are a multilingual accountant specialized in Spanish and Greek vendor statements.
+You are an expert accountant fluent in Spanish and Greek.
 
-Below are text lines from a vendor statement.  
-Each line may include:  
-- Spanish: "Fra. emitida", "Factura", "Abono", "Nota de Credito", "Cobro", "Pago", "Remesa", "Efecto"
-- Greek: "Τιμολόγιο", "Πληρωμή", "Πιστωτικό", "Ακυρωτικό", "Τραπεζικό Έμβασμα"
+You are reading extracted lines from a vendor statement.
+Each line may include columns labeled as:
+- DEBE → Debit (Invoice)
+- HABER → Credit (Payment)
+- SALDO → Running Balance
+- CONCEPTO → Description such as "Fra. emitida", "Cobro Efecto", etc.
 
 Your task:
-Extract only valid accounting lines (invoice, credit note, or payment).  
-For each valid line, return a JSON object with:
-
-- "Alternative Document": the document number (after Nº, n°, Factura, Documento, etc.)
-- "Date": dd/mm/yy or dd/mm/yyyy
-- "Reason": short label (Invoice, Credit Note, or Payment)
-- "Document Value": the main numeric value (use the **last numeric value** in the line if unsure)
+For each valid transaction line, output:
+- "Alternative Document": document number (under Nº, Num, Documento, Factura, etc.)
+- "Date": date if visible (dd/mm/yy or dd/mm/yyyy)
+- "Reason": classify as "Invoice", "Payment", or "Credit Note"
+- "Debit": numeric value under DEBE column (if exists)
+- "Credit": numeric value under HABER column (if exists)
 
 Rules:
-- If the line contains "Abono", "Nota de Credito", "NC", "πιστω", "ακυρωτικ" → Reason = "Credit Note"
-- If it contains "Pago", "Cobro", "Remesa", "Efecto", "Transferencia", "Πληρωμή", "Τράπεζα", "Έμβασμα", "Μεταφορά" → Reason = "Payment"
-- Otherwise → Reason = "Invoice"
-- Ignore summary lines (Saldo, Apertura, Total General, Base, IVA, FPA, Υπόλοιπο, etc.)
-Output must be a valid JSON array.
+1. If DEBE > 0 → Reason = "Invoice"
+2. If HABER > 0 → Reason = "Payment"
+3. If the line includes "Abono", "Nota de Credito", "NC", "πιστω", "Ακυρωτικό" → Reason = "Credit Note" and place value under Credit.
+4. Ignore summary lines: "Saldo", "Apertura", "Total General", "IVA", "Base", "Impuestos".
+5. Ensure output is valid JSON array.
 
 Lines:
 \"\"\"{text_block}\"\"\"
@@ -105,32 +104,31 @@ Lines:
             response = client.responses.create(model=MODEL, input=prompt)
             content = response.output_text.strip()
             json_match = re.search(r"\[.*\]", content, re.DOTALL)
-            json_text = json_match.group(0) if json_match else content
-            data = json.loads(json_text)
+            if not json_match:
+                continue
+            data = json.loads(json_match.group(0))
         except Exception as e:
             st.warning(f"⚠️ GPT failed on batch {i//BATCH_SIZE + 1}: {e}")
             continue
 
         for row in data:
-            val = normalize_number(row.get("Document Value"))
-            if val == "":
-                continue
+            debit_val = normalize_number(row.get("Debit"))
+            credit_val = normalize_number(row.get("Credit"))
 
-            reason = row.get("Reason", "").lower()
-            debit = ""
-            credit = ""
+            # Safety check: move Cobro Efecto to Credit if missing
+            reason_text = row.get("Reason", "").lower()
+            concept = str(row.get("Alternative Document", "")).lower()
 
-            if "invoice" in reason:
-                debit = val
-            elif any(k in reason for k in ["credit", "abono", "nota de credito", "nc", "πιστω", "ακυρωτικ", "pago", "remesa", "cobro", "efecto", "transferencia", "πληρωμή", "τραπεζ", "έμβασμα", "μεταφορά"]):
-                credit = val
+            if "cobro" in concept or "efecto" in concept:
+                credit_val = credit_val or debit_val
+                debit_val = ""
 
             all_records.append({
-                "Alternative Document": row.get("Alternative Document", "").strip(),
-                "Date": row.get("Date", "").strip(),
+                "Alternative Document": str(row.get("Alternative Document", "")).strip(),
+                "Date": str(row.get("Date", "")).strip(),
                 "Reason": row.get("Reason", "").strip(),
-                "Debit": debit,
-                "Credit": credit
+                "Debit": debit_val,
+                "Credit": credit_val
             })
 
     return all_records
@@ -146,7 +144,7 @@ def to_excel_bytes(records):
     return buf
 
 # ==========================================================
-# STREAMLIT APP
+# STREAMLIT UI
 # ==========================================================
 uploaded_pdf = st.file_uploader("📂 Upload Vendor Statement (PDF)", type=["pdf"])
 
@@ -169,10 +167,20 @@ if uploaded_pdf:
                 df = pd.DataFrame(data)
                 st.success(f"✅ Extraction complete — {len(df)} valid records found.")
                 st.dataframe(df, use_container_width=True)
+
+                # Totals
+                try:
+                    total_debit = df["Debit"].apply(pd.to_numeric, errors="coerce").sum()
+                    total_credit = df["Credit"].apply(pd.to_numeric, errors="coerce").sum()
+                    net = round(total_debit - total_credit, 2)
+                    st.markdown(f"**💰 Total Debit:** {total_debit:,.2f} | **Total Credit:** {total_credit:,.2f} | **Net:** {net:,.2f}")
+                except:
+                    pass
+
                 st.download_button(
                     "⬇️ Download Excel",
                     data=to_excel_bytes(data),
-                    file_name="vendor_statement_debit_credit.xlsx",
+                    file_name="vendor_statement_debe_haber.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
 else:
