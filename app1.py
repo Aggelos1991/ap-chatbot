@@ -9,7 +9,7 @@ from openai import OpenAI
 # CONFIGURATION
 # ==========================================================
 st.set_page_config(page_title="🦅 DataFalcon Pro — Hybrid GPT Extractor", layout="wide")
-st.title("🦅 DataFalcon Pro — Hybrid Vendor Statement Extractor (Optimized)")
+st.title("🦅 DataFalcon Pro — Hybrid Vendor Statement Extractor (Debit / Credit Split)")
 
 # Load API key
 try:
@@ -62,11 +62,10 @@ def extract_raw_lines(uploaded_pdf):
     return all_lines
 
 # ==========================================================
-# GPT EXTRACTOR
+# GPT EXTRACTOR (with Debit + Credit Columns)
 # ==========================================================
 def extract_with_gpt(lines):
-    """Analyze extracted lines using GPT-4o-mini for structure & DEBE detection."""
-    # Split into manageable batches (to avoid token overflow)
+    """Analyze extracted lines and classify them into Debit (Invoices) and Credit (Credit Notes / Payments)."""
     BATCH_SIZE = 200
     all_records = []
 
@@ -75,36 +74,32 @@ def extract_with_gpt(lines):
         text_block = "\n".join(batch)
 
         prompt = f"""
-You are an expert Spanish accountant.
+You are a multilingual accountant specialized in Spanish and Greek vendor statements.
 
-Below are text lines from a vendor statement.
-Each line may contain multiple numbers — usually labeled as DEBE, TOTAL, or TOTALE (document amount) and SALDO (balance).
+Below are text lines from a vendor statement.  
+Each line may include:  
+- Spanish: "Fra. emitida", "Factura", "Abono", "Nota de Credito", "Cobro", "Pago", "Remesa", "Efecto"
+- Greek: "Τιμολόγιο", "Πληρωμή", "Πιστωτικό", "Ακυρωτικό", "Τραπεζικό Έμβασμα"
 
-Your job:
-1. Extract only valid invoice or credit note lines.
-2. For each line, return:
-   - "Alternative Document": the document number (may appear under columns labeled Documento, Num, Nº, Numero, N.º, N°, Factura, or similar)
-   - "Date": dd/mm/yy or dd/mm/yyyy
-   - "Reason": "Invoice" or "Credit Note"
-   - "Document Value":
-       • If the line contains a column labeled DEBE, take that numeric value.
-       • Otherwise, take the **last numeric value in the line**, corresponding to TOTAL or TOTALE.
-       • Do **not** take numbers labeled as Base, Base imponible, IVA, Tipo, Impuesto, or Subtotal.
-       • If the line mentions ABONO, NOTA DE CRÉDITO, or CREDIT, make the amount negative.
-3. Ignore lines containing or referring to: 
-   "Saldo", "Cobro", "Pago", "Remesa", "Banco", "Base", "Base imponible", "IVA", "Tipo", "Impuesto", 
-   "Subtotal", "Total general", "Saldo anterior", "Impuestos", "Resumen".
-4. Only include a value if the line explicitly contains DEBE, TOTAL, or TOTALE, 
-   or if the last column represents the total document value.
-5. Output a valid JSON array only.
-6. Ensure "Document Value" uses '.' for decimals and exactly two digits.
-7. Do not return empty or null values for the document number — always capture it if visible.
+Your task:
+Extract only valid accounting lines (invoice, credit note, or payment).  
+For each valid line, return a JSON object with:
+
+- "Alternative Document": the document number (after Nº, n°, Factura, Documento, etc.)
+- "Date": dd/mm/yy or dd/mm/yyyy
+- "Reason": short label (Invoice, Credit Note, or Payment)
+- "Document Value": the main numeric value (use the **last numeric value** in the line if unsure)
+
+Rules:
+- If the line contains "Abono", "Nota de Credito", "NC", "πιστω", "ακυρωτικ" → Reason = "Credit Note"
+- If it contains "Pago", "Cobro", "Remesa", "Efecto", "Transferencia", "Πληρωμή", "Τράπεζα", "Έμβασμα", "Μεταφορά" → Reason = "Payment"
+- Otherwise → Reason = "Invoice"
+- Ignore summary lines (Saldo, Apertura, Total General, Base, IVA, FPA, Υπόλοιπο, etc.)
+Output must be a valid JSON array.
 
 Lines:
 \"\"\"{text_block}\"\"\"
 """
-
-
 
         try:
             response = client.responses.create(model=MODEL, input=prompt)
@@ -116,26 +111,33 @@ Lines:
             st.warning(f"⚠️ GPT failed on batch {i//BATCH_SIZE + 1}: {e}")
             continue
 
-        # Clean & normalize data
         for row in data:
             val = normalize_number(row.get("Document Value"))
             if val == "":
                 continue
+
             reason = row.get("Reason", "").lower()
-            if any(k in reason for k in ["abono", "credit", "nota de crédito", "nc"]):
-                val = -abs(val)
-                reason = "Credit Note"
-            else:
-                reason = "Invoice"
+            debit = ""
+            credit = ""
+
+            if "invoice" in reason:
+                debit = val
+            elif any(k in reason for k in ["credit", "abono", "nota de credito", "nc", "πιστω", "ακυρωτικ", "pago", "remesa", "cobro", "efecto", "transferencia", "πληρωμή", "τραπεζ", "έμβασμα", "μεταφορά"]):
+                credit = val
+
             all_records.append({
                 "Alternative Document": row.get("Alternative Document", "").strip(),
                 "Date": row.get("Date", "").strip(),
-                "Reason": reason,
-                "Document Value": val
+                "Reason": row.get("Reason", "").strip(),
+                "Debit": debit,
+                "Credit": credit
             })
 
     return all_records
 
+# ==========================================================
+# EXPORT
+# ==========================================================
 def to_excel_bytes(records):
     df = pd.DataFrame(records)
     buf = BytesIO()
@@ -162,7 +164,7 @@ if uploaded_pdf:
                 data = extract_with_gpt(lines)
 
             if not data:
-                st.warning("⚠️ No structured invoice data detected.")
+                st.warning("⚠️ No structured data detected.")
             else:
                 df = pd.DataFrame(data)
                 st.success(f"✅ Extraction complete — {len(df)} valid records found.")
@@ -170,8 +172,8 @@ if uploaded_pdf:
                 st.download_button(
                     "⬇️ Download Excel",
                     data=to_excel_bytes(data),
-                    file_name="vendor_statement_hybrid.xlsx",
+                    file_name="vendor_statement_debit_credit.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
 else:
-    st.info("Please upload a vendor statement PDF to begin.") 
+    st.info("Please upload a vendor statement PDF to begin.")
