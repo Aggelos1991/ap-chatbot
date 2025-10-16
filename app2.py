@@ -37,27 +37,39 @@ def normalize_columns(df, tag):
     mapping = {
         "invoice": [
             "invoice", "factura", "fact", "nº", "num", "numero", "número",
-            "document", "doc", "ref", "referencia", "nº factura", "num factura", "alternative document"
+            "document", "doc", "ref", "referencia", "nº factura", "num factura", "alternative document",
+            # Greek
+            "αρ.", "αριθμός", "νουμερο", "νούμερο", "no", "παραστατικό", "αρ. τιμολογίου", "αρ. εγγράφου"
         ],
         "credit": [
             "credit", "haber", "credito", "crédito", "nota de crédito", "nota crédito",
-            "abono", "abonos", "importe haber", "valor haber"
+            "abono", "abonos", "importe haber", "valor haber",
+             # Greek
+            "πίστωση", "πιστωτικό", "πιστωτικό τιμολόγιο", "πίστωση ποσού"
         ],
         "debit": [
             "debit", "debe", "cargo", "importe", "importe total", "valor", "monto",
             "amount", "document value", "charge", "total", "totale", "totales", "totals",
-            "base imponible", "importe factura", "importe neto"
+            "base imponible", "importe factura", "importe neto",
+             # Greek
+            "χρέωση", "αξία", "αξία τιμολογίου"
         ],
         "reason": [
             "reason", "motivo", "concepto", "descripcion", "descripción",
             "detalle", "detalles", "razon", "razón",
-            "observaciones", "comentario", "comentarios", "explicacion"
+            "observaciones", "comentario", "comentarios", "explicacion",
+             # Greek
+            "αιτιολογία", "περιγραφή", "παρατηρήσεις", "σχόλια", "αναφορά", "αναλυτική περιγραφή"
         ],
         "cif": [
-            "cif", "nif", "vat", "iva", "tax", "id fiscal", "número fiscal", "num fiscal", "code"
+            "cif", "nif", "vat", "iva", "tax", "id fiscal", "número fiscal", "num fiscal", "code",
+             # Greek (safe only)
+            "αφμ", "φορολογικός αριθμός", "αριθμός φορολογικού μητρώου"
         ],
         "date": [
-            "date", "fecha", "fech", "data", "fecha factura", "fecha doc", "fecha documento"
+            "date", "fecha", "fech", "data", "fecha factura", "fecha doc", "fecha documento",
+             # Greek
+            "ημερομηνία", "ημ/νία", "ημερομηνία έκδοσης", "ημερομηνία παραστατικού"
         ],
     }
 
@@ -88,16 +100,29 @@ def match_invoices(erp_df, ven_df):
     used_vendor_rows = set()
 
     def detect_erp_doc_type(row):
-        reason = str(row.get("reason_erp", "")).lower()
-        charge = normalize_number(row.get("debit_erp"))
-        credit = normalize_number(row.get("credit_erp"))
-        if any(k in reason for k in ["pago", "payment", "transfer", "bank", "saldo", "trf"]):
-            return "IGNORE"
-        elif any(k in reason for k in ["credit", "nota", "abono", "cn"]):
-            return "CN"
-        elif credit > 0 or any(k in reason for k in ["factura", "invoice", "inv"]):
-            return "INV"
-        return "UNKNOWN"
+    reason = str(row.get("reason_erp", "")).lower()
+    charge = normalize_number(row.get("debit_erp"))
+    credit = normalize_number(row.get("credit_erp"))
+
+    # Unified multilingual keywords
+    payment_words = [
+        "pago", "payment", "transfer", "bank", "saldo", "trf",
+        "πληρωμή", "μεταφορά", "τράπεζα", "τραπεζικό έμβασμα"
+    ]
+    credit_words = [
+        "credit", "nota", "abono", "cn", "πιστωτικό", "πίστωση"
+    ]
+    invoice_words = [
+        "factura", "invoice", "inv", "τιμολόγιο", "παραστατικό"
+    ]
+
+    if any(k in reason for k in payment_words):
+        return "IGNORE"
+    elif any(k in reason for k in credit_words):
+        return "CN"
+    elif any(k in reason for k in invoice_words) or credit > 0:
+        return "INV"
+    return "UNKNOWN"
 
     def calc_erp_amount(row):
         doc = row.get("__doctype", "")
