@@ -85,15 +85,20 @@ For each valid accounting line, extract:
 - "Alternative Document": document number (Documento, Factura, Τιμολόγιο, Παραστατικό, etc.)
 - "Date": dd/mm/yy or dd/mm/yyyy
 - "Reason": short description (e.g., "Factura", "Abono", "Πληρωμή", "Τραπεζικό Έμβασμα")
-- "DEBE Value": numeric amount under DEBE, ΧΡΕΩΣΗ, or TOTAL (if appears)
-- "HABER Value": numeric amount under HABER, ΠΙΣΤΩΣΗ, COBRO, or similar (if appears)
+- "DEBE Value": numeric amount under DEBE or ΧΡΕΩΣΗ
+- "HABER Value": numeric amount under HABER, ΠΙΣΤΩΣΗ, COBRO, or similar
 
 Rules:
-1. If "Abono", "Nota de Crédito", "Πιστωτικό", or "Ακυρωτικό" appear → mark as Credit Note.
-2. If "Pago", "Cobro", "Remesa", "Efecto", "Πληρωμή", "Τράπεζα", "Έμβασμα", "Μεταφορά" appear → mark as Payment.
-3. If neither → mark as Invoice.
-4. Ignore summary lines (Saldo, IVA, Impuesto, Υπόλοιπο, ΦΠΑ, Βάση, Υποσύνολο, etc.)
-5. Return a valid JSON array with numeric strings (use '.' for decimals).
+1. If both DEBE and HABER (or ΧΡΕΩΣΗ and ΠΙΣΤΩΣΗ) appear:
+   - Assign DEBE → "DEBE Value" (Debit)
+   - Assign HABER → "HABER Value" (Credit)
+   - Ignore TOTAL or ΣΥΝΟΛΟ in this case.
+2. Use TOTAL or ΣΥΝΟΛΟ only if DEBE/HABER are absent.
+3. If the text contains "Abono", "Nota de Crédito", "Πιστωτικό", or "Ακυρωτικό" → classify as Credit Note.
+4. If it contains "Pago", "Cobro", "Remesa", "Efecto", "Πληρωμή", "Τράπεζα", "Έμβασμα", "Μεταφορά" → classify as Payment.
+5. If neither → classify as Invoice.
+6. Ignore summary lines (Saldo, IVA, Impuesto, Υπόλοιπο, ΦΠΑ, Βάση, Υποσύνολο, etc.)
+7. Output a valid JSON array with numeric strings (use '.' for decimals).
 
 Lines:
 \"\"\"{text_block}\"\"\"
@@ -110,24 +115,30 @@ Lines:
             continue
 
         for row in data:
+            # Normalize and parse values
             debe_val = normalize_number(row.get("DEBE Value"))
             haber_val = normalize_number(row.get("HABER Value"))
             val = normalize_number(row.get("Document Value")) or debe_val
             pay = haber_val or normalize_number(row.get("Payment Value"))
 
+            reason_text = str(row.get("Reason", "")).lower()
+
+            # --- safety fallback: if "haber"/"πίστωση" appears but GPT filled only val ---
+            if (("haber" in reason_text or "πίστ" in reason_text) and val and not pay):
+                pay, val = val, 0.0
+
             # --- classify by reason ---
-            reason = row.get("Reason", "").lower()
-            if any(k in reason for k in ["abono", "credit", "nota de crédito", "nc", "πιστω", "ακυρωτικ"]):
+            if any(k in reason_text for k in ["abono", "credit", "nota de crédito", "nc", "πιστω", "ακυρωτικ"]):
                 val = -abs(val)
                 doc_type = "Credit Note"
-            elif any(k in reason for k in ["pago", "remesa", "cobro", "efecto", "transferencia", "πληρωμή", "τράπεζ", "έμβασμα", "μεταφορά"]):
+            elif any(k in reason_text for k in ["pago", "remesa", "cobro", "efecto", "transferencia", "πληρωμή", "τράπεζ", "έμβασμα", "μεταφορά"]):
                 doc_type = "Payment"
             else:
                 doc_type = "Invoice"
 
             all_records.append({
-                "Alternative Document": row.get("Alternative Document", "").strip(),
-                "Date": row.get("Date", "").strip(),
+                "Alternative Document": str(row.get("Alternative Document", "")).strip(),
+                "Date": str(row.get("Date", "")).strip(),
                 "Reason": doc_type,
                 "Document Value": val,
                 "Payment Value": pay
@@ -135,6 +146,9 @@ Lines:
 
     return all_records
 
+# ==========================================================
+# EXCEL EXPORT
+# ==========================================================
 def to_excel_bytes(records):
     df = pd.DataFrame(records)
     buf = BytesIO()
@@ -173,4 +187,4 @@ if uploaded_pdf:
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
 else:
-    st.info("Please upload a vendor statement PDF to begin.") 
+    st.info("Please upload a vendor statement PDF to begin.")
