@@ -301,21 +301,30 @@ def match_invoices(erp_df, ven_df):
 
 
 # ======================================
-# PAYMENT EXTRACTION
-# ======================================
-def extract_payments(erp_df, ven_df):
-    keywords = [
-        "pago", "pagos", "payment", "transfer", "transferencia", "bank", "trf",
-        "remesa", "prepago", "ajuste", "πληρωμή", "μεταφορά", "τραπεζικό έμβασμα"
+def extract_payments(erp_df: pd.DataFrame, ven_df: pd.DataFrame):
+    # Λέξεις-κλειδιά που δείχνουν πιθανή πληρωμή
+    payment_keywords = [
+        "πληρωμή", "payment", "transfer", "bank transfer", "trf",
+        "remesa", "pago", "transferencia", "deposit", "μεταφορά", "έμβασμα"
     ]
-    is_payment = lambda x: any(k in str(x).lower() for k in keywords)
+    
+    # Λέξεις που δείχνουν ότι ΔΕΝ είναι πληρωμή (π.χ. invoice)
+    exclude_keywords = [
+        "τιμολόγιο", "invoice", "παραστατικό", "έξοδα", "expenses",
+        "expense", "invoice of expenses", "expense invoice", "τιμολόγιο εξόδων"
+    ]
+
+    def is_real_payment(reason: str) -> bool:
+        """True μόνο αν περιέχει λέξη πληρωμής ΚΑΙ δεν περιέχει καμία εξαιρούμενη λέξη."""
+        text = str(reason or "").lower()
+        return any(k in text for k in payment_keywords) and not any(bad in text for bad in exclude_keywords)
 
     erp_pay = (
-        erp_df[erp_df["reason_erp"].apply(is_payment)].copy()
+        erp_df[erp_df["reason_erp"].apply(is_real_payment)].copy()
         if "reason_erp" in erp_df else pd.DataFrame()
     )
     ven_pay = (
-        ven_df[ven_df["reason_ven"].apply(is_payment)].copy()
+        ven_df[ven_df["reason_ven"].apply(is_real_payment)].copy()
         if "reason_ven" in ven_df else pd.DataFrame()
     )
 
@@ -341,8 +350,8 @@ def extract_payments(erp_df, ven_df):
                 matched_payments.append({
                     "ERP Reason": e.get("reason_erp", ""),
                     "Vendor Reason": v.get("reason_ven", ""),
-                    "ERP Amount": e["Amount"],
-                    "Vendor Amount": v["Amount"],
+                    "ERP Amount": round(float(e["Amount"]), 2),
+                    "Vendor Amount": round(float(v["Amount"]), 2),
                     "Difference": round(diff, 2)
                 })
                 used_vendor.add(v_idx)
