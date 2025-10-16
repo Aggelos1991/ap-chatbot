@@ -135,16 +135,29 @@ def match_invoices(erp_df, ven_df):
         return 0.0
 
     def detect_vendor_doc_type(row):
-        reason = str(row.get("reason_ven", "")).lower()
-        debit = normalize_number(row.get("debit_ven"))
-        credit = normalize_number(row.get("credit_ven"))
-        if any(k in reason for k in ["pago", "payment", "transfer", "bank", "saldo", "trf"]):
-            return "IGNORE"
-        elif any(k in reason for k in ["credit", "nota", "abono", "cn"]) or credit > 0:
-            return "CN"
-        elif any(k in reason for k in ["factura", "invoice", "inv"]) or debit > 0:
-            return "INV"
-        return "UNKNOWN"
+    reason = str(row.get("reason_ven", "")).lower()
+    debit = normalize_number(row.get("debit_ven"))
+    credit = normalize_number(row.get("credit_ven"))
+
+    # Unified multilingual keywords
+    payment_words = [
+        "pago", "payment", "transfer", "bank", "saldo", "trf",
+        "πληρωμή", "μεταφορά", "τράπεζα", "τραπεζικό έμβασμα"
+    ]
+    credit_words = [
+        "credit", "nota", "abono", "cn", "πιστωτικό", "πίστωση"
+    ]
+    invoice_words = [
+        "factura", "invoice", "inv", "τιμολόγιο", "παραστατικό"
+    ]
+
+    if any(k in reason for k in payment_words):
+        return "IGNORE"
+    elif any(k in reason for k in credit_words) or credit > 0:
+        return "CN"
+    elif any(k in reason for k in invoice_words) or debit > 0:
+        return "INV"
+    return "UNKNOWN"
 
     def calc_vendor_amount(row):
         debit = normalize_number(row.get("debit_ven"))
