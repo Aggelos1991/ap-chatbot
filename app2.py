@@ -104,6 +104,7 @@ def match_invoices(erp_df, ven_df):
         charge = normalize_number(row.get("debit_erp"))
         credit = normalize_number(row.get("credit_erp"))
 
+        # Unified multilingual keywords
         payment_words = [
             "pago", "payment", "transfer", "bank", "saldo", "trf",
             "πληρωμή", "μεταφορά", "τράπεζα", "τραπεζικό έμβασμα"
@@ -138,6 +139,7 @@ def match_invoices(erp_df, ven_df):
         debit = normalize_number(row.get("debit_ven"))
         credit = normalize_number(row.get("credit_ven"))
 
+        # Unified multilingual keywords
         payment_words = [
             "pago", "payment", "transfer", "bank", "saldo", "trf",
             "πληρωμή", "μεταφορά", "τράπεζα", "τραπεζικό έμβασμα"
@@ -175,13 +177,17 @@ def match_invoices(erp_df, ven_df):
     erp_use = erp_df[erp_df["__doctype"].isin(["INV", "CN"])].copy()
     ven_use = ven_df[ven_df["__doctype"].isin(["INV", "CN"])].copy()
 
+    # ====== SCENARIO 1 & 2: MERGE MULTIPLE AND CREDIT NOTES ======
     merged_rows = []
     for inv, group in erp_use.groupby("invoice_erp", dropna=False):
         if group.empty:
             continue
+
+        # If 3 or more entries → take the last (latest)
         if len(group) >= 3:
             group = group.tail(1)
 
+        # If both INV and CN exist for same number → combine
         inv_rows = group[group["__doctype"] == "INV"]
         cn_rows = group[group["__doctype"] == "CN"]
 
@@ -197,46 +203,24 @@ def match_invoices(erp_df, ven_df):
 
     erp_use = pd.DataFrame(merged_rows).reset_index(drop=True)
 
-    def clean_invoice_code(v):
-        """Cleans and normalizes invoice numbers for smart numeric comparison."""
-        if not v:
-            return ""
-        s = str(v).strip().lower()
-        s = re.sub(r"(inv|fac|αρ|no|doc|num|número|nº|ref|202\d[/\-]*)", "", s)
-        s = re.sub(r"\D", "", s)
-        s = s.lstrip("0")
-        return s
+    def extract_digits(v):
+        return re.sub(r"\D", "", str(v or "")).lstrip("0")
 
     for e_idx, e in erp_use.iterrows():
         e_inv = str(e.get("invoice_erp", "")).strip()
         e_amt = round(float(e["__amt"]), 2)
-        e_code = clean_invoice_code(e_inv)
-
+        e_digits = extract_digits(e_inv)
         for v_idx, v in ven_use.iterrows():
             if v_idx in used_vendor_rows:
                 continue
             v_inv = str(v.get("invoice_ven", "")).strip()
             v_amt = round(float(v["__amt"]), 2)
-            v_code = clean_invoice_code(v_inv)
+            v_digits = extract_digits(v_inv)
             diff = round(e_amt - v_amt, 2)
             amt_close = abs(diff) < 0.05
-
-            # --- Matching logic ---
-        same_full = e_inv == v_inv
-        same_clean = e_code == v_code
-        
-        # Allow suffix only if it starts with zeros or year pattern
-        valid_suffix = (
-            (e_code.endswith(v_code) or v_code.endswith(e_code))
-            and (
-                v_code.startswith("0")
-                or e_code.startswith("0")
-                or re.match(r"20\d{2}", e_code[:4])  # year-based prefix
-                or re.match(r"20\d{2}", v_code[:4])
-            )
-        )
-        
-        if same_full or same_clean or valid_suffix:
+            if e_inv == v_inv or (
+                e_digits and v_digits and (e_digits.endswith(v_digits) or v_digits.endswith(e_digits))
+            ):
                 matched.append({
                     "ERP Invoice": e_inv,
                     "Vendor Invoice": v_inv,
@@ -337,6 +321,7 @@ if uploaded_erp and uploaded_vendor:
 
     st.success("✅ Reconciliation complete")
 
+    # ====== HIGHLIGHTING ======
     def highlight_row(row):
         if row["Status"] == "Match":
             return ['background-color: #2e7d32; color: white'] * len(row)
@@ -344,12 +329,14 @@ if uploaded_erp and uploaded_vendor:
             return ['background-color: #f9a825; color: black'] * len(row)
         return [''] * len(row)
 
+    # ====== MATCHED ======
     st.subheader("📊 Matched / Differences")
     if not matched.empty:
         st.dataframe(matched.style.apply(highlight_row, axis=1), use_container_width=True)
     else:
         st.info("No matches found.")
 
+    # ====== MISSING ======
     st.subheader("❌ Missing in ERP (found in vendor but not in ERP)")
     if not erp_missing.empty:
         st.dataframe(
@@ -368,6 +355,7 @@ if uploaded_erp and uploaded_vendor:
     else:
         st.success("✅ No missing invoices in Vendor.")
 
+    # ====== PAYMENTS ======
     st.subheader("🏦 Payment Transactions (Identified in both sides)")
     col1, col2 = st.columns(2)
 
