@@ -9,9 +9,8 @@ from openai import OpenAI
 # CONFIGURATION
 # ==========================================================
 st.set_page_config(page_title="🦅 DataFalcon Pro — Hybrid GPT Extractor", layout="wide")
-st.title("🦅 DataFalcon Pro — Hybrid Vendor Statement Extractor (Optimized)")
+st.title("🦅 DataFalcon Pro — Hybrid Vendor Statement Extractor (Credit Column Only)")
 
-# Load API key
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -48,24 +47,22 @@ def normalize_number(value):
         return ""
 
 def extract_raw_lines(uploaded_pdf):
-    """Extract all text lines from every page of the PDF."""
     all_lines = []
     with pdfplumber.open(uploaded_pdf) as pdf:
-        for p_i, page in enumerate(pdf.pages, start=1):
+        for page in pdf.pages:
             text = page.extract_text()
             if not text:
                 continue
             for line in text.split("\n"):
                 if re.search(r"\d{1,3}(?:[.,]\d{3})*[.,]\d{2}", line):
-                    clean_line = " ".join(line.split())
-                    all_lines.append(clean_line)
+                    all_lines.append(" ".join(line.split()))
     return all_lines
 
 # ==========================================================
 # GPT EXTRACTOR
 # ==========================================================
 def extract_with_gpt(lines):
-    """Analyze extracted lines using GPT-4o-mini for invoices, credit notes, and payment detections (DEBE + HABER)."""
+    """Extracts all valid document lines and consolidates all numeric values into one Credit column."""
     BATCH_SIZE = 200
     all_records = []
 
@@ -80,25 +77,15 @@ Each line may include:
 - Spanish: DEBE (debit), HABER (credit), TOTAL, SALDO, COBRO, EFECTO, REMESA
 - Greek: ΧΡΕΩΣΗ (debit), ΠΙΣΤΩΣΗ (credit), ΣΥΝΟΛΟ, ΠΛΗΡΩΜΗ, ΤΡΑΠΕΖΑ, ΕΜΒΑΣΜΑ
 
-Your task:
-For each valid accounting line, extract:
-- "Alternative Document": document number (Documento, Factura, Τιμολόγιο, Παραστατικό, etc.)
+Extract for each accounting line:
+- "Alternative Document": the document number
 - "Date": dd/mm/yy or dd/mm/yyyy
-- "Reason": short description (e.g., "Factura", "Abono", "Πληρωμή", "Τραπεζικό Έμβασμα")
-- "DEBE Value": numeric amount under DEBE or ΧΡΕΩΣΗ
-- "HABER Value": numeric amount under HABER, ΠΙΣΤΩΣΗ, COBRO, or similar
-
-Rules:
-1. If both DEBE and HABER (or ΧΡΕΩΣΗ and ΠΙΣΤΩΣΗ) appear:
-   - Assign DEBE → "DEBE Value" (Debit)
-   - Assign HABER → "HABER Value" (Credit)
-   - Ignore TOTAL or ΣΥΝΟΛΟ in this case.
-2. Use TOTAL or ΣΥΝΟΛΟ only if DEBE/HABER are absent.
-3. If the text contains "Abono", "Nota de Crédito", "Πιστωτικό", or "Ακυρωτικό" → classify as Credit Note.
-4. If it contains "Pago", "Cobro", "Remesa", "Efecto", "Πληρωμή", "Τράπεζα", "Έμβασμα", "Μεταφορά" → classify as Payment.
-5. If neither → classify as Invoice.
-6. Ignore summary lines (Saldo, IVA, Impuesto, Υπόλοιπο, ΦΠΑ, Βάση, Υποσύνολο, etc.)
-7. Output a valid JSON array with numeric strings (use '.' for decimals).
+- "Reason": short description (Factura, Abono, Πληρωμή, Τραπεζικό Έμβασμα, etc.)
+- "Credit": the numeric amount found under HABER, ΠΙΣΤΩΣΗ, COBRO, TOTAL, or ΣΥΝΟΛΟ.
+  • If both DEBE and HABER (or ΧΡΕΩΣΗ/ΠΙΣΤΩΣΗ) appear, use HABER/ΠΙΣΤΩΣΗ.
+  • If only DEBE/ΧΡΕΩΣΗ exist, use that as Credit.
+  • Use '.' for decimals.
+Ignore summary lines (Saldo, IVA, Υπόλοιπο, ΦΠΑ, Υποσύνολο, etc.).
 
 Lines:
 \"\"\"{text_block}\"\"\"
@@ -115,76 +102,6 @@ Lines:
             continue
 
         for row in data:
-            # Normalize and parse values
-            debe_val = normalize_number(row.get("DEBE Value"))
-            haber_val = normalize_number(row.get("HABER Value"))
-            val = normalize_number(row.get("Document Value")) or debe_val
-            pay = haber_val or normalize_number(row.get("Payment Value"))
-
-            reason_text = str(row.get("Reason", "")).lower()
-
-            # --- safety fallback: if "haber"/"πίστωση" appears but GPT filled only val ---
-            if (("haber" in reason_text or "πίστ" in reason_text) and val and not pay):
-                pay, val = val, 0.0
-
-            # --- classify by reason ---
-            if any(k in reason_text for k in ["abono", "credit", "nota de crédito", "nc", "πιστω", "ακυρωτικ"]):
-                val = -abs(val)
-                doc_type = "Credit Note"
-            elif any(k in reason_text for k in ["pago", "remesa", "cobro", "efecto", "transferencia", "πληρωμή", "τράπεζ", "έμβασμα", "μεταφορά"]):
-                doc_type = "Payment"
-            else:
-                doc_type = "Invoice"
-
-            all_records.append({
-                "Alternative Document": str(row.get("Alternative Document", "")).strip(),
-                "Date": str(row.get("Date", "")).strip(),
-                "Reason": doc_type,
-                "Document Value": val,
-                "Payment Value": pay
-            })
-
-    return all_records
-
-# ==========================================================
-# EXCEL EXPORT
-# ==========================================================
-def to_excel_bytes(records):
-    df = pd.DataFrame(records)
-    buf = BytesIO()
-    df.to_excel(buf, index=False)
-    buf.seek(0)
-    return buf
-
-# ==========================================================
-# STREAMLIT APP
-# ==========================================================
-uploaded_pdf = st.file_uploader("📂 Upload Vendor Statement (PDF)", type=["pdf"])
-
-if uploaded_pdf:
-    with st.spinner("📄 Extracting text from all pages..."):
-        lines = extract_raw_lines(uploaded_pdf)
-
-    if not lines:
-        st.warning("⚠️ No readable text lines found. Check if the PDF is scanned.")
-    else:
-        st.text_area("📄 Preview (first 25 lines):", "\n".join(lines[:25]), height=250)
-
-        if st.button("🤖 Run Hybrid Extraction"):
-            with st.spinner("Analyzing data with GPT-4o-mini..."):
-                data = extract_with_gpt(lines)
-
-            if not data:
-                st.warning("⚠️ No structured invoice data detected.")
-            else:
-                df = pd.DataFrame(data)
-                st.success(f"✅ Extraction complete — {len(df)} valid records found.")
-                st.dataframe(df, use_container_width=True)
-                st.download_button(
-                    "⬇️ Download Excel",
-                    data=to_excel_bytes(data),
-                    file_name="vendor_statement_hybrid.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                )
-else:
-    st.info("Please upload a vendor statement PDF to begin.")
+            credit_val = normalize_number(row.get("Credit"))
+            reason = str(row.get("Reason", "")).lower()
+            if any(k in reason for k in ["abono", "credit", "nota de crédito", "
