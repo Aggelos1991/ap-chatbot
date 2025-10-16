@@ -335,37 +335,40 @@ if "erp_pay" not in st.session_state:
 if "ven_pay" not in st.session_state:
     st.session_state["ven_pay"] = ven_pay
 
-# ====== CHAT PROMPT (Persistent, Safe) ======
+# ====== CHAT PROMPT (Persistent & Stable) ======
 st.markdown("---")
 st.subheader("💬 Ask ReconRaptor about Payments")
 
-# Recover stored data
 erp_pay = st.session_state.get("erp_pay", pd.DataFrame())
 ven_pay = st.session_state.get("ven_pay", pd.DataFrame())
 
-with st.form("ask_recon_form", clear_on_submit=False):
-    query = st.text_input("Ask something (e.g. 'sum of ERP payments'):")
-    submitted = st.form_submit_button("Ask")
+# Keep question and answer persistent
+if "chat_query" not in st.session_state:
+    st.session_state.chat_query = ""
+if "chat_response" not in st.session_state:
+    st.session_state.chat_response = ""
 
-if submitted and query:
+# Input and button
+query = st.text_input("Ask something (e.g. 'sum of ERP payments'):", value=st.session_state.chat_query, key="query_input")
+if st.button("🔍 Ask ReconRaptor"):
     q = query.lower()
-    result_box = st.empty()
+    st.session_state.chat_query = query
 
     if "vendor" in q:
         total = ven_pay["Amount"].sum() if "Amount" in ven_pay else 0
-        result_box.success(f"💰 Total Vendor Payments: **{total:,.2f} EUR**")
-
+        st.session_state.chat_response = f"💰 Total Vendor Payments: **{total:,.2f} EUR**"
     elif "erp" in q:
         total = erp_pay["Amount"].sum() if "Amount" in erp_pay else 0
-        result_box.success(f"💰 Total ERP Payments: **{total:,.2f} EUR**")
-
+        st.session_state.chat_response = f"💰 Total ERP Payments: **{total:,.2f} EUR**"
     elif "difference" in q or "compare" in q:
         diff = abs(
-            (erp_pay["Amount"].sum() if "Amount" in erp_pay else 0)
-            - (ven_pay["Amount"].sum() if "Amount" in ven_pay else 0)
+            (erp_pay["Amount"].sum() if "Amount" in erp_pay else 0) -
+            (ven_pay["Amount"].sum() if "Amount" in ven_pay else 0)
         )
-        result_box.info(f"📊 Difference between ERP and Vendor payments: **{diff:,.2f} EUR**")
-
+        st.session_state.chat_response = f"📊 Difference between ERP and Vendor payments: **{diff:,.2f} EUR**"
     else:
-        result_box.warning("I can answer about ERP payments, vendor payments, or differences.")
+        st.session_state.chat_response = "ℹ️ I can answer about ERP payments, vendor payments, or differences."
 
+# Always display the latest answer
+if st.session_state.chat_response:
+    st.markdown(st.session_state.chat_response)
