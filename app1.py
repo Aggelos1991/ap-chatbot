@@ -103,10 +103,6 @@ Lines:
 """
 
 
-Lines:
-\"\"\"{text_block}\"\"\"
-"""
-
         try:
             response = client.responses.create(model=MODEL, input=prompt)
             content = response.output_text.strip()
