@@ -229,6 +229,29 @@ if uploaded_erp and uploaded_vendor:
 
     erp_df = normalize_columns(erp_raw, "erp")
     ven_df = normalize_columns(ven_raw, "ven")
+    # ====== PREVIOUS YEAR CHECK ======
+    if "reason_erp" in erp_df.columns:
+        erp_df["reason_erp"] = erp_df["reason_erp"].astype(str).str.strip().str.lower()
+        if "credit_erp" in erp_df.columns or "debit_erp" in erp_df.columns:
+            credit_vals = erp_df["credit_erp"].apply(normalize_number) if "credit_erp" in erp_df else pd.Series(0)
+            debit_vals = erp_df["debit_erp"].apply(normalize_number) if "debit_erp" in erp_df else pd.Series(0)
+    
+            prev_mask = erp_df["reason_erp"].str.contains("previous year", na=False)
+            combined_vals = credit_vals.combine_first(debit_vals)
+    
+            # Filter only the rows with "previous year"
+            prev_rows = combined_vals[prev_mask]
+    
+            if not prev_rows.empty:
+                if any(prev_rows > 0):
+                    st.warning("⚠️ You have open amounts from previous years. Click OK to continue.")
+                    if not st.button("✅ OK, continue"):
+                        st.stop()
+                elif any(prev_rows < 0):
+                    st.warning("⚠️ You have balance carried from previous years. Click OK to continue.")
+                    if not st.button("✅ OK, continue"):
+                        st.stop()
+
 
     if "cif_erp" not in erp_df.columns or "cif_ven" not in ven_df.columns:
         st.error("❌ Missing CIF/VAT columns.")
