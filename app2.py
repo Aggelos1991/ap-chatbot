@@ -218,9 +218,31 @@ def match_invoices(erp_df, ven_df):
             v_digits = extract_digits(v_inv)
             diff = round(e_amt - v_amt, 2)
             amt_close = abs(diff) < 0.05
-            if e_inv == v_inv or (
-                e_digits and v_digits and (e_digits.endswith(v_digits) or v_digits.endswith(e_digits))
-            ):
+            # --- Υποψήφιοι έλεγχοι ομοιότητας ---
+            same_full  = (e_inv == v_inv)
+            same_clean = (e_code == v_code)
+            
+            len_diff = abs(len(e_code) - len(v_code))
+            suffix_ok = (
+                len(e_code) > 2 and len(v_code) > 2 and
+                len_diff <= 2 and (
+                    e_code.endswith(v_code) or v_code.endswith(e_code)
+                )
+            )
+            
+            same_type = (e["__doctype"] == v["__doctype"])
+            
+            # --- ΝΕΟΣ κανόνας αποδοχής ---
+            # 1) Αν είναι ακριβές ίδιο string και ίδιο type, δέσμευσέ το (ακόμα κι αν ποσά διαφέρουν)
+            if same_type and same_full:
+                take_it = True
+            # 2) Για clean/suffix θέλουμε και εγγύτητα ποσών
+            elif same_type and (same_clean or suffix_ok) and amt_close:
+                take_it = True
+            else:
+                take_it = False
+            
+            if take_it:
                 matched.append({
                     "ERP Invoice": e_inv,
                     "Vendor Invoice": v_inv,
