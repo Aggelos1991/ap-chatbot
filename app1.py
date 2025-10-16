@@ -65,8 +65,7 @@ def extract_raw_lines(uploaded_pdf):
 # GPT EXTRACTOR
 # ==========================================================
 def extract_with_gpt(lines):
-    """Analyze extracted lines using GPT-4o-mini for structure & DEBE detection."""
-    # Split into manageable batches (to avoid token overflow)
+    """Analyze extracted lines using GPT-4o-mini for structure & DEBE/Χρέωση detection."""
     BATCH_SIZE = 200
     all_records = []
 
@@ -75,27 +74,31 @@ def extract_with_gpt(lines):
         text_block = "\n".join(batch)
 
         prompt = f"""
-You are an expert Spanish accountant.
+You are a multilingual accountant specializing in Spanish and Greek vendor statements.
 
-Below are text lines from a vendor statement.
-Each line may contain multiple numbers — usually labeled as DEBE, TOTAL, or TOTALE (document amount) and SALDO (balance).
+Below are text lines from a vendor statement (possibly in Spanish, Greek, or English).
+
+Each line may contain multiple numbers — usually labeled as:
+- Spanish: DEBE, TOTAL, TOTALE, SALDO
+- Greek: ΧΡΕΩΣΗ, ΠΙΣΤΩΣΗ, ΣΥΝΟΛΟ, ΥΠΟΛΟΙΠΟ
 
 Your job:
 1. Extract only valid invoice or credit note lines.
 2. For each line, return:
-   - "Alternative Document": the document number (may appear under columns labeled Documento, Num, Nº, Numero, N.º, N°, Factura, or similar)
+   - "Alternative Document": the document number (under labels Documento, Num, Nº, Numero, N.º, N°, Factura, Τιμολόγιο, Παραστατικό, or similar)
    - "Date": dd/mm/yy or dd/mm/yyyy
    - "Reason": "Invoice" or "Credit Note"
    - "Document Value":
-       • If the line contains a column labeled DEBE, take that numeric value.
-       • Otherwise, take the **last numeric value in the line**, corresponding to TOTAL or TOTALE.
-       • Do **not** take numbers labeled as Base, Base imponible, IVA, Tipo, Impuesto, or Subtotal.
-       • If the line mentions ABONO, NOTA DE CRÉDITO, or CREDIT, make the amount negative.
-3. Ignore lines containing or referring to: 
-   "Saldo", "Cobro", "Pago", "Remesa", "Banco", "Base", "Base imponible", "IVA", "Tipo", "Impuesto", 
-   "Subtotal", "Total general", "Saldo anterior", "Impuestos", "Resumen".
-4. Only include a value if the line explicitly contains DEBE, TOTAL, or TOTALE, 
-   or if the last column represents the total document value.
+       • If the line contains DEBE, ΧΡΕΩΣΗ, TOTAL, or ΣΥΝΟΛΟ, take that numeric value.
+       • Otherwise, take the **last numeric value** in the line, corresponding to TOTAL/TOTALE/ΣΥΝΟΛΟ.
+       • Do **not** take numbers labeled as Base, Βάση, IVA, ΦΠΑ, Tipo, Impuesto, Subtotal, Υποσύνολο.
+       • If the line mentions ABONO, NOTA DE CRÉDITO, ΠΙΣΤΩΤΙΚΟ, or ΑΚΥΡΩΤΙΚΟ, make the amount negative.
+3. Ignore lines referring to:
+   "Saldo", "Cobro", "Pago", "Remesa", "Banco", 
+   "Base", "Base imponible", "IVA", "Tipo", "Impuesto", 
+   "Subtotal", "Total general", "Saldo anterior", "Impuestos", "Resumen",
+   "Πληρωμή", "Μεταφορά", "Τράπεζα", "Υπόλοιπο", "Προηγούμενο Υπόλοιπο".
+4. Only include a value if the line explicitly contains DEBE, ΧΡΕΩΣΗ, TOTAL, TOTALE, or ΣΥΝΟΛΟ.
 5. Output a valid JSON array only.
 6. Ensure "Document Value" uses '.' for decimals and exactly two digits.
 7. Do not return empty or null values for the document number — always capture it if visible.
@@ -103,8 +106,6 @@ Your job:
 Lines:
 \"\"\"{text_block}\"\"\"
 """
-
-
 
         try:
             response = client.responses.create(model=MODEL, input=prompt)
@@ -116,17 +117,18 @@ Lines:
             st.warning(f"⚠️ GPT failed on batch {i//BATCH_SIZE + 1}: {e}")
             continue
 
-        # Clean & normalize data
         for row in data:
             val = normalize_number(row.get("Document Value"))
             if val == "":
                 continue
             reason = row.get("Reason", "").lower()
-            if any(k in reason for k in ["abono", "credit", "nota de crédito", "nc"]):
+            # Greek + Spanish credit note terms
+            if any(k in reason for k in ["abono", "credit", "nota de crédito", "nc", "πιστω", "ακυρωτικ"]):
                 val = -abs(val)
                 reason = "Credit Note"
             else:
                 reason = "Invoice"
+
             all_records.append({
                 "Alternative Document": row.get("Alternative Document", "").strip(),
                 "Date": row.get("Date", "").strip(),
