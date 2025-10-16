@@ -141,7 +141,7 @@ def detect_erp_doc_type(row):
         return 0.0
 
     def detect_vendor_doc_type(row):
-    reason = str(row.get("reason_ven", "") or "").lower()
+        reason = str(row.get("reason_ven", "") or "").lower()
     debit = normalize_number(row.get("debit_ven"))
     credit = normalize_number(row.get("credit_ven"))
 
