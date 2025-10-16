@@ -203,24 +203,54 @@ def match_invoices(erp_df, ven_df):
 
     erp_use = pd.DataFrame(merged_rows).reset_index(drop=True)
 
-    def extract_digits(v):
-        return re.sub(r"\D", "", str(v or "")).lstrip("0")
+    # ==========================
+    # NEW SMART MATCHING LOGIC
+    # ==========================
+    def clean_invoice_code(v):
+        """Cleans and normalizes invoice numbers for realistic AP-style matching."""
+        if not v:
+            return ""
+        s = str(v).strip().lower()
+
+        # Remove Greek/Latin prefixes
+        s = re.sub(r"^(αρ|τιμ|pf|ab|inv|tim|cn|ar|pa|πφ|πα)\W*", "", s)
+
+        # Remove year patterns (2023–2026)
+        s = re.sub(r"(^20\d{2}[\W/\\-]*)|([\W/\\-]*20\d{2}$)", "", s)
+
+        # Keep only digits
+        s = re.sub(r"\D", "", s)
+
+        # Remove leading zeros
+        s = s.lstrip("0")
+
+        return s
 
     for e_idx, e in erp_use.iterrows():
         e_inv = str(e.get("invoice_erp", "")).strip()
         e_amt = round(float(e["__amt"]), 2)
-        e_digits = extract_digits(e_inv)
+        e_code = clean_invoice_code(e_inv)
+
         for v_idx, v in ven_use.iterrows():
             if v_idx in used_vendor_rows:
                 continue
+
             v_inv = str(v.get("invoice_ven", "")).strip()
             v_amt = round(float(v["__amt"]), 2)
-            v_digits = extract_digits(v_inv)
+            v_code = clean_invoice_code(v_inv)
             diff = round(e_amt - v_amt, 2)
             amt_close = abs(diff) < 0.05
-            if e_inv == v_inv or (
-                e_digits and v_digits and (e_digits.endswith(v_digits) or v_digits.endswith(e_digits))
-            ):
+
+            # --- Smart matching logic ---
+            same_full = e_inv == v_inv
+            same_clean = e_code == v_code
+            partial_match = (
+                len(e_code) > 2 and len(v_code) > 2 and (
+                    e_code.endswith(v_code) or v_code.endswith(e_code)
+                )
+            )
+
+            if same_full or same_clean or partial_match:
                 matched.append({
                     "ERP Invoice": e_inv,
                     "Vendor Invoice": v_inv,
@@ -232,6 +262,9 @@ def match_invoices(erp_df, ven_df):
                 used_vendor_rows.add(v_idx)
                 break
 
+    # =======================================
+    # REST OF YOUR CODE (UNCHANGED)
+    # =======================================
     matched_df = pd.DataFrame(matched)
     matched_erp = {m["ERP Invoice"] for _, m in matched_df.iterrows()}
     matched_ven = {m["Vendor Invoice"] for _, m in matched_df.iterrows()}
@@ -252,7 +285,7 @@ def match_invoices(erp_df, ven_df):
 
 
 # ======================================
-# PAYMENT EXTRACTION
+# PAYMENT EXTRACTION (UNCHANGED)
 # ======================================
 def extract_payments(erp_df, ven_df):
     keywords = [
@@ -303,7 +336,7 @@ def extract_payments(erp_df, ven_df):
 
 
 # ======================================
-# STREAMLIT UI
+# STREAMLIT UI (UNCHANGED)
 # ======================================
 uploaded_erp = st.file_uploader("📂 Upload ERP Export (Excel)", type=["xlsx"])
 uploaded_vendor = st.file_uploader("📂 Upload Vendor Statement (Excel)", type=["xlsx"])
@@ -321,7 +354,6 @@ if uploaded_erp and uploaded_vendor:
 
     st.success("✅ Reconciliation complete")
 
-    # ====== HIGHLIGHTING ======
     def highlight_row(row):
         if row["Status"] == "Match":
             return ['background-color: #2e7d32; color: white'] * len(row)
@@ -329,14 +361,12 @@ if uploaded_erp and uploaded_vendor:
             return ['background-color: #f9a825; color: black'] * len(row)
         return [''] * len(row)
 
-    # ====== MATCHED ======
     st.subheader("📊 Matched / Differences")
     if not matched.empty:
         st.dataframe(matched.style.apply(highlight_row, axis=1), use_container_width=True)
     else:
         st.info("No matches found.")
 
-    # ====== MISSING ======
     st.subheader("❌ Missing in ERP (found in vendor but not in ERP)")
     if not erp_missing.empty:
         st.dataframe(
@@ -355,7 +385,6 @@ if uploaded_erp and uploaded_vendor:
     else:
         st.success("✅ No missing invoices in Vendor.")
 
-    # ====== PAYMENTS ======
     st.subheader("🏦 Payment Transactions (Identified in both sides)")
     col1, col2 = st.columns(2)
 
