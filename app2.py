@@ -103,19 +103,10 @@ def match_invoices(erp_df, ven_df):
         reason = str(row.get("reason_erp", "")).lower()
         charge = normalize_number(row.get("debit_erp"))
         credit = normalize_number(row.get("credit_erp"))
-
-        # Unified multilingual keywords
-        payment_words = [
-            "pago", "payment", "transfer", "bank", "saldo", "trf",
-            "πληρωμή", "μεταφορά", "τράπεζα", "τραπεζικό έμβασμα"
-        ]
-        credit_words = [
-            "credit", "nota", "abono", "cn", "πιστωτικό", "πίστωση"
-        ]
-        invoice_words = [
-            "factura", "invoice", "inv", "τιμολόγιο", "παραστατικό"
-        ]
-
+        payment_words = ["pago", "payment", "transfer", "bank", "saldo", "trf",
+                         "πληρωμή", "μεταφορά", "τράπεζα", "τραπεζικό έμβασμα"]
+        credit_words = ["credit", "nota", "abono", "cn", "πιστωτικό", "πίστωση"]
+        invoice_words = ["factura", "invoice", "inv", "τιμολόγιο", "παραστατικό"]
         if any(k in reason for k in payment_words):
             return "IGNORE"
         elif any(k in reason for k in credit_words):
@@ -138,19 +129,10 @@ def match_invoices(erp_df, ven_df):
         reason = str(row.get("reason_ven", "")).lower()
         debit = normalize_number(row.get("debit_ven"))
         credit = normalize_number(row.get("credit_ven"))
-
-        # Unified multilingual keywords
-        payment_words = [
-            "pago", "payment", "transfer", "bank", "saldo", "trf",
-            "πληρωμή", "μεταφορά", "τράπεζα", "τραπεζικό έμβασμα"
-        ]
-        credit_words = [
-            "credit", "nota", "abono", "cn", "πιστωτικό", "πίστωση"
-        ]
-        invoice_words = [
-            "factura", "invoice", "inv", "τιμολόγιο", "παραστατικό"
-        ]
-
+        payment_words = ["pago", "payment", "transfer", "bank", "saldo", "trf",
+                         "πληρωμή", "μεταφορά", "τράπεζα", "τραπεζικό έμβασμα"]
+        credit_words = ["credit", "nota", "abono", "cn", "πιστωτικό", "πίστωση"]
+        invoice_words = ["factura", "invoice", "inv", "τιμολόγιο", "παραστατικό"]
         if any(k in reason for k in payment_words):
             return "IGNORE"
         elif any(k in reason for k in credit_words) or credit > 0:
@@ -182,15 +164,10 @@ def match_invoices(erp_df, ven_df):
     for inv, group in erp_use.groupby("invoice_erp", dropna=False):
         if group.empty:
             continue
-
-        # If 3 or more entries → take the last (latest)
         if len(group) >= 3:
             group = group.tail(1)
-
-        # If both INV and CN exist for same number → combine
         inv_rows = group[group["__doctype"] == "INV"]
         cn_rows = group[group["__doctype"] == "CN"]
-
         if not inv_rows.empty and not cn_rows.empty:
             total_inv = inv_rows["__amt"].sum()
             total_cn = cn_rows["__amt"].sum()
@@ -200,31 +177,21 @@ def match_invoices(erp_df, ven_df):
             merged_rows.append(base_row)
         else:
             merged_rows.append(group.iloc[-1])
-
     erp_use = pd.DataFrame(merged_rows).reset_index(drop=True)
 
-    # ==========================
-    # NEW SMART MATCHING LOGIC
-    # ==========================
+    # ====== NEW SMART MATCHING LOGIC (ONLY CHANGE) ======
     def clean_invoice_code(v):
-        """Cleans and normalizes invoice numbers for realistic AP-style matching."""
+        """Normalize invoice numbers by removing prefixes, years, and non-digits."""
         if not v:
             return ""
         s = str(v).strip().lower()
-
-        # Remove Greek/Latin prefixes
+        # Remove prefixes and common tags
         s = re.sub(r"^(αρ|τιμ|pf|ab|inv|tim|cn|ar|pa|πφ|πα)\W*", "", s)
-
-        # Remove year patterns (2023–2026)
+        # Remove year patterns
         s = re.sub(r"(^20\d{2}[\W/\\-]*)|([\W/\\-]*20\d{2}$)", "", s)
-
         # Keep only digits
         s = re.sub(r"\D", "", s)
-
-        # Remove leading zeros
-        s = s.lstrip("0")
-
-        return s
+        return s.lstrip("0")
 
     for e_idx, e in erp_use.iterrows():
         e_inv = str(e.get("invoice_erp", "")).strip()
@@ -234,14 +201,12 @@ def match_invoices(erp_df, ven_df):
         for v_idx, v in ven_use.iterrows():
             if v_idx in used_vendor_rows:
                 continue
-
             v_inv = str(v.get("invoice_ven", "")).strip()
             v_amt = round(float(v["__amt"]), 2)
             v_code = clean_invoice_code(v_inv)
             diff = round(e_amt - v_amt, 2)
             amt_close = abs(diff) < 0.05
 
-            # --- Smart matching logic ---
             same_full = e_inv == v_inv
             same_clean = e_code == v_code
             partial_match = (
@@ -262,9 +227,6 @@ def match_invoices(erp_df, ven_df):
                 used_vendor_rows.add(v_idx)
                 break
 
-    # =======================================
-    # REST OF YOUR CODE (UNCHANGED)
-    # =======================================
     matched_df = pd.DataFrame(matched)
     matched_erp = {m["ERP Invoice"] for _, m in matched_df.iterrows()}
     matched_ven = {m["Vendor Invoice"] for _, m in matched_df.iterrows()}
@@ -285,7 +247,7 @@ def match_invoices(erp_df, ven_df):
 
 
 # ======================================
-# PAYMENT EXTRACTION (UNCHANGED)
+# PAYMENT EXTRACTION
 # ======================================
 def extract_payments(erp_df, ven_df):
     keywords = [
@@ -336,7 +298,7 @@ def extract_payments(erp_df, ven_df):
 
 
 # ======================================
-# STREAMLIT UI (UNCHANGED)
+# STREAMLIT UI
 # ======================================
 uploaded_erp = st.file_uploader("📂 Upload ERP Export (Excel)", type=["xlsx"])
 uploaded_vendor = st.file_uploader("📂 Upload Vendor Statement (Excel)", type=["xlsx"])
