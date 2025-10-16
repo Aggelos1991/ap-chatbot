@@ -9,7 +9,7 @@ from openai import OpenAI
 # CONFIGURATION
 # ==========================================================
 st.set_page_config(page_title="🦅 DataFalcon Pro — Hybrid GPT Extractor", layout="wide")
-st.title("🦅 DataFalcon Pro — Hybrid Vendor Statement Extractor (Credit Column Only)")
+st.title("🦅 DataFalcon Pro — Hybrid Vendor Statement Extractor (Credit Column Only - Enhanced)")
 
 try:
     from dotenv import load_dotenv
@@ -60,11 +60,11 @@ def extract_raw_lines(uploaded_pdf):
     return all_lines
 
 # ==========================================================
-# GPT EXTRACTOR
+# GPT EXTRACTOR (MORE FLEXIBLE)
 # ==========================================================
 def extract_with_gpt(lines):
-    """Extracts all valid document lines and consolidates all numeric values into one Credit column."""
-    BATCH_SIZE = 200
+    """Extracts invoice, credit note, and payment info even if DEBE/HABER are missing."""
+    BATCH_SIZE = 150
     all_records = []
 
     for i in range(0, len(lines), BATCH_SIZE):
@@ -72,21 +72,24 @@ def extract_with_gpt(lines):
         text_block = "\n".join(batch)
 
         prompt = f"""
-You are a multilingual accountant specialized in Spanish and Greek vendor statements.
+You are a multilingual accountant (Spanish + Greek).
 
-Each line may include:
-- Spanish: DEBE (debit), HABER (credit), TOTAL, SALDO, COBRO, EFECTO, REMESA
-- Greek: ΧΡΕΩΣΗ (debit), ΠΙΣΤΩΣΗ (credit), ΣΥΝΟΛΟ, ΠΛΗΡΩΜΗ, ΤΡΑΠΕΖΑ, ΕΜΒΑΣΜΑ
+Below are lines from a vendor statement.
+Some lines include: 'Fra. emitida', 'Cobro Efecto', 'Factura', 'Abono', 'Pago', 'Remesa', or 'Πληρωμή'.
+Each line may contain one or more numeric amounts (like 322,27 or 1.457,65).
 
-Extract for each accounting line:
-- "Alternative Document": the document number
-- "Date": dd/mm/yy or dd/mm/yyyy
-- "Reason": short description (Factura, Abono, Pliromi, Trapeziko Embasma, etc.)
-- "Credit": the numeric amount found under HABER, PISTOSI, COBRO, TOTAL, or SYNOLo.
-  • If both DEBE and HABER (or XREOSI/PISTOSI) appear, use HABER/PISTOSI.
-  • If only DEBE/XREOSI exist, use that as Credit.
-  • Use '.' for decimals.
-Ignore summary lines (Saldo, IVA, Ypoloipo, FPA, Yposynolo, etc.).
+Your task:
+Extract only document-related lines (invoices, credit notes, or payments).
+For each valid line, return:
+- "Alternative Document": document number (after Nº, n°, n., Factura, Documento, or similar)
+- "Date": dd/mm/yy or dd/mm/yyyy if visible
+- "Reason": short description (Factura, Cobro, Abono, Πληρωμή, Τραπεζικό Έμβασμα, etc.)
+- "Credit": numeric value corresponding to the document’s main amount (use the **last numeric value in the line** if unsure)
+
+If "Abono", "Nota de Credito", "NC", "πιστωτικό", or "ακυρωτικό" appears, make Credit negative.
+Ignore "Saldo", "Apertura", "Total General", "Base", "IVA", "FPA", "Υπόλοιπο", etc.
+
+Output must be a valid JSON array.
 
 Lines:
 \"\"\"{text_block}\"\"\"
@@ -95,9 +98,13 @@ Lines:
         try:
             response = client.responses.create(model=MODEL, input=prompt)
             content = response.output_text.strip()
+
+            # Ensure GPT output is valid JSON
             json_match = re.search(r"\[.*\]", content, re.DOTALL)
-            json_text = json_match.group(0) if json_match else content
-            data = json.loads(json_text)
+            if not json_match:
+                continue
+            data = json.loads(json_match.group(0))
+
         except Exception as e:
             st.warning(f"⚠️ GPT failed on batch {i//BATCH_SIZE + 1}: {e}")
             continue
@@ -106,11 +113,7 @@ Lines:
             credit_val = normalize_number(row.get("Credit"))
             reason = str(row.get("Reason", "")).lower()
 
-            # detect credit notes and invert
-            if any(k in reason for k in [
-                "abono", "credit", "nota de credito",
-                "pistot", "akyrotik", "πιστω", "ακυρωτικ"
-            ]):
+            if any(k in reason for k in ["abono", "credit", "nota de credito", "nc", "πιστωτικό", "ακυρωτικό"]):
                 credit_val = -abs(credit_val)
 
             all_records.append({
