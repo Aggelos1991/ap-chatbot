@@ -243,14 +243,16 @@ if uploaded_erp and uploaded_vendor:
             prev_rows = combined_vals[prev_mask]
     
             if not prev_rows.empty:
-                if any(prev_rows > 0):
-                    st.warning("⚠️ You have open amounts from previous years. Click OK to continue.")
+                total_prev = prev_rows.sum()
+                if total_prev > 0:
+                    st.warning(f"⚠️ You have open amounts from previous years totaling **{total_prev:,.2f} EUR**.")
                     if not st.button("✅ OK, continue"):
                         st.stop()
-                elif any(prev_rows < 0):
-                    st.warning("⚠️ You have balance carried from previous years. Click OK to continue.")
+                elif total_prev < 0:
+                    st.warning(f"⚠️ You have a balance carried from previous years totaling **{total_prev:,.2f} EUR**.")
                     if not st.button("✅ OK, continue"):
                         st.stop()
+
 
 
     if "cif_erp" not in erp_df.columns or "cif_ven" not in ven_df.columns:
