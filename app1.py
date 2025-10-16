@@ -79,19 +79,29 @@ You are an expert Spanish accountant.
 
 Below are text lines from a vendor statement.
 Each line may contain multiple numbers — usually labeled as DEBE, TOTAL, or TOTALE (document amount) and SALDO (balance).
+
 Your job:
 1. Extract only the valid invoice or credit note lines.
 2. For each, return:
    - "Alternative Document": invoice/reference number (e.g. 6--483, SerieFactura-Precodigo-Num FactCliente)
    - "Date": dd/mm/yy or dd/mm/yyyy
    - "Reason": "Invoice" or "Credit Note"
-   - "Document Value": the numeric value shown under DEBE, TOTAL, or TOTALE (normally the second-to-last number in the line)
-     • If line mentions ABONO, NOTA DE CRÉDITO, or CREDIT, make it negative.
-3. Ignore any lines that contain or reference:
-   - "Base", "Base imponible", "IVA", "Tipo", "Impuesto", "Subtotal", "Total general", "Saldo anterior", "Cobro", "Pago", "Remesa", or "Banco".
-4. Only include a value if the line explicitly includes DEBE, TOTAL, or TOTALE — skip all others.
+   - "Document Value": 
+       • If the line contains a column labeled **DEBE**, take that numeric value.
+       • Otherwise, take the **last numeric value in the line**, which corresponds to **TOTAL** or **TOTALE**.
+       • Do **not** take numbers labeled as "Base", "Base imponible", "IVA", "Tipo", "Impuesto", or "Subtotal".
+       • If the line mentions ABONO, NOTA DE CRÉDITO, or CREDIT, make the amount negative.
+3. Ignore lines containing or referring to any of the following words:
+   "Saldo", "Cobro", "Pago", "Remesa", "Banco", "Base", "Base imponible", "IVA", "Tipo", "Impuesto", "Subtotal", 
+   "Total general", "Saldo anterior", "Impuestos", or "Resumen".
+4. Only include a value if the line **explicitly contains DEBE, TOTAL, or TOTALE**, or if the **last column** represents the total document value.
 5. Output a valid JSON array only.
 6. Ensure "Document Value" uses '.' for decimals and exactly two digits.
+
+Lines:
+\"\"\"{text_block}\"\"\"
+"""
+
 
 Lines:
 \"\"\"{text_block}\"\"\"
