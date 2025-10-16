@@ -47,6 +47,7 @@ def normalize_number(value):
         return ""
 
 def extract_raw_lines(uploaded_pdf):
+    """Extract text lines from all pages of the PDF."""
     all_lines = []
     with pdfplumber.open(uploaded_pdf) as pdf:
         for page in pdf.pages:
@@ -80,12 +81,12 @@ Each line may include:
 Extract for each accounting line:
 - "Alternative Document": the document number
 - "Date": dd/mm/yy or dd/mm/yyyy
-- "Reason": short description (Factura, Abono, Πληρωμή, Τραπεζικό Έμβασμα, etc.)
-- "Credit": the numeric amount found under HABER, ΠΙΣΤΩΣΗ, COBRO, TOTAL, or ΣΥΝΟΛΟ.
-  • If both DEBE and HABER (or ΧΡΕΩΣΗ/ΠΙΣΤΩΣΗ) appear, use HABER/ΠΙΣΤΩΣΗ.
-  • If only DEBE/ΧΡΕΩΣΗ exist, use that as Credit.
+- "Reason": short description (Factura, Abono, Pliromi, Trapeziko Embasma, etc.)
+- "Credit": the numeric amount found under HABER, PISTOSI, COBRO, TOTAL, or SYNOLo.
+  • If both DEBE and HABER (or XREOSI/PISTOSI) appear, use HABER/PISTOSI.
+  • If only DEBE/XREOSI exist, use that as Credit.
   • Use '.' for decimals.
-Ignore summary lines (Saldo, IVA, Υπόλοιπο, ΦΠΑ, Υποσύνολο, etc.).
+Ignore summary lines (Saldo, IVA, Ypoloipo, FPA, Yposynolo, etc.).
 
 Lines:
 \"\"\"{text_block}\"\"\"
@@ -104,4 +105,62 @@ Lines:
         for row in data:
             credit_val = normalize_number(row.get("Credit"))
             reason = str(row.get("Reason", "")).lower()
-            if any(k in reason for k in ["abono", "credit", "nota de crédito", "
+
+            # detect credit notes and invert
+            if any(k in reason for k in [
+                "abono", "credit", "nota de credito",
+                "pistot", "akyrotik", "πιστω", "ακυρωτικ"
+            ]):
+                credit_val = -abs(credit_val)
+
+            all_records.append({
+                "Alternative Document": str(row.get("Alternative Document", "")).strip(),
+                "Date": str(row.get("Date", "")).strip(),
+                "Reason": row.get("Reason", "").strip(),
+                "Credit": credit_val
+            })
+
+    return all_records
+
+# ==========================================================
+# EXPORT
+# ==========================================================
+def to_excel_bytes(records):
+    df = pd.DataFrame(records)
+    buf = BytesIO()
+    df.to_excel(buf, index=False)
+    buf.seek(0)
+    return buf
+
+# ==========================================================
+# STREAMLIT UI
+# ==========================================================
+uploaded_pdf = st.file_uploader("📂 Upload Vendor Statement (PDF)", type=["pdf"])
+
+if uploaded_pdf:
+    with st.spinner("📄 Extracting text from all pages..."):
+        lines = extract_raw_lines(uploaded_pdf)
+
+    if not lines:
+        st.warning("⚠️ No readable text lines found. Check if the PDF is scanned.")
+    else:
+        st.text_area("📄 Preview (first 25 lines):", "\n".join(lines[:25]), height=250)
+
+        if st.button("🤖 Run Hybrid Extraction"):
+            with st.spinner("Analyzing data with GPT-4o-mini..."):
+                data = extract_with_gpt(lines)
+
+            if not data:
+                st.warning("⚠️ No structured invoice data detected.")
+            else:
+                df = pd.DataFrame(data)
+                st.success(f"✅ Extraction complete — {len(df)} valid records found.")
+                st.dataframe(df, use_container_width=True)
+                st.download_button(
+                    "⬇️ Download Excel",
+                    data=to_excel_bytes(data),
+                    file_name="vendor_statement_credit_only.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+else:
+    st.info("Please upload a vendor statement PDF to begin.")
