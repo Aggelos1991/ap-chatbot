@@ -329,33 +329,43 @@ if uploaded_erp and uploaded_vendor:
         st.dataframe(matched_pay, use_container_width=True)
     else:
         st.info("No matching payments found.")
+# Save data in session_state so it persists between reruns
+if "erp_pay" not in st.session_state:
+    st.session_state["erp_pay"] = erp_pay
+if "ven_pay" not in st.session_state:
+    st.session_state["ven_pay"] = ven_pay
 
-# ====== CHAT PROMPT (Sticky, No Scroll Reset) ======
+# ====== CHAT PROMPT (Persistent, Safe) ======
 st.markdown("---")
 st.subheader("💬 Ask ReconRaptor about Payments")
+
+# Recover stored data
+erp_pay = st.session_state.get("erp_pay", pd.DataFrame())
+ven_pay = st.session_state.get("ven_pay", pd.DataFrame())
 
 with st.form("ask_recon_form", clear_on_submit=False):
     query = st.text_input("Ask something (e.g. 'sum of ERP payments'):")
     submitted = st.form_submit_button("Ask")
 
-if submitted:
+if submitted and query:
     q = query.lower()
-    response_area = st.empty()  # keeps result fixed in place below input
+    result_box = st.empty()
 
     if "vendor" in q:
         total = ven_pay["Amount"].sum() if "Amount" in ven_pay else 0
-        response_area.success(f"💰 Total Vendor Payments: **{total:,.2f} EUR**")
+        result_box.success(f"💰 Total Vendor Payments: **{total:,.2f} EUR**")
 
     elif "erp" in q:
         total = erp_pay["Amount"].sum() if "Amount" in erp_pay else 0
-        response_area.success(f"💰 Total ERP Payments: **{total:,.2f} EUR**")
+        result_box.success(f"💰 Total ERP Payments: **{total:,.2f} EUR**")
 
     elif "difference" in q or "compare" in q:
         diff = abs(
             (erp_pay["Amount"].sum() if "Amount" in erp_pay else 0)
             - (ven_pay["Amount"].sum() if "Amount" in ven_pay else 0)
         )
-        response_area.info(f"📊 Difference between ERP and Vendor payments: **{diff:,.2f} EUR**")
+        result_box.info(f"📊 Difference between ERP and Vendor payments: **{diff:,.2f} EUR**")
 
     else:
-        response_area.warning("I can answer about ERP payments, vendor payments, or differences.")
+        result_box.warning("I can answer about ERP payments, vendor payments, or differences.")
+
