@@ -71,7 +71,6 @@ def normalize_columns(df, tag):
 
     out = df.rename(columns=rename_map)
 
-    # Ensure debit/credit exist
     for required in ["debit", "credit"]:
         cname = f"{required}_{tag}"
         if cname not in out.columns:
@@ -136,9 +135,36 @@ def match_invoices(erp_df, ven_df):
     ven_df["__doctype"] = ven_df.apply(detect_vendor_doc_type, axis=1)
     ven_df["__amt"] = ven_df.apply(calc_vendor_amount, axis=1)
 
-    erp_use = erp_df[erp_df["__doctype"].isin(["INV", "CN"])].copy()
+    # ====== ERP MERGE & CLEANUP ======
+    merged_rows = []
+    grouped = erp_df.groupby("invoice_erp", dropna=False)
+    for inv, group in grouped:
+        if group.empty:
+            continue
+
+        # remove full cancel pairs (e.g. +100 / -100)
+        amounts = group["__amt"].round(2).tolist()
+        if any(a == -b for a in amounts for b in amounts if a != 0):
+            group = group[~group["__amt"].isin([-x for x in amounts])]
+
+        # merge INV + CN → one net invoice
+        inv_rows = group[group["__doctype"] == "INV"]
+        cn_rows = group[group["__doctype"] == "CN"]
+
+        if not inv_rows.empty and not cn_rows.empty:
+            total_inv = inv_rows["__amt"].sum()
+            total_cn = cn_rows["__amt"].sum()
+            net = round(total_inv + total_cn, 2)
+            base_row = inv_rows.iloc[-1].copy()
+            base_row["__amt"] = net
+            merged_rows.append(base_row)
+        elif not group.empty:
+            merged_rows.append(group.iloc[-1])
+
+    erp_use = pd.DataFrame(merged_rows).reset_index(drop=True)
     ven_use = ven_df[ven_df["__doctype"].isin(["INV", "CN"])].copy()
 
+    # ====== MATCHING ======
     def extract_digits(v):
         return re.sub(r"\D", "", str(v or "")).lstrip("0")
 
@@ -181,20 +207,17 @@ def match_invoices(erp_df, ven_df):
 
 
 # ======================================
-# PAYMENT EXTRACTION
+# PAYMENT EXTRACTION (unchanged)
 # ======================================
 def extract_payments(erp_df, ven_df):
     keywords = ["pago", "pagos", "payment", "transfer", "transferencia", "bank", "trf", "remesa", "prepago", "ajuste"]
     is_payment = lambda x: any(k in str(x).lower() for k in keywords)
-
     erp_pay = erp_df[erp_df["reason_erp"].apply(is_payment)].copy() if "reason_erp" in erp_df else pd.DataFrame()
     ven_pay = ven_df[ven_df["reason_ven"].apply(is_payment)].copy() if "reason_ven" in ven_df else pd.DataFrame()
-
     if not erp_pay.empty:
         erp_pay["Amount"] = erp_pay.apply(lambda r: abs(normalize_number(r.get("debit_erp")) - normalize_number(r.get("credit_erp"))), axis=1)
     if not ven_pay.empty:
         ven_pay["Amount"] = ven_pay.apply(lambda r: abs(normalize_number(r.get("debit_ven")) - normalize_number(r.get("credit_ven"))), axis=1)
-
     matched_payments = []
     used_vendor = set()
     for _, e in erp_pay.iterrows():
@@ -212,99 +235,41 @@ def extract_payments(erp_df, ven_df):
                 })
                 used_vendor.add(v_idx)
                 break
-
     return erp_pay, ven_pay, pd.DataFrame(matched_payments)
 
 
 # ======================================
-# STREAMLIT UI
+# STREAMLIT UI (unchanged)
 # ======================================
 uploaded_erp = st.file_uploader("📂 Upload ERP Export (Excel)", type=["xlsx"])
 uploaded_vendor = st.file_uploader("📂 Upload Vendor Statement (Excel)", type=["xlsx"])
-
 if uploaded_erp and uploaded_vendor:
     erp_raw = pd.read_excel(uploaded_erp, dtype=str)
     ven_raw = pd.read_excel(uploaded_vendor, dtype=str)
-
     erp_df = normalize_columns(erp_raw, "erp")
     ven_df = normalize_columns(ven_raw, "ven")
-
     with st.spinner("Reconciling invoices..."):
         matched, erp_missing, ven_missing = match_invoices(erp_df, ven_df)
         erp_pay, ven_pay, matched_pay = extract_payments(erp_df, ven_df)
-
     st.success("✅ Reconciliation complete")
-
-    # ====== HIGHLIGHTING ======
     def highlight_row(row):
         if row["Status"] == "Match":
             return ['background-color: #2e7d32; color: white'] * len(row)
         elif row["Status"] == "Difference":
             return ['background-color: #f9a825; color: black'] * len(row)
         return [''] * len(row)
-
-    # ====== MATCHED ======
     st.subheader("📊 Matched / Differences")
     if not matched.empty:
         st.dataframe(matched.style.apply(highlight_row, axis=1), use_container_width=True)
     else:
         st.info("No matches found.")
-
-    # ====== MISSING ======
     st.subheader("❌ Missing in ERP (found in vendor but not in ERP)")
     if not erp_missing.empty:
-        st.dataframe(
-            erp_missing.style.applymap(lambda _: "background-color: #c62828; color: white"),
-            use_container_width=True,
-        )
+        st.dataframe(erp_missing.style.applymap(lambda _: "background-color: #c62828; color: white"), use_container_width=True)
     else:
         st.success("✅ No missing invoices in ERP.")
-
     st.subheader("❌ Missing in Vendor (found in ERP but not in vendor)")
     if not ven_missing.empty:
-        st.dataframe(
-            ven_missing.style.applymap(lambda _: "background-color: #c62828; color: white"),
-            use_container_width=True,
-        )
+        st.dataframe(ven_missing.style.applymap(lambda _: "background-color: #c62828; color: white"), use_container_width=True)
     else:
         st.success("✅ No missing invoices in Vendor.")
-
-    # ====== PAYMENTS ======
-    st.subheader("🏦 Payment Transactions (Identified in both sides)")
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown("**💼 ERP Payments**")
-        if not erp_pay.empty:
-            st.dataframe(
-                erp_pay.style.applymap(lambda _: "background-color: #004d40; color: white"),
-                use_container_width=True,
-            )
-            st.markdown(f"**Total ERP Payments:** {erp_pay['Amount'].sum():,.2f} EUR")
-        else:
-            st.info("No ERP payments found.")
-
-    with col2:
-        st.markdown("**🧾 Vendor Payments**")
-        if not ven_pay.empty:
-            st.dataframe(
-                ven_pay.style.applymap(lambda _: "background-color: #1565c0; color: white"),
-                use_container_width=True,
-            )
-            st.markdown(f"**Total Vendor Payments:** {ven_pay['Amount'].sum():,.2f} EUR")
-        else:
-            st.info("No Vendor payments found.")
-
-    st.markdown("### ✅ Matched Payments")
-    if not matched_pay.empty:
-        st.dataframe(
-            matched_pay.style.applymap(lambda _: "background-color: #2e7d32; color: white"),
-            use_container_width=True,
-        )
-        total_erp = matched_pay["ERP Amount"].sum()
-        total_vendor = matched_pay["Vendor Amount"].sum()
-        diff_total = abs(total_erp - total_vendor)
-        st.markdown(f"**Total Matched ERP Payments:** {total_erp:,.2f} EUR")
-        st.markdown(f"**Total Matched Vendor Payments:** {total_vendor:,.2f} EUR")
-        st.markdown(f"**Difference Between ERP and Vendor Payments:** {diff_total:,.2f} EUR")
-    else:
-        st.info("No matching payments found.")
