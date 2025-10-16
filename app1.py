@@ -78,18 +78,20 @@ def extract_with_gpt(lines):
 You are an expert Spanish accountant.
 
 Below are text lines from a vendor statement.
-Each line may contain multiple numbers — usually a DEBE (second-to-last) and a SALDO (last).
+Each line may contain multiple numbers — usually labeled as DEBE, TOTAL, or TOTALE (document amount) and SALDO (balance).
 Your job:
 1. Extract only the valid invoice or credit note lines.
 2. For each, return:
-    - "Alternative Document": invoice/reference number (e.g. 6--483, SerieFactura-Precodigo-Num FactCliente)
-    - "Date": dd/mm/yy or dd/mm/yyyy
-    - "Reason": "Invoice" or "Credit Note"
-    - "Document Value": the amount shown under DEBE, TOTAL, or TOTALE (normally the second-to-last numeric value in the line)
+   - "Alternative Document": invoice/reference number (e.g. 6--483, SerieFactura-Precodigo-Num FactCliente)
+   - "Date": dd/mm/yy or dd/mm/yyyy
+   - "Reason": "Invoice" or "Credit Note"
+   - "Document Value": the numeric value shown under DEBE, TOTAL, or TOTALE (normally the second-to-last number in the line)
      • If line mentions ABONO, NOTA DE CRÉDITO, or CREDIT, make it negative.
-3. Ignore "Saldo", "Cobro", "Pago", "Remesa", "Banco", "Base", "Saldo Anterior".
-4. Output valid JSON array only.
-5. Ensure Document Value uses '.' for decimals and exactly two digits.
+3. Ignore any lines that contain or reference:
+   - "Base", "Base imponible", "IVA", "Tipo", "Impuesto", "Subtotal", "Total general", "Saldo anterior", "Cobro", "Pago", "Remesa", or "Banco".
+4. Only include a value if the line explicitly includes DEBE, TOTAL, or TOTALE — skip all others.
+5. Output a valid JSON array only.
+6. Ensure "Document Value" uses '.' for decimals and exactly two digits.
 
 Lines:
 \"\"\"{text_block}\"\"\"
