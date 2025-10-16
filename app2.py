@@ -181,17 +181,37 @@ def match_invoices(erp_df, ven_df):
 
     # ====== NEW SMART MATCHING LOGIC (ONLY CHANGE) ======
     def clean_invoice_code(v):
-        """Normalize invoice numbers by removing prefixes, years, and non-digits."""
+        """
+        Smart normalization of invoice numbers.
+        Removes Greek/Latin prefixes, year tags, special chars, and isolates numeric core.
+        Handles messy patterns like 'AB123/2025', 'PF/.000230', 'INV2025123', 'TIM-045', etc.
+        """
         if not v:
             return ""
+    
         s = str(v).strip().lower()
-        # Remove prefixes and common tags
-        s = re.sub(r"^(αρ|τιμ|pf|ab|inv|tim|cn|ar|pa|πφ|πα)\W*", "", s)
-        # Remove year patterns
-        s = re.sub(r"(^20\d{2}[\W/\\-]*)|([\W/\\-]*20\d{2}$)", "", s)
-        # Keep only digits
-        s = re.sub(r"\D", "", s)
-        return s.lstrip("0")
+    
+        # 🔹 Remove common Greek & Latin prefixes (real AP patterns)
+        s = re.sub(r"^(αρ|τιμ|pf|ab|inv|tim|cn|ar|pa|πφ|πα|apo|ref|doc|num|no)\W*", "", s)
+    
+        # 🔹 Remove year-like patterns (2023, 2024, etc.) anywhere in the string
+        s = re.sub(r"20\d{2}", "", s)
+    
+        # 🔹 Remove all special characters (slashes, dots, dashes, etc.)
+        s = re.sub(r"[^a-z0-9]", "", s)
+    
+        # 🔹 Remove long zero padding (leading zeros)
+        s = re.sub(r"^0+", "", s)
+    
+        # 🔹 Extract longest numeric sequence (real core number)
+        digits = re.findall(r"\d+", s)
+        if digits:
+            core = max(digits, key=len)  # choose longest numeric block
+        else:
+            core = ""
+    
+        # 🔹 Keep last 8 digits max — avoids full long IDs or timestamps
+        return core[-8:]
 
     for e_idx, e in erp_use.iterrows():
         e_inv = str(e.get("invoice_erp", "")).strip()
