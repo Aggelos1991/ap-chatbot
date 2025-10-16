@@ -181,7 +181,7 @@ def match_invoices(erp_df, ven_df):
     erp_use = pd.DataFrame(merged_rows).reset_index(drop=True)
 
     # ====== NEW SMART MATCHING LOGIC (ONLY CHANGE) ======
-    def clean_invoice_code(v):
+def clean_invoice_code(v):
     """Cleans invoice numbers by removing prefixes, years, special chars, and leading zeros."""
     if not v:
         return ""
