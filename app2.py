@@ -135,8 +135,7 @@ def match_invoices(erp_df, ven_df):
     erp_df["__amt"] = erp_df.apply(calc_erp_amount, axis=1)
     ven_df["__doctype"] = ven_df.apply(detect_vendor_doc_type, axis=1)
     ven_df["__amt"] = ven_df.apply(calc_vendor_amount, axis=1)
-
-    # ====== MERGE ERP CREDIT/INVOICE PAIRS (AND HANDLE CANCELLATIONS) ======
+        # ====== MERGE ERP CREDIT/INVOICE PAIRS (AND HANDLE CANCELLATIONS) ======
     merged_rows = []
     grouped = erp_df.groupby("invoice_erp", dropna=False)
 
@@ -148,6 +147,7 @@ def match_invoices(erp_df, ven_df):
         amounts = group["__amt"].round(2).tolist()
         has_cancel_pair = any(a == -b for a in amounts for b in amounts if a != 0)
         if has_cancel_pair:
+            # Remove offsetting pairs
             group = group[~group["__amt"].isin([-x for x in amounts])]
             if not group.empty:
                 group = group.iloc[[-1]]
@@ -169,8 +169,8 @@ def match_invoices(erp_df, ven_df):
 
     erp_use = pd.DataFrame(merged_rows).reset_index(drop=True)
     ven_use = ven_df[ven_df["__doctype"].isin(["INV", "CN"])].copy()
+    
 
-    # ====== MATCHING ======
     def extract_digits(v):
         return re.sub(r"\D", "", str(v or "")).lstrip("0")
 
