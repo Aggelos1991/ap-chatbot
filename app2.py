@@ -229,6 +229,7 @@ if uploaded_erp and uploaded_vendor:
 
     erp_df = normalize_columns(erp_raw, "erp")
     ven_df = normalize_columns(ven_raw, "ven")
+
     # ====== PREVIOUS YEAR CHECK ======
     if "reason_erp" in erp_df.columns:
         erp_df["reason_erp"] = erp_df["reason_erp"].astype(str).str.strip().str.lower()
@@ -253,8 +254,7 @@ if uploaded_erp and uploaded_vendor:
                     if not st.button("✅ OK, continue"):
                         st.stop()
 
-
-
+    # ====== FILE VALIDATION ======
     if "cif_erp" not in erp_df.columns or "cif_ven" not in ven_df.columns:
         st.error("❌ Missing CIF/VAT columns.")
         st.stop()
@@ -265,15 +265,6 @@ if uploaded_erp and uploaded_vendor:
     erp_df = erp_df[erp_df["cif_erp"].astype(str).str.upper() == selected_cif]
     ven_df = ven_df[ven_df["cif_ven"].astype(str).str.upper() == selected_cif]
 
-    # ====== PREVIOUS YEAR CHECK ======
-    if "reason_erp" in erp_df.columns and "credit_erp" in erp_df.columns:
-        prev_mask = erp_df["reason_erp"].astype(str).str.lower().str.contains("previous year")
-        credit_vals = erp_df["credit_erp"].apply(normalize_number)
-        if any(prev_mask & (credit_vals > 0)):
-            st.warning("⚠️ You have open amounts from previous years. Click OK to continue.")
-            if not st.button("✅ OK, continue"):
-                st.stop()
-
     # ====== RECONCILIATION ======
     with st.spinner("Reconciling invoices..."):
         matched, erp_missing, ven_missing = match_invoices(erp_df, ven_df)
@@ -281,38 +272,12 @@ if uploaded_erp and uploaded_vendor:
 
     st.success(f"✅ Reconciliation complete for CIF {selected_cif}")
 
-    # ====== HIGHLIGHTING ======
-    def highlight_row(row):
-        if row["Status"] == "Match":
-            return ['background-color: #2e7d32; color: white'] * len(row)
-        elif row["Status"] == "Difference":
-            return ['background-color: #f9a825; color: black'] * len(row)
-        return [''] * len(row)
-
     # ====== TABLES ======
     st.subheader("📊 Matched / Differences")
     if not matched.empty:
-        st.dataframe(matched.style.apply(highlight_row, axis=1), use_container_width=True)
+        st.dataframe(matched, use_container_width=True)
     else:
         st.info("No matches found.")
-
-    st.subheader("❌ Missing in ERP (found in vendor but not in ERP)")
-    if not erp_missing.empty:
-        st.dataframe(
-            erp_missing.style.applymap(lambda _: "background-color: #c62828; color: white"),
-            use_container_width=True,
-        )
-    else:
-        st.success("✅ No missing invoices in ERP.")
-
-    st.subheader("❌ Missing in Vendor (found in ERP but not in vendor)")
-    if not ven_missing.empty:
-        st.dataframe(
-            ven_missing.style.applymap(lambda _: "background-color: #c62828; color: white"),
-            use_container_width=True,
-        )
-    else:
-        st.success("✅ No missing invoices in Vendor.")
 
     # ====== PAYMENTS ======
     st.subheader("🏦 Payment Transactions (Identified in both sides)")
@@ -320,16 +285,20 @@ if uploaded_erp and uploaded_vendor:
     with col1:
         st.markdown("**ERP Payments**")
         st.dataframe(erp_pay, use_container_width=True)
+        if not erp_pay.empty:
+            st.markdown(f"**Total ERP Payments:** {erp_pay['Amount'].sum():,.2f} EUR")
     with col2:
         st.markdown("**Vendor Payments**")
         st.dataframe(ven_pay, use_container_width=True)
+        if not ven_pay.empty:
+            st.markdown(f"**Total Vendor Payments:** {ven_pay['Amount'].sum():,.2f} EUR")
 
     if not matched_pay.empty:
         st.markdown("### ✅ Matched Payments")
         st.dataframe(matched_pay, use_container_width=True)
+        st.markdown(f"**Total Matched ERP Payments:** {matched_pay['ERP Amount'].sum():,.2f} EUR")
+        st.markdown(f"**Total Matched Vendor Payments:** {matched_pay['Vendor Amount'].sum():,.2f} EUR")
+        diff_total = abs(matched_pay['ERP Amount'].sum() - matched_pay['Vendor Amount'].sum())
+        st.markdown(f"**Difference Between ERP and Vendor Payments:** {diff_total:,.2f} EUR")
     else:
         st.info("No matching payments found.")
-
-
-
-
