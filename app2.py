@@ -31,6 +31,7 @@ def normalize_number(v):
     except:
         return 0.0
 
+
 def normalize_columns(df, tag):
     """Map multilingual headers to unified names."""
     mapping = {
@@ -90,6 +91,7 @@ def normalize_columns(df, tag):
 
     return out
 
+
 # ======================================
 # CORE MATCHING
 # ======================================
@@ -101,21 +103,26 @@ def match_invoices(erp_df, ven_df):
         reason = str(row.get("reason_erp", "")).lower()
         charge = normalize_number(row.get("debit_erp"))
         credit = normalize_number(row.get("credit_erp"))
-        payment_patterns = [
-                r"^πληρωμ",            # Greek "Πληρωμή", "Απόδειξη πληρωμής"
-                r"^απόδειξη\s*πληρωμ", # Greek full phrase
-                r"^payment",            # English: "Payment", "Payment to"
-                r"^bank\s*transfer",    # "Bank Transfer"
-                r"^trf",                # "TRF ..."
-                r"^remesa",             # Spanish
-                r"^pago",               # Spanish "Pago"
-                r"^transferencia",      # Spanish "Transferencia"
-            ]
-        if any(re.search(p, reason) for p in payment_patterns):
+
+        # Unified multilingual keywords
+        payment_words = [
+            "pago", "payment", "transfer", "bank", "saldo", "trf",
+            "πληρωμή", "μεταφορά", "τράπεζα", "τραπεζικό έμβασμα"
+        ]
+        credit_words = [
+            "credit", "nota", "abono", "cn", "πιστωτικό", "πίστωση"
+        ]
+        invoice_words = [
+            "factura", "invoice", "inv", "τιμολόγιο", "παραστατικό"
+        ]
+
+        if any(k in reason for k in payment_words):
             return "IGNORE"
-        credit_words = ["credit", "nota", "abono", "cn", "πιστωτικό", "πίστωση"]
-        invoice_words = ["factura", "invoice", "inv", "τιμολόγιο", "παραστατικό"]
-       
+        elif any(k in reason for k in credit_words):
+            return "CN"
+        elif any(k in reason for k in invoice_words) or credit > 0:
+            return "INV"
+        return "UNKNOWN"
 
     def calc_erp_amount(row):
         doc = row.get("__doctype", "")
@@ -131,10 +138,19 @@ def match_invoices(erp_df, ven_df):
         reason = str(row.get("reason_ven", "")).lower()
         debit = normalize_number(row.get("debit_ven"))
         credit = normalize_number(row.get("credit_ven"))
-        payment_words = ["pago", "payment", "transfer", "bank", "saldo", "trf",
-                         "πληρωμή", "μεταφορά", "τράπεζα", "τραπεζικό έμβασμα"]
-        credit_words = ["credit", "nota", "abono", "cn", "πιστωτικό", "πίστωση"]
-        invoice_words = ["factura", "invoice", "inv", "τιμολόγιο", "παραστατικό"]
+
+        # Unified multilingual keywords
+        payment_words = [
+            "pago", "payment", "transfer", "bank", "saldo", "trf",
+            "πληρωμή", "μεταφορά", "τράπεζα", "τραπεζικό έμβασμα"
+        ]
+        credit_words = [
+            "credit", "nota", "abono", "cn", "πιστωτικό", "πίστωση"
+        ]
+        invoice_words = [
+            "factura", "invoice", "inv", "τιμολόγιο", "παραστατικό"
+        ]
+
         if any(k in reason for k in payment_words):
             return "IGNORE"
         elif any(k in reason for k in credit_words) or credit > 0:
@@ -166,10 +182,15 @@ def match_invoices(erp_df, ven_df):
     for inv, group in erp_use.groupby("invoice_erp", dropna=False):
         if group.empty:
             continue
+
+        # If 3 or more entries → take the last (latest)
         if len(group) >= 3:
             group = group.tail(1)
+
+        # If both INV and CN exist for same number → combine
         inv_rows = group[group["__doctype"] == "INV"]
         cn_rows = group[group["__doctype"] == "CN"]
+
         if not inv_rows.empty and not cn_rows.empty:
             total_inv = inv_rows["__amt"].sum()
             total_cn = cn_rows["__amt"].sum()
@@ -179,81 +200,27 @@ def match_invoices(erp_df, ven_df):
             merged_rows.append(base_row)
         else:
             merged_rows.append(group.iloc[-1])
+
     erp_use = pd.DataFrame(merged_rows).reset_index(drop=True)
 
-    # ====== NEW SMART MATCHING LOGIC (ONLY CHANGE) ======
-    def clean_invoice_code(v):
-        """
-        Smart normalization of invoice numbers.
-        Removes Greek/Latin prefixes, year tags, special chars, and isolates numeric core.
-        Handles messy patterns like 'AB123/2025', 'PF/.000230', 'INV2025123', 'TIM-045', etc.
-        """
-        if not v:
-            return ""
-    
-        s = str(v).strip().lower()
-    
-        # 🔹 Remove common Greek & Latin prefixes (real AP patterns)
-        s = re.sub(r"^(αρ|τιμ|pf|ab|inv|tim|cn|ar|pa|πφ|πα|apo|ref|doc|num|no)\W*", "", s)
-    
-        # 🔹 Remove year-like patterns (2023, 2024, etc.) anywhere in the string
-        s = re.sub(r"20\d{2}", "", s)
-    
-        # 🔹 Remove all special characters (slashes, dots, dashes, etc.)
-        s = re.sub(r"[^a-z0-9]", "", s)
-    
-        # 🔹 Remove long zero padding (leading zeros)
-        s = re.sub(r"^0+", "", s)
-    
-        # 🔹 Extract longest numeric sequence (real core number)
-        digits = re.findall(r"\d+", s)
-        if digits:
-            core = max(digits, key=len)  # choose longest numeric block
-        else:
-            core = ""
-    
-        # 🔹 Keep last 8 digits max — avoids full long IDs or timestamps
-        return core[-8:]
+    def extract_digits(v):
+        return re.sub(r"\D", "", str(v or "")).lstrip("0")
 
     for e_idx, e in erp_use.iterrows():
         e_inv = str(e.get("invoice_erp", "")).strip()
         e_amt = round(float(e["__amt"]), 2)
-        e_code = clean_invoice_code(e_inv)
-
+        e_digits = extract_digits(e_inv)
         for v_idx, v in ven_use.iterrows():
             if v_idx in used_vendor_rows:
                 continue
             v_inv = str(v.get("invoice_ven", "")).strip()
             v_amt = round(float(v["__amt"]), 2)
-            v_code = clean_invoice_code(v_inv)
+            v_digits = extract_digits(v_inv)
             diff = round(e_amt - v_amt, 2)
             amt_close = abs(diff) < 0.05
-
-                        # --- Υποψήφιοι έλεγχοι ομοιότητας ---
-            same_full  = (e_inv == v_inv)
-            same_clean = (e_code == v_code)
-            
-            len_diff = abs(len(e_code) - len(v_code))
-            suffix_ok = (
-                len(e_code) > 2 and len(v_code) > 2 and
-                len_diff <= 2 and (
-                    e_code.endswith(v_code) or v_code.endswith(e_code)
-                )
-            )
-            
-            same_type = (e["__doctype"] == v["__doctype"])
-            
-            # --- ΝΕΟΣ κανόνας αποδοχής ---
-            # 1) Αν είναι ακριβές ίδιο string και ίδιο type, δέσμευσέ το (ακόμα κι αν ποσά διαφέρουν)
-            if same_type and same_full:
-                take_it = True
-            # 2) Για clean/suffix θέλουμε και εγγύτητα ποσών
-            elif same_type and (same_clean or suffix_ok) and amt_close:
-                take_it = True
-            else:
-                take_it = False
-            
-            if take_it:
+            if e_inv == v_inv or (
+                e_digits and v_digits and (e_digits.endswith(v_digits) or v_digits.endswith(e_digits))
+            ):
                 matched.append({
                     "ERP Invoice": e_inv,
                     "Vendor Invoice": v_inv,
@@ -282,6 +249,7 @@ def match_invoices(erp_df, ven_df):
     missing_in_vendor = missing_in_vendor.rename(columns={"invoice_erp": "Invoice", "__amt": "Amount"})
 
     return matched_df, missing_in_erp, missing_in_vendor
+
 
 # ======================================
 # PAYMENT EXTRACTION
@@ -333,6 +301,7 @@ def extract_payments(erp_df, ven_df):
 
     return erp_pay, ven_pay, pd.DataFrame(matched_payments)
 
+
 # ======================================
 # STREAMLIT UI
 # ======================================
@@ -352,6 +321,7 @@ if uploaded_erp and uploaded_vendor:
 
     st.success("✅ Reconciliation complete")
 
+    # ====== HIGHLIGHTING ======
     def highlight_row(row):
         if row["Status"] == "Match":
             return ['background-color: #2e7d32; color: white'] * len(row)
@@ -359,12 +329,14 @@ if uploaded_erp and uploaded_vendor:
             return ['background-color: #f9a825; color: black'] * len(row)
         return [''] * len(row)
 
+    # ====== MATCHED ======
     st.subheader("📊 Matched / Differences")
     if not matched.empty:
         st.dataframe(matched.style.apply(highlight_row, axis=1), use_container_width=True)
     else:
         st.info("No matches found.")
 
+    # ====== MISSING ======
     st.subheader("❌ Missing in ERP (found in vendor but not in ERP)")
     if not erp_missing.empty:
         st.dataframe(
@@ -383,6 +355,7 @@ if uploaded_erp and uploaded_vendor:
     else:
         st.success("✅ No missing invoices in Vendor.")
 
+    # ====== PAYMENTS ======
     st.subheader("🏦 Payment Transactions (Identified in both sides)")
     col1, col2 = st.columns(2)
 
@@ -421,4 +394,4 @@ if uploaded_erp and uploaded_vendor:
         st.markdown(f"**Total Matched Vendor Payments:** {total_vendor:,.2f} EUR")
         st.markdown(f"**Difference Between ERP and Vendor Payments:** {diff_total:,.2f} EUR")
     else:
-        st.info("No matching payments found.") 
+        st.info("No matching payments found.")
