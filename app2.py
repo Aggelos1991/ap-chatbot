@@ -352,3 +352,4 @@ with st.expander("💬 Ask ReconRaptor about Payments", expanded=True):
             st.info(f"📊 Difference between ERP and Vendor payments: **{diff:,.2f} EUR**")
         else:
             st.warning("I can answer about ERP payments, vendor payments, or differences.")
+
