@@ -329,11 +329,7 @@ if uploaded_erp and uploaded_vendor:
         st.dataframe(matched_pay, use_container_width=True)
     else:
         st.info("No matching payments found.")
-# Save data in session_state so it persists between reruns
-if "erp_pay" not in st.session_state:
-    st.session_state["erp_pay"] = erp_pay
-if "ven_pay" not in st.session_state:
-    st.session_state["ven_pay"] = ven_pay
+
 # ====== CHAT PROMPT ======
 st.subheader("💬 Ask ReconRaptor about Payments")
 
