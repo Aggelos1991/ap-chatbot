@@ -9,7 +9,7 @@ from openai import OpenAI
 # CONFIGURATION
 # ==========================================================
 st.set_page_config(page_title="🦅 DataFalcon Pro — Hybrid GPT Extractor", layout="wide")
-st.title("🦅 DataFalcon Pro — Hybrid Vendor Statement Extractor (Credit Column Only - Enhanced)")
+st.title("🦅 DataFalcon Pro — Hybrid Vendor Statement Extractor (Invoice / Payment / Credit Note)")
 
 try:
     from dotenv import load_dotenv
@@ -60,10 +60,10 @@ def extract_raw_lines(uploaded_pdf):
     return all_lines
 
 # ==========================================================
-# GPT EXTRACTOR (MORE FLEXIBLE)
+# GPT EXTRACTOR (Invoice / Payment / Credit Note)
 # ==========================================================
 def extract_with_gpt(lines):
-    """Extracts invoice, credit note, and payment info even if DEBE/HABER are missing."""
+    """Extract invoice, payment, and credit note lines, one amount column (Debit/Credit combined)."""
     BATCH_SIZE = 150
     all_records = []
 
@@ -72,23 +72,26 @@ def extract_with_gpt(lines):
         text_block = "\n".join(batch)
 
         prompt = f"""
-You are a multilingual accountant (Spanish + Greek).
+You are a multilingual accountant specialized in Spanish and Greek vendor statements.
 
-Below are lines from a vendor statement.
-Some lines include: 'Fra. emitida', 'Cobro Efecto', 'Factura', 'Abono', 'Pago', 'Remesa', or 'Πληρωμή'.
-Each line may contain one or more numeric amounts (like 322,27 or 1.457,65).
+Below are text lines from a vendor statement. Some include:
+- Spanish: "Fra. emitida", "Factura", "Abono", "Nota de Credito", "Cobro", "Pago", "Remesa", "Efecto"
+- Greek: "Τιμολόγιο", "Πληρωμή", "Πιστωτικό", "Ακυρωτικό", "Τραπεζικό Έμβασμα"
 
-Your task:
-Extract only document-related lines (invoices, credit notes, or payments).
-For each valid line, return:
-- "Alternative Document": document number (after Nº, n°, n., Factura, Documento, or similar)
+Each line may contain one or more amounts (like 322,27 or 1.457,65).
+
+Your job:
+Extract only valid accounting lines, and for each line return:
+- "Alternative Document": the document number (after Nº, n°, n., Factura, Documento, or similar)
 - "Date": dd/mm/yy or dd/mm/yyyy if visible
-- "Reason": short description (Factura, Cobro, Abono, Πληρωμή, Τραπεζικό Έμβασμα, etc.)
-- "Credit": numeric value corresponding to the document’s main amount (use the **last numeric value in the line** if unsure)
+- "Reason": one of these → "Invoice", "Payment", or "Credit Note"
+- "Amount": the main numeric value (use the **last numeric value** in the line if unsure)
 
-If "Abono", "Nota de Credito", "NC", "πιστωτικό", or "ακυρωτικό" appears, make Credit negative.
-Ignore "Saldo", "Apertura", "Total General", "Base", "IVA", "FPA", "Υπόλοιπο", etc.
-
+Rules:
+- If the line contains "Abono", "Nota de Credito", "NC", "πιστω", "ακυρωτικ" → Reason = "Credit Note"
+- If the line contains "Pago", "Cobro", "Remesa", "Efecto", "Transferencia", "Πληρωμή", "Τράπεζα", "Έμβασμα", "Μεταφορά" → Reason = "Payment"
+- Otherwise → Reason = "Invoice"
+- Ignore "Saldo", "Apertura", "Total General", "Base", "IVA", "FPA", "Υπόλοιπο", etc.
 Output must be a valid JSON array.
 
 Lines:
@@ -98,29 +101,29 @@ Lines:
         try:
             response = client.responses.create(model=MODEL, input=prompt)
             content = response.output_text.strip()
-
-            # Ensure GPT output is valid JSON
             json_match = re.search(r"\[.*\]", content, re.DOTALL)
             if not json_match:
                 continue
             data = json.loads(json_match.group(0))
-
         except Exception as e:
             st.warning(f"⚠️ GPT failed on batch {i//BATCH_SIZE + 1}: {e}")
             continue
 
         for row in data:
-            credit_val = normalize_number(row.get("Credit"))
+            amount = normalize_number(row.get("Amount"))
             reason = str(row.get("Reason", "")).lower()
 
-            if any(k in reason for k in ["abono", "credit", "nota de credito", "nc", "πιστωτικό", "ακυρωτικό"]):
-                credit_val = -abs(credit_val)
+            # Sign logic: payments and credit notes become negative
+            if any(k in reason for k in ["payment", "cobro", "pago", "remesa", "efecto", "transferencia", "πληρωμή", "τραπεζ", "έμβασμα", "μεταφορά"]):
+                amount = -abs(amount)
+            elif any(k in reason for k in ["credit", "abono", "nota de credito", "nc", "πιστω", "ακυρωτικ"]):
+                amount = -abs(amount)
 
             all_records.append({
                 "Alternative Document": str(row.get("Alternative Document", "")).strip(),
                 "Date": str(row.get("Date", "")).strip(),
                 "Reason": row.get("Reason", "").strip(),
-                "Credit": credit_val
+                "Amount": amount
             })
 
     return all_records
@@ -162,7 +165,7 @@ if uploaded_pdf:
                 st.download_button(
                     "⬇️ Download Excel",
                     data=to_excel_bytes(data),
-                    file_name="vendor_statement_credit_only.xlsx",
+                    file_name="vendor_statement_invoices_payments.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
 else:
