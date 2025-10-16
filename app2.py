@@ -333,25 +333,31 @@ if uploaded_erp and uploaded_vendor:
 # ====== CHAT PROMPT ======
 st.subheader("💬 Ask ReconRaptor about Payments")
 
-query = st.text_input("Ask something (e.g. 'sum of ERP payments'):")
+# Create session storage for stability
+if "chat_query" not in st.session_state:
+    st.session_state.chat_query = ""
+if "chat_response" not in st.session_state:
+    st.session_state.chat_response = ""
 
-if query:
+query = st.text_input("Ask something (e.g. 'sum of ERP payments'):", value=st.session_state.chat_query)
+if st.button("🔍 Ask"):
+    st.session_state.chat_query = query  # remember last query
     if "vendor" in query.lower():
         total = ven_pay["Amount"].sum() if "Amount" in ven_pay else 0
-        st.write(f"💰 Total Vendor Payments: **{total:,.2f} EUR**")
-
+        st.session_state.chat_response = f"💰 Total Vendor Payments: **{total:,.2f} EUR**"
     elif "erp" in query.lower():
         total = erp_pay["Amount"].sum() if "Amount" in erp_pay else 0
-        st.write(f"💰 Total ERP Payments: **{total:,.2f} EUR**")
-
+        st.session_state.chat_response = f"💰 Total ERP Payments: **{total:,.2f} EUR**"
     elif "difference" in query.lower() or "compare" in query.lower():
         diff = abs(
             (erp_pay["Amount"].sum() if "Amount" in erp_pay else 0) -
             (ven_pay["Amount"].sum() if "Amount" in ven_pay else 0)
         )
-        st.write(f"📊 Difference between ERP and Vendor payments: **{diff:,.2f} EUR**")
-
+        st.session_state.chat_response = f"📊 Difference between ERP and Vendor payments: **{diff:,.2f} EUR**"
     else:
-        st.info("I can answer about ERP payments, vendor payments, or differences.")
-else:
-    st.info("Please upload both ERP and Vendor files to begin.")
+        st.session_state.chat_response = "ℹ️ I can answer about ERP payments, vendor payments, or differences."
+
+# Display last answer persistently
+if st.session_state.chat_response:
+    st.markdown(st.session_state.chat_response)
+
