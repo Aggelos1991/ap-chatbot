@@ -206,31 +206,56 @@ def match_invoices(erp_df, ven_df):
     def extract_digits(v):
         return re.sub(r"\D", "", str(v or "")).lstrip("0")
 
+    def clean_invoice_code(v):
+    """Cleans and normalizes invoice numbers for smart numeric comparison."""
+    if not v:
+        return ""
+    s = str(v).strip().lower()
+
+    # Remove typical prefixes and year patterns like INV, FAC, ΑΡ, 2025/
+    s = re.sub(r"(inv|fac|αρ|no|doc|num|número|nº|ref|202\d[/\-]*)", "", s)
+
+    # Keep only digits
+    s = re.sub(r"\D", "", s)
+
+    # Remove leading zeros
+    s = s.lstrip("0")
+
+    return s
+
+    
     for e_idx, e in erp_use.iterrows():
         e_inv = str(e.get("invoice_erp", "")).strip()
         e_amt = round(float(e["__amt"]), 2)
-        e_digits = extract_digits(e_inv)
-        for v_idx, v in ven_use.iterrows():
-            if v_idx in used_vendor_rows:
-                continue
-            v_inv = str(v.get("invoice_ven", "")).strip()
-            v_amt = round(float(v["__amt"]), 2)
-            v_digits = extract_digits(v_inv)
-            diff = round(e_amt - v_amt, 2)
-            amt_close = abs(diff) < 0.05
-            if e_inv == v_inv or (
-                e_digits and v_digits and (e_digits.endswith(v_digits) or v_digits.endswith(e_digits))
-            ):
-                matched.append({
-                    "ERP Invoice": e_inv,
-                    "Vendor Invoice": v_inv,
-                    "ERP Amount": e_amt,
-                    "Vendor Amount": v_amt,
-                    "Difference": diff,
-                    "Status": "Match" if amt_close else "Difference"
-                })
-                used_vendor_rows.add(v_idx)
-                break
+        e_code = clean_invoice_code(e_inv)
+
+    for v_idx, v in ven_use.iterrows():
+        if v_idx in used_vendor_rows:
+            continue
+
+        v_inv = str(v.get("invoice_ven", "")).strip()
+        v_amt = round(float(v["__amt"]), 2)
+        v_code = clean_invoice_code(v_inv)
+        diff = round(e_amt - v_amt, 2)
+        amt_close = abs(diff) < 0.05
+
+        # --- Matching logic ---
+        same_full = e_inv == v_inv
+        same_clean = e_code == v_code
+        same_suffix = e_code.endswith(v_code) or v_code.endswith(e_code)
+
+        # Avoid false partial matches like 2345↔345 unless prefixed with year or zero
+        if same_full or same_clean or (same_suffix and len(v_code) >= 3):
+            matched.append({
+                "ERP Invoice": e_inv,
+                "Vendor Invoice": v_inv,
+                "ERP Amount": e_amt,
+                "Vendor Amount": v_amt,
+                "Difference": diff,
+                "Status": "Match" if amt_close else "Difference"
+            })
+            used_vendor_rows.add(v_idx)
+            break
 
     matched_df = pd.DataFrame(matched)
     matched_erp = {m["ERP Invoice"] for _, m in matched_df.iterrows()}
