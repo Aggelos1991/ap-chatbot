@@ -65,7 +65,7 @@ def extract_raw_lines(uploaded_pdf):
 # GPT EXTRACTOR
 # ==========================================================
 def extract_with_gpt(lines):
-    """Analyze extracted lines using GPT-4o-mini for invoices, credit notes, and payment detections."""
+    """Analyze extracted lines using GPT-4o-mini for invoices, credit notes, and payment detections (DEBE + HABER)."""
     BATCH_SIZE = 200
     all_records = []
 
@@ -74,32 +74,26 @@ def extract_with_gpt(lines):
         text_block = "\n".join(batch)
 
         prompt = f"""
-You are a multilingual accountant specializing in Spanish and Greek vendor statements.
+You are a multilingual accountant specialized in Spanish and Greek vendor statements.
 
-Below are text lines from a vendor statement (possibly in Spanish, Greek, or English).
+Each line may include:
+- Spanish: DEBE (debit), HABER (credit), TOTAL, SALDO, COBRO, EFECTO, REMESA
+- Greek: ΧΡΕΩΣΗ (debit), ΠΙΣΤΩΣΗ (credit), ΣΥΝΟΛΟ, ΠΛΗΡΩΜΗ, ΤΡΑΠΕΖΑ, ΕΜΒΑΣΜΑ
 
-Each line may contain multiple numbers — usually labeled as:
-- Spanish: DEBE, HABER, TOTAL, TOTALE, SALDO, COBRO, PAGO, EFECTO, REMESA
-- Greek: ΧΡΕΩΣΗ, ΠΙΣΤΩΣΗ, ΣΥΝΟΛΟ, ΥΠΟΛΟΙΠΟ, ΠΛΗΡΩΜΗ, ΤΡΑΠΕΖΑ, ΤΡΑΠΕΖΙΚΟ ΕΜΒΑΣΜΑ, ΜΕΤΑΦΟΡΑ
+Your task:
+For each valid accounting line, extract:
+- "Alternative Document": document number (Documento, Factura, Τιμολόγιο, Παραστατικό, etc.)
+- "Date": dd/mm/yy or dd/mm/yyyy
+- "Reason": short description (e.g., "Factura", "Abono", "Πληρωμή", "Τραπεζικό Έμβασμα")
+- "DEBE Value": numeric amount under DEBE, ΧΡΕΩΣΗ, or TOTAL (if appears)
+- "HABER Value": numeric amount under HABER, ΠΙΣΤΩΣΗ, COBRO, or similar (if appears)
 
-Your job:
-1. Extract only valid **invoice**, **credit note**, or **payment** lines.
-2. For each line, return:
-   - "Alternative Document": document number (under Documento, Num, Nº, Numero, N°, Factura, Τιμολόγιο, Παραστατικό, or similar)
-   - "Date": dd/mm/yy or dd/mm/yyyy
-   - "Reason": text describing the line (e.g. "Factura", "Abono", "Πληρωμή", "Τραπεζικό Έμβασμα")
-   - "Document Value":
-       • If the line contains DEBE, ΧΡΕΩΣΗ, TOTAL, take that numeric value.
-       • If it's a Credit Note (ABONO, NOTA DE CRÉDITO, ΠΙΣΤΩΤΙΚΟ, ΑΚΥΡΩΤΙΚΟ), make the value negative.
-   - "Payment Value":
-       • If the line refers to payment or transfer (Cobro, Pago, Remesa, Efecto, Πληρωμή, Τράπεζα, Τραπεζικό Έμβασμα, Μεταφορά), 
-         extract the HABER / ΠΙΣΤΩΣΗ / CREDIT numeric value.
-       • If both DEBE and HABER appear, assign DEBE to "Document Value" and HABER to "Payment Value".
-3. Ignore lines referring only to summaries:
-   "Saldo anterior", "Total general", "Base", "IVA", "Impuesto", "Resumen", "Υπόλοιπο", "Προηγούμενο Υπόλοιπο", "ΦΠΑ", "Βάση", "Υποσύνολο".
-4. Always output a valid JSON array.
-5. Ensure numeric values use '.' for decimals and exactly two digits.
-6. Do not leave empty or null document numbers when visible.
+Rules:
+1. If "Abono", "Nota de Crédito", "Πιστωτικό", or "Ακυρωτικό" appear → mark as Credit Note.
+2. If "Pago", "Cobro", "Remesa", "Efecto", "Πληρωμή", "Τράπεζα", "Έμβασμα", "Μεταφορά" appear → mark as Payment.
+3. If neither → mark as Invoice.
+4. Ignore summary lines (Saldo, IVA, Impuesto, Υπόλοιπο, ΦΠΑ, Βάση, Υποσύνολο, etc.)
+5. Return a valid JSON array with numeric strings (use '.' for decimals).
 
 Lines:
 \"\"\"{text_block}\"\"\"
@@ -116,19 +110,17 @@ Lines:
             continue
 
         for row in data:
-            val = normalize_number(row.get("Document Value"))
-            pay = normalize_number(row.get("Payment Value"))
+            debe_val = normalize_number(row.get("DEBE Value"))
+            haber_val = normalize_number(row.get("HABER Value"))
+            val = normalize_number(row.get("Document Value")) or debe_val
+            pay = haber_val or normalize_number(row.get("Payment Value"))
 
-            if val == "" and pay == "":
-                continue
-
+            # --- classify by reason ---
             reason = row.get("Reason", "").lower()
-
-            # --- Classify type ---
-            if any(k in reason for k in ["abono", "credit", "nota de crédito", "nc", "πιστωτικό", "ακυρωτικό"]):
+            if any(k in reason for k in ["abono", "credit", "nota de crédito", "nc", "πιστω", "ακυρωτικ"]):
                 val = -abs(val)
                 doc_type = "Credit Note"
-            elif any(k in reason for k in ["pago", "remesa", "cobro", "efecto", "transferencia", "πληρωμή", "τράπεζα", "έμβασμα", "μεταφορά"]):
+            elif any(k in reason for k in ["pago", "remesa", "cobro", "efecto", "transferencia", "πληρωμή", "τράπεζ", "έμβασμα", "μεταφορά"]):
                 doc_type = "Payment"
             else:
                 doc_type = "Invoice"
