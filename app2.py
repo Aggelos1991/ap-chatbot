@@ -197,29 +197,29 @@ def match_invoices(erp_df, ven_df):
 
     # ---------- Matching logic ----------
     def extract_digits(v):
-    """Extract only digits (ignore spaces, dots, slashes, dashes, etc.)."""
-    if not v:
-        return ""
-    return re.sub(r"\D", "", str(v)).lstrip("0")
+        """Extract only digits (ignore spaces, dots, slashes, dashes, etc.)."""
+        if not v:
+            return ""
+        return re.sub(r"\D", "", str(v)).lstrip("0")
 
     def clean_invoice_code(v):
-    """
-    Normalize invoice numbers for comparison:
-    - remove all spaces, dots, dashes, slashes
-    - drop common prefixes (INV, PF, TIM, CN, etc.)
-    - remove year fragments like 2024/2025
-    - keep only digits for the final comparison
-    """
-    if not v:
-        return ""
-    s = str(v).strip().lower()
-    s = re.sub(r"[\s./\-]+", "", s)  # remove spaces, dots, slashes, dashes
-    s = re.sub(r"^(αρ|τιμ|pf|ab|inv|tim|cn|ar|pa|πφ|πα|apo|ref|doc|num|no)\W*", "", s)
-    s = re.sub(r"20\d{2}", "", s)  # remove years
-    s = re.sub(r"[^a-z0-9]", "", s)
-    s = re.sub(r"^0+", "", s)
-    s = re.sub(r"[^\d]", "", s)  # keep only digits
-    return s
+        """
+        Normalize invoice numbers for comparison:
+        - remove all spaces, dots, dashes, slashes
+        - drop common prefixes (INV, PF, TIM, CN, etc.)
+        - remove year fragments like 2024/2025
+        - keep only digits for the final comparison
+        """
+        if not v:
+            return ""
+        s = str(v).strip().lower()
+        s = re.sub(r"[\s./\-]+", "", s)  # remove spaces, dots, slashes, dashes
+        s = re.sub(r"^(αρ|τιμ|pf|ab|inv|tim|cn|ar|pa|πφ|πα|apo|ref|doc|num|no)\W*", "", s)
+        s = re.sub(r"20\d{2}", "", s)  # remove years
+        s = re.sub(r"[^a-z0-9]", "", s)
+        s = re.sub(r"^0+", "", s)
+        s = re.sub(r"[^\d]", "", s)  # keep only digits
+        return s
 
     # ---------- Matching loop ----------
     for _, e in erp_use.iterrows():
