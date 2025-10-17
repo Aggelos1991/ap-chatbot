@@ -222,6 +222,7 @@ def match_invoices(erp_df, ven_df):
         if not v:
             return ""
         s = str(v).strip().lower()
+        s = s.replace(" ", "")  # 🧩 Remove spaces inside invoice codes like "2025 00003"
         s = re.sub(r"^(αρ|τιμ|pf|ab|inv|tim|cn|ar|pa|πφ|πα|apo|ref|doc|num|no)\W*", "", s)
         s = re.sub(r"20\d{2}", "", s)
         s = re.sub(r"[^a-z0-9]", "", s)
