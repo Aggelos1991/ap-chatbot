@@ -84,6 +84,7 @@ Each line may include columns labeled as:
 Your task:
 For each valid transaction line, output:
 - "Alternative Document": document number (under Nº, Num, Documento, Factura, etc.)
+-Exclude any line where the document number or description contains “concil.” (not case-sensitive).
 - "Date": date if visible (dd/mm/yy or dd/mm/yyyy)
 - "Reason": classify as "Invoice", "Payment", or "Credit Note"
 - "Debit": numeric value under DEBE column (if exists)
@@ -93,7 +94,7 @@ Rules:
 1. If DEBE > 0 → Reason = "Invoice"
 2. If HABER > 0 → Reason = "Payment"
 3. If the line includes "Abono", "Nota de Credito", "NC", "πιστω", "Ακυρωτικό" → Reason = "Credit Note" and place value under Credit.
-4. Ignore summary lines: "Saldo", "Apertura", "Total General", "IVA", "Base", "Impuestos","Concil.".
+4. Ignore summary lines: "Saldo", "Apertura", "Total General", "IVA", "Base", "Impuestos".
 5. Ensure output is valid JSON array.
 
 Lines:
