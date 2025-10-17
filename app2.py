@@ -212,32 +212,34 @@ def match_invoices(erp_df, ven_df):
     # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
     # Add missing cleaner so we can compute e_code / v_code
     def clean_invoice_code(v):
-        """
+    """
         Normalize invoice strings for comparison:
+        - handle structured formats like 2025-FV-00001-001248-01
         - drop common prefixes
         - remove year snippets (20xx)
-        - strip non-alphanumerics
-        - keep only digits and trim leading zeros
+        - keep only main numeric part
         """
         if not v:
             return ""
-        s = str(v).strip().lower()
-        s = s.replace(" ", "")  # 🧩 Remove spaces inside invoice codes like "2025 00003"
+        s = str(v).strip().lower().replace(" ", "")
+    
+        # 🧩 Handle structured invoice patterns early (before dash removal)
+        parts = re.split(r"[-_]", s)
+        for p in reversed(parts):
+            # numeric block with ≥4 digits, skip if it's a year (2020–2039)
+            if re.fullmatch(r"\d{4,}", p) and not re.fullmatch(r"20[0-3]\d", p):
+                s = p.lstrip("0")  # trim leading zeros (001248 → 1248)
+                break
+    
+        # 🔧 Drop common prefixes (inv, cn, τιμ, αρ, etc.)
         s = re.sub(r"^(αρ|τιμ|pf|ab|inv|tim|cn|ar|pa|πφ|πα|apo|ref|doc|num|no)\W*", "", s)
         s = re.sub(r"20\d{2}", "", s)
         s = re.sub(r"[^a-z0-9]", "", s)
         s = re.sub(r"^0+", "", s)
-        # keep only digits for the final compare (like earlier logic)
-        s = re.sub(r"[^\d]", "", s)
-        # Handle structured invoice patterns like 2025-FV-00001-001248-01 or FV-001248-01
-        parts = re.split(r"[-_]", s)
-        for p in reversed(parts):
-        # numeric block with at least 4 digits, skip if it's a year (2020–2039)
-            if re.fullmatch(r"\d{4,}", p) and not re.fullmatch(r"20[0-3]\d", p):
-                s = p.lstrip("0")  # trim leading zeros (001248 → 1248)
-                break
-
+        s = re.sub(r"[^\d]", "", s)  # keep only digits for comparison
         return s
+
+      
     # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
     for e_idx, e in erp_use.iterrows():
