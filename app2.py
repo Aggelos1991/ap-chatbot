@@ -39,7 +39,8 @@ def normalize_columns(df, tag):
             "invoice", "factura", "fact", "nº", "num", "numero", "número",
             "document", "doc", "ref", "referencia", "nº factura", "num factura", "alternative document",
             # Greek
-            "αρ.", "αριθμός", "νουμερο", "νούμερο", "no", "παραστατικό", "αρ. τιμολογίου", "αρ. εγγράφου"
+            "αρ.", "αριθμός", "νουμερο", "νούμερο", "no", "παραστατικό",
+            "αρ. τιμολογίου", "αρ. εγγράφου"
         ],
         "credit": [
             "credit", "haber", "credito", "crédito", "nota de crédito", "nota crédito",
@@ -56,14 +57,14 @@ def normalize_columns(df, tag):
         ],
         "reason": [
             "reason", "motivo", "concepto", "descripcion", "descripción",
-            "detalle", "detalles", "razon", "razón",
-            "observaciones", "comentario", "comentarios", "explicacion",
+            "detalle", "detalles", "razon", "razón", "observaciones", "comentario",
+            "comentarios", "explicacion",
             # Greek
             "αιτιολογία", "περιγραφή", "παρατηρήσεις", "σχόλια", "αναφορά", "αναλυτική περιγραφή"
         ],
         "cif": [
             "cif", "nif", "vat", "iva", "tax", "id fiscal", "número fiscal", "num fiscal", "code",
-            # Greek (safe only)
+            # Greek
             "αφμ", "φορολογικός αριθμός", "αριθμός φορολογικού μητρώου"
         ],
         "date": [
@@ -83,6 +84,7 @@ def normalize_columns(df, tag):
 
     out = df.rename(columns=rename_map)
 
+    # Ensure debit/credit exist
     for required in ["debit", "credit"]:
         cname = f"{required}_{tag}"
         if cname not in out.columns:
@@ -98,6 +100,7 @@ def match_invoices(erp_df, ven_df):
     matched = []
     used_vendor_rows = set()
 
+    # ---------- Detect doc types ----------
     def detect_erp_doc_type(row):
         reason = str(row.get("reason_erp", "")).lower()
         charge = normalize_number(row.get("debit_erp"))
@@ -108,7 +111,7 @@ def match_invoices(erp_df, ven_df):
         ]
         if any(re.search(p, reason) for p in payment_patterns):
             return "IGNORE"
-        credit_words = ["credit", "nota", "abono", "cn", "πιστωτικό", "πίστωση","ακυρωτικό","ακυρωτικό παραστατικό"]
+        credit_words = ["credit", "nota", "abono", "cn", "πιστωτικό", "πίστωση", "ακυρωτικό"]
         invoice_words = ["factura", "invoice", "inv", "τιμολόγιο", "παραστατικό"]
         if any(k in reason for k in credit_words):
             return "CN"
@@ -132,7 +135,7 @@ def match_invoices(erp_df, ven_df):
         credit = normalize_number(row.get("credit_ven"))
         payment_words = ["pago", "payment", "transfer", "bank", "saldo", "trf",
                          "πληρωμή", "μεταφορά", "τράπεζα", "τραπεζικό έμβασμα"]
-        credit_words = ["credit", "nota", "abono", "cn", "πιστωτικό", "πίστωση","ακυρωτικό","ακυρωτικό παραστατικό"]
+        credit_words = ["credit", "nota", "abono", "cn", "πιστωτικό", "πίστωση", "ακυρωτικό"]
         invoice_words = ["factura", "invoice", "inv", "τιμολόγιο", "παραστατικό"]
         if any(k in reason for k in payment_words):
             return "IGNORE"
@@ -152,6 +155,7 @@ def match_invoices(erp_df, ven_df):
             return -abs(credit if credit > 0 else debit)
         return 0.0
 
+    # ---------- Apply classification ----------
     erp_df["__doctype"] = erp_df.apply(detect_erp_doc_type, axis=1)
     erp_df["__amt"] = erp_df.apply(calc_erp_amount, axis=1)
     ven_df["__doctype"] = ven_df.apply(detect_vendor_doc_type, axis=1)
@@ -160,11 +164,56 @@ def match_invoices(erp_df, ven_df):
     erp_use = erp_df[erp_df["__doctype"].isin(["INV", "CN"])].copy()
     ven_use = ven_df[ven_df["__doctype"].isin(["INV", "CN"])].copy()
 
-    # === CANCELED INVOICES DETECTION ===
-    def clean_invoice_code(v):
+    # ---------- Cancelled invoices ----------
+    def clean_invoice_code_simple(v):
         if not v:
             return ""
         s = str(v).strip().lower().replace(" ", "")
+        s = re.sub(r"20\d{2}", "", s)
+        s = re.sub(r"[^\da-z]", "", s)
+        return s
+
+    erp_use["__clean"] = erp_use["invoice_erp"].apply(clean_invoice_code_simple)
+    ven_use["__clean"] = ven_use["invoice_ven"].apply(clean_invoice_code_simple)
+
+    canceled_erp_df, canceled_ven_df = pd.DataFrame(), pd.DataFrame()
+
+    for df, tag in [(erp_use, "erp"), (ven_use, "ven")]:
+        mask = df.duplicated(subset=["__clean"], keep=False)
+        rows = []
+        for code, grp in df[mask].groupby("__clean"):
+            if len(grp["__doctype"].unique()) >= 2:
+                inv_amt = grp.loc[grp["__doctype"] == "INV", "__amt"].sum()
+                cn_amt = grp.loc[grp["__doctype"] == "CN", "__amt"].sum()
+                if abs(inv_amt + cn_amt) < 0.05:
+                    rows.append(grp)
+        if rows:
+            if tag == "erp":
+                canceled_erp_df = pd.concat(rows, ignore_index=True)
+                erp_use = erp_use[~erp_use["__clean"].isin(canceled_erp_df["__clean"])]
+            else:
+                canceled_ven_df = pd.concat(rows, ignore_index=True)
+                ven_use = ven_use[~ven_use["__clean"].isin(canceled_ven_df["__clean"])]
+
+    # ---------- Matching logic ----------
+    def extract_digits(v):
+        """Extract only digits (ignore spaces, dots, slashes, etc.)."""
+        if not v:
+            return ""
+        return re.sub(r"\D", "", str(v)).lstrip("0")
+
+    def clean_invoice_code(v):
+        """
+        Normalize invoice numbers for comparison:
+        - remove spaces, dots, dashes, slashes
+        - drop prefixes
+        - remove year fragments
+        - keep only digits for matching
+        """
+        if not v:
+            return ""
+        s = str(v).strip().lower()
+        s = re.sub(r"[\s./\-]+", "", s)
         s = re.sub(r"^(αρ|τιμ|pf|ab|inv|tim|cn|ar|pa|πφ|πα|apo|ref|doc|num|no)\W*", "", s)
         s = re.sub(r"20\d{2}", "", s)
         s = re.sub(r"[^a-z0-9]", "", s)
@@ -172,37 +221,7 @@ def match_invoices(erp_df, ven_df):
         s = re.sub(r"[^\d]", "", s)
         return s
 
-    erp_use["__clean"] = erp_use["invoice_erp"].apply(clean_invoice_code)
-    ven_use["__clean"] = ven_use["invoice_ven"].apply(clean_invoice_code)
-
-    cancel_mask_erp = erp_use.duplicated(subset=["__clean"], keep=False)
-    canceled_erp_codes, canceled_erp_rows = set(), []
-    for code, grp in erp_use[cancel_mask_erp].groupby("__clean"):
-        if len(grp["__doctype"].unique()) >= 2:
-            inv_amt = grp.loc[grp["__doctype"] == "INV", "__amt"].sum()
-            cn_amt = grp.loc[grp["__doctype"] == "CN", "__amt"].sum()
-            if abs(inv_amt + cn_amt) < 0.05:
-                canceled_erp_codes.add(code)
-                canceled_erp_rows.append(grp)
-    canceled_erp_df = pd.concat(canceled_erp_rows, ignore_index=True) if canceled_erp_rows else pd.DataFrame()
-    erp_use = erp_use[~erp_use["__clean"].isin(canceled_erp_codes)]
-
-    cancel_mask_ven = ven_use.duplicated(subset=["__clean"], keep=False)
-    canceled_ven_codes, canceled_ven_rows = set(), []
-    for code, grp in ven_use[cancel_mask_ven].groupby("__clean"):
-        if len(grp["__doctype"].unique()) >= 2:
-            inv_amt = grp.loc[grp["__doctype"] == "INV", "__amt"].sum()
-            cn_amt = grp.loc[grp["__doctype"] == "CN", "__amt"].sum()
-            if abs(inv_amt + cn_amt) < 0.05:
-                canceled_ven_codes.add(code)
-                canceled_ven_rows.append(grp)
-    canceled_ven_df = pd.concat(canceled_ven_rows, ignore_index=True) if canceled_ven_rows else pd.DataFrame()
-    ven_use = ven_use[~ven_use["__clean"].isin(canceled_ven_codes)]
-
-    # === MATCHING ===
-    def extract_digits(v):
-        return re.sub(r"\D", "", str(v or "").replace(" ", "")).lstrip("0")
-
+    # ---------- Matching loop ----------
     for _, e in erp_use.iterrows():
         e_inv, e_amt = str(e.get("invoice_erp", "")).strip(), round(float(e["__amt"]), 2)
         e_digits, e_code = extract_digits(e_inv), clean_invoice_code(e_inv)
@@ -264,6 +283,7 @@ if uploaded_erp and uploaded_vendor:
 
     st.success("✅ Reconciliation complete")
 
+    # ====== DISPLAY SECTIONS ======
     def highlight_row(row):
         if row["Status"] == "Match":
             return ['background-color: #2e7d32; color: white'] * len(row)
@@ -291,7 +311,6 @@ if uploaded_erp and uploaded_vendor:
     else:
         st.success("✅ No missing invoices in Vendor.")
 
-    # ====== NEW SECTION: CANCELED ======
     st.subheader("🗑 Fully Canceled Invoices")
     col1, col2 = st.columns(2)
     with col1:
