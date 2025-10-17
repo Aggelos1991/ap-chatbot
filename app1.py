@@ -93,7 +93,7 @@ Rules:
 1. If DEBE > 0 → Reason = "Invoice"
 2. If HABER > 0 → Reason = "Payment"
 3. If the line includes "Abono", "Nota de Credito", "NC", "πιστω", "Ακυρωτικό" → Reason = "Credit Note" and place value under Credit.
-4. Ignore summary lines: "Saldo", "Apertura", "Total General", "IVA", "Base", "Impuestos".
+4. Ignore summary lines: "Saldo", "Apertura", "Total General", "IVA", "Base", "Impuestos","Concil.".
 5. Ensure output is valid JSON array.
 
 Lines:
