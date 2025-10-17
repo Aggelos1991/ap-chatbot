@@ -229,6 +229,14 @@ def match_invoices(erp_df, ven_df):
         s = re.sub(r"^0+", "", s)
         # keep only digits for the final compare (like earlier logic)
         s = re.sub(r"[^\d]", "", s)
+        # Handle structured invoice patterns like 2025-FV-00001-001248-01 or FV-001248-01
+        parts = re.split(r"[-_]", s)
+        for p in reversed(parts):
+        # numeric block with at least 4 digits, skip if it's a year (2020–2039)
+            if re.fullmatch(r"\d{4,}", p) and not re.fullmatch(r"20[0-3]\d", p):
+                s = p.lstrip("0")  # trim leading zeros (001248 → 1248)
+                break
+
         return s
     # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
