@@ -2,35 +2,81 @@ import streamlit as st
 import pandas as pd
 import re
 import base64
+import os
 
-# === BACKGROUND ===
-def set_background(image_file):
-    with open(image_file, "rb") as file:
-        encoded = base64.b64encode(file.read()).decode()
+# ======================================
+# STYLING & BACKGROUND
+# ======================================
+def set_background(image_path):
+    """Set company background image and styling."""
+    if not os.path.exists(image_path):
+        st.warning(f"⚠️ Background image not found at: {image_path}")
+        return
+
+    with open(image_path, "rb") as img:
+        encoded = base64.b64encode(img.read()).decode()
+
     st.markdown(
         f"""
         <style>
+        /* === GLOBAL BACKGROUND === */
         .stApp {{
             background-image: url("data:image/jpg;base64,{encoded}");
             background-size: cover;
             background-position: center;
             background-attachment: fixed;
+            color: #001F4D;
+            font-family: 'Montserrat', sans-serif;
         }}
-        div[data-testid="stSidebar"] {{
-            background-color: rgba(255, 255, 255, 0.8);
-        }}
+
+        /* === MAIN CONTAINER === */
         .block-container {{
-            background-color: rgba(255, 255, 255, 0.88);
-            border-radius: 18px;
-            padding: 2rem;
+            background-color: rgba(255, 255, 255, 0.90);
+            padding: 2.5rem;
+            border-radius: 20px;
+            box-shadow: 0 4px 25px rgba(0, 0, 0, 0.1);
+        }}
+
+        /* === SIDEBAR === */
+        [data-testid="stSidebar"] {{
+            background-color: rgba(255, 255, 255, 0.8);
+            backdrop-filter: blur(6px);
+        }}
+
+        /* === HEADERS === */
+        h1, h2, h3 {{
+            color: #001F4D;
+            font-weight: 700;
+        }}
+
+        /* === BUTTONS === */
+        div.stButton > button:first-child {{
+            background-color: #001F4D;
+            color: white;
+            border-radius: 8px;
+            border: none;
+            padding: 0.6rem 1.2rem;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }}
+        div.stButton > button:first-child:hover {{
+            background-color: #003366;
+            transform: scale(1.02);
+        }}
+
+        /* === TABLE STYLING === */
+        .stDataFrame {{
+            border-radius: 10px;
+            overflow: hidden;
         }}
         </style>
         """,
         unsafe_allow_html=True
     )
 
-# Call it right after page config
-set_background("/mnt/data/saniikos.jpg")
+# Call this function with the correct relative path:
+set_background("saniikos.jpg")  # Make sure the image is in the same folder as app.py
+
 # ======================================
 # CONFIGURATION
 # ======================================
