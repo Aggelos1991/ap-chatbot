@@ -24,7 +24,6 @@ html("""
       background: linear-gradient(180deg, #bde0fe 0%, #fefae0 100%);
     }
     canvas {
-      display: block;
       width: 100%;
       height: 420px;
       border-radius: 16px;
@@ -32,13 +31,13 @@ html("""
     }
   </style>
 
-  <script src="https://unpkg.com/three@0.158.0/build/three.min.js"></script>
-  <script src="https://unpkg.com/three@0.158.0/examples/js/controls/OrbitControls.js"></script>
+  <script src="https://unpkg.com/three@0.159.0/build/three.min.js"></script>
+  <script src="https://unpkg.com/three@0.159.0/examples/js/controls/OrbitControls.js"></script>
 </head>
 <body>
-  <canvas id="resort"></canvas>
+  <canvas id="sceneCanvas"></canvas>
   <script>
-    const canvas = document.getElementById('resort');
+    const canvas = document.getElementById('sceneCanvas');
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(window.innerWidth, 420);
@@ -53,70 +52,72 @@ html("""
     controls.enableDamping = true;
 
     // LIGHTS
-    const hemi = new THREE.HemisphereLight(0xffffff, 0x777777, 1.1);
-    scene.add(hemi);
-    const sun = new THREE.DirectionalLight(0xffffff, 0.9);
-    sun.position.set(5, 10, 5);
-    scene.add(sun);
+    const hemiLight = new THREE.HemisphereLight(0xffffff, 0xaaaaaa, 1.1);
+    scene.add(hemiLight);
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    dirLight.position.set(5, 10, 5);
+    scene.add(dirLight);
 
     // SAND
-    const sandGeo = new THREE.PlaneGeometry(30, 30);
-    const sandMat = new THREE.MeshStandardMaterial({ color: 0xf3e5ab });
-    const sand = new THREE.Mesh(sandGeo, sandMat);
+    const sandGeometry = new THREE.PlaneGeometry(30, 30);
+    const sandMaterial = new THREE.MeshStandardMaterial({ color: 0xf3e5ab });
+    const sand = new THREE.Mesh(sandGeometry, sandMaterial);
     sand.rotation.x = -Math.PI / 2;
-    sand.position.y = -0.1;
+    sand.position.y = -0.05;
     scene.add(sand);
 
-    // SEA (modern BufferGeometry)
-    const seaGeo = new THREE.PlaneGeometry(15, 15, 40, 40);
-    const seaMat = new THREE.MeshPhongMaterial({ color: 0x4fc3f7, transparent: true, opacity: 0.85 });
-    const sea = new THREE.Mesh(seaGeo, seaMat);
+    // SEA
+    const seaGeometry = new THREE.PlaneGeometry(15, 15, 64, 64);
+    const seaMaterial = new THREE.MeshPhongMaterial({ color: 0x4fc3f7, transparent: true, opacity: 0.9, shininess: 80 });
+    const sea = new THREE.Mesh(seaGeometry, seaMaterial);
     sea.rotation.x = -Math.PI / 2;
     sea.position.z = -7;
     scene.add(sea);
+    const seaPositions = sea.geometry.attributes.position;
 
-    // PALMS
-    function makePalm(x, z) {
+    // PALM TREES
+    function createPalm(x, z) {
       const trunkGeo = new THREE.CylinderGeometry(0.1, 0.15, 2, 8);
       const trunkMat = new THREE.MeshStandardMaterial({ color: 0x8b5a2b });
       const trunk = new THREE.Mesh(trunkGeo, trunkMat);
       trunk.position.set(x, 1, z);
+      scene.add(trunk);
 
       const leaves = new THREE.Group();
       const leafMat = new THREE.MeshStandardMaterial({ color: 0x2e8b57 });
       for (let i = 0; i < 6; i++) {
         const leafGeo = new THREE.BoxGeometry(0.1, 0.02, 1.2);
         const leaf = new THREE.Mesh(leafGeo, leafMat);
-        leaf.position.y = 2;
+        leaf.position.y = 1;
         leaf.rotation.y = (i / 6) * Math.PI * 2;
         leaves.add(leaf);
       }
+      leaves.position.y = 1.8;
       trunk.add(leaves);
-      scene.add(trunk);
       return leaves;
     }
-    const palms = [makePalm(2, 2), makePalm(-3, -1), makePalm(0, 3)];
 
-    // ANIMATION LOOP
+    const palms = [createPalm(2, 2), createPalm(-2, -1), createPalm(0, 3)];
+
+    // ANIMATION
     const clock = new THREE.Clock();
-    const pos = sea.geometry.attributes.position;
-    const w = 41, h = 41;
+    const w = 65;
 
     function animate() {
       requestAnimationFrame(animate);
       const t = clock.getElapsedTime();
 
-      // Animate water
-      for (let i = 0; i < pos.count; i++) {
-        const x = i % w, y = Math.floor(i / w);
-        pos.setZ(i, Math.sin(x * 0.3 + t) * 0.08 + Math.cos(y * 0.3 + t * 0.7) * 0.08);
+      // Animate waves
+      for (let i = 0; i < seaPositions.count; i++) {
+        const x = i % w;
+        const y = Math.floor(i / w);
+        const z = Math.sin(x * 0.3 + t) * 0.08 + Math.cos(y * 0.3 + t * 0.6) * 0.08;
+        seaPositions.setZ(i, z);
       }
-      pos.needsUpdate = true;
+      seaPositions.needsUpdate = true;
 
       // Animate palms
-      palms.forEach((p, i) => {
-        p.rotation.z = Math.sin(t + i) * 0.15;
-      });
+      palms.forEach((p, i) => p.rotation.z = Math.sin(t + i) * 0.15);
 
       controls.update();
       renderer.render(scene, camera);
@@ -132,6 +133,7 @@ html("""
 </body>
 </html>
 """, height=440)
+
 
 # ======================================
 # HELPERS
