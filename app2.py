@@ -3,97 +3,125 @@ import pandas as pd
 import re
 from streamlit.components.v1 import html
 
-st.subheader("Interactive 3D (Three.js in Streamlit)")
+st.subheader("🌴 Resort Interactive 3D Visualization")
 
 three_js = """
 <!DOCTYPE html>
-<html>
-  <head>
-    <meta charset="utf-8" />
-    <style>
-      html, body { margin: 0; height: 100%; overflow: hidden; }
-      #c { width: 100%; height: 100%; display:block; }
-    </style>
-  </head>
-  <body>
-    <canvas id="c"></canvas>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <style>
+    html, body {
+      margin: 0;
+      height: 100%;
+      overflow: hidden;
+      background-color: #e9ede8;
+    }
+    #container {
+      width: 100%;
+      height: 100%;
+    }
+    canvas {
+      width: 100% !important;
+      height: 100% !important;
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <div id="container"></div>
 
-    <!-- Three.js + OrbitControls (from a CDN) -->
-    <script src="https://unpkg.com/three@0.158.0/build/three.min.js"></script>
-    <script src="https://unpkg.com/three@0.158.0/examples/js/controls/OrbitControls.js"></script>
+  <!-- Three.js and OrbitControls -->
+  <script src="https://unpkg.com/three@0.158.0/build/three.min.js"></script>
+  <script src="https://unpkg.com/three@0.158.0/examples/js/controls/OrbitControls.js"></script>
 
-    <script>
-      // Basic setup
-      const canvas = document.getElementById('c');
-      const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-      renderer.setPixelRatio(window.devicePixelRatio);
+  <script>
+    const container = document.getElementById('container');
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(container.clientWidth, container.clientHeight);
+    renderer.setPixelRatio(window.devicePixelRatio);
+    container.appendChild(renderer.domElement);
 
-      const scene = new THREE.Scene();
-      scene.background = new THREE.Color('#e9efe7');
+    // Scene & camera
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color('#d9e2dd');
+    const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 100);
+    camera.position.set(3, 2, 5);
 
-      const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 1000);
-      camera.position.set(3, 2, 5);
+    // Controls
+    const controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
 
-      const controls = new THREE.OrbitControls(camera, renderer.domElement);
-      controls.enableDamping = true;
+    // Lights
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 0.7);
+    scene.add(hemi);
+    const dir = new THREE.DirectionalLight(0xffffff, 0.7);
+    dir.position.set(5, 10, 7);
+    scene.add(dir);
 
-      // Lights
-      const hemi = new THREE.HemisphereLight(0xffffff, 0x445566, 0.9);
-      scene.add(hemi);
-      const dir = new THREE.DirectionalLight(0xffffff, 0.8);
-      dir.position.set(5, 10, 7);
-      scene.add(dir);
+    // Plane (floor)
+    const plane = new THREE.Mesh(
+      new THREE.PlaneGeometry(20, 20),
+      new THREE.MeshStandardMaterial({ color: '#d1d8d2', roughness: 1 })
+    );
+    plane.rotation.x = -Math.PI / 2;
+    scene.add(plane);
 
-      // A platform
-      const plane = new THREE.Mesh(
-        new THREE.PlaneGeometry(20, 20),
-        new THREE.MeshStandardMaterial({ color: '#d5dfd8', roughness: 0.9 })
-      );
-      plane.rotation.x = -Math.PI / 2;
-      scene.add(plane);
+    // Glowing cube (e.g. vendor or invoice)
+    const cubeGeo = new THREE.BoxGeometry(1, 1, 1);
+    const cubeMat = new THREE.MeshStandardMaterial({
+      color: '#00695c',
+      emissive: '#009688',
+      emissiveIntensity: 0.3,
+      metalness: 0.2,
+      roughness: 0.5
+    });
+    const cube = new THREE.Mesh(cubeGeo, cubeMat);
+    cube.position.y = 0.5;
+    scene.add(cube);
 
-      // A cube (e.g., could represent a matched invoice block)
-      const cube = new THREE.Mesh(
-        new THREE.BoxGeometry(1, 1, 1),
-        new THREE.MeshStandardMaterial({ color: '#0a3d3d', metalness: 0.1, roughness: 0.5 })
-      );
-      cube.position.y = 0.5;
-      scene.add(cube);
+    // Floating light ball for visual depth
+    const sphereGeo = new THREE.SphereGeometry(0.1, 32, 32);
+    const sphereMat = new THREE.MeshBasicMaterial({ color: '#f5af19' });
+    const sphere = new THREE.Mesh(sphereGeo, sphereMat);
+    scene.add(sphere);
 
-      // Responsive resize
-      function resizeRendererToDisplaySize() {
-        const width = canvas.clientWidth;
-        const height = canvas.clientHeight;
-        const needResize = (canvas.width !== Math.floor(width * window.devicePixelRatio)) ||
-                           (canvas.height !== Math.floor(height * window.devicePixelRatio));
-        if (needResize) {
-          renderer.setSize(width, height, false);
-          camera.aspect = width / height;
-          camera.updateProjectionMatrix();
-        }
-      }
+    // Handle resizing
+    function resize() {
+      const width = container.clientWidth;
+      const height = container.clientHeight;
+      renderer.setSize(width, height);
+      camera.aspect = width / height;
+      camera.updateProjectionMatrix();
+    }
+    window.addEventListener('resize', resize);
 
-      // Animate
-      function animate() {
-        requestAnimationFrame(animate);
-        cube.rotation.y += 0.01;
-        controls.update();
-        resizeRendererToDisplaySize();
-        renderer.render(scene, camera);
-      }
-      animate();
+    // Animation loop
+    let t = 0;
+    function animate() {
+      requestAnimationFrame(animate);
 
-      // Handle container resize
-      window.addEventListener('resize', () => {
-        resizeRendererToDisplaySize();
-      });
-    </script>
-  </body>
+      // Cube animation
+      cube.rotation.y += 0.01;
+      cube.rotation.x += 0.005;
+      cube.position.y = 0.5 + Math.sin(t) * 0.2;
+
+      // Floating light orbit
+      t += 0.02;
+      sphere.position.set(Math.cos(t) * 2, 1.5 + Math.sin(t * 2) * 0.3, Math.sin(t) * 2);
+
+      controls.update();
+      renderer.render(scene, camera);
+    }
+    animate();
+  </script>
+</body>
 </html>
 """
 
-# Height controls the visible area; width auto-fits the Streamlit column
-html(three_js, height=500)
+# Embed Three.js in Streamlit
+html(three_js, height=600)
 
 # ======================================
 # CONFIGURATION
