@@ -8,6 +8,129 @@ import re
 st.set_page_config(page_title="🦖 ReconRaptor — Vendor Reconciliation", layout="wide")
 st.title("🦖 ReconRaptor — Vendor Invoice Reconciliation")
 
+from streamlit.components.v1 import html
+
+st.subheader("🌴 Resort Interactive 3D Visualization")
+
+html("""
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      background: linear-gradient(180deg, #bde0fe 0%, #fefae0 100%);
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      height: 450px;
+      border-radius: 16px;
+      box-shadow: 0 0 15px rgba(0,0,0,0.2);
+    }
+  </style>
+
+  <script src="https://unpkg.com/three@0.158.0/build/three.min.js"></script>
+  <script src="https://unpkg.com/three@0.158.0/examples/js/controls/OrbitControls.js"></script>
+</head>
+<body>
+  <canvas id="resort"></canvas>
+  <script>
+    const canvas = document.getElementById('resort');
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setSize(window.innerWidth, 450);
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xcfe8fc); // soft sky blue
+
+    const camera = new THREE.PerspectiveCamera(55, window.innerWidth / 450, 0.1, 100);
+    camera.position.set(5, 3, 6);
+
+    const controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.05;
+    controls.target.set(0, 1, 0);
+
+    // LIGHTS
+    const hemiLight = new THREE.HemisphereLight(0xffffff, 0x888877, 1.1);
+    hemiLight.position.set(0, 20, 0);
+    scene.add(hemiLight);
+
+    const sunLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    sunLight.position.set(5, 10, 5);
+    scene.add(sunLight);
+
+    // SAND
+    const sandGeo = new THREE.PlaneGeometry(40, 40);
+    const sandMat = new THREE.MeshStandardMaterial({ color: 0xf3e5ab });
+    const sand = new THREE.Mesh(sandGeo, sandMat);
+    sand.rotation.x = -Math.PI / 2;
+    scene.add(sand);
+
+    // SEA
+    const seaGeo = new THREE.PlaneGeometry(20, 20, 32, 32);
+    const seaMat = new THREE.MeshPhongMaterial({
+      color: 0x4fc3f7, transparent: true, opacity: 0.9, shininess: 100
+    });
+    const sea = new THREE.Mesh(seaGeo, seaMat);
+    sea.rotation.x = -Math.PI / 2;
+    sea.position.z = -10;
+    scene.add(sea);
+
+    // PALM TREES
+    function createPalm(x, z) {
+      const trunkGeo = new THREE.CylinderGeometry(0.1, 0.15, 2, 8);
+      const trunkMat = new THREE.MeshStandardMaterial({ color: 0x8b5a2b });
+      const trunk = new THREE.Mesh(trunkGeo, trunkMat);
+      trunk.position.set(x, 1, z);
+
+      const leaves = new THREE.Group();
+      const leafMat = new THREE.MeshStandardMaterial({ color: 0x2e8b57 });
+      for (let i = 0; i < 6; i++) {
+        const leafGeo = new THREE.BoxGeometry(0.1, 0.02, 1.2);
+        const leaf = new THREE.Mesh(leafGeo, leafMat);
+        leaf.position.y = 2;
+        leaf.rotation.y = (i / 6) * Math.PI * 2;
+        leaves.add(leaf);
+      }
+      trunk.add(leaves);
+      scene.add(trunk);
+      return leaves;
+    }
+
+    const palms = [createPalm(2, 2), createPalm(-2, -1), createPalm(0, 3)];
+
+    // ANIMATION
+    const clock = new THREE.Clock();
+    function animate() {
+      requestAnimationFrame(animate);
+      const t = clock.getElapsedTime();
+
+      // ocean waves
+      sea.geometry.vertices.forEach((v, i) => { v.z = Math.sin(i / 2 + t) * 0.08; });
+      sea.geometry.verticesNeedUpdate = true;
+
+      // palm swaying
+      palms.forEach((p, i) => { p.rotation.z = Math.sin(t + i) * 0.15; });
+
+      controls.update();
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    // Resize handling
+    window.addEventListener('resize', () => {
+      renderer.setSize(window.innerWidth, 450);
+      camera.aspect = window.innerWidth / 450;
+      camera.updateProjectionMatrix();
+    });
+  </script>
+</body>
+</html>
+""", height=480)
+
 # ======================================
 # HELPERS
 # ======================================
