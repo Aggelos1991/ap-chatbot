@@ -2,6 +2,49 @@ import streamlit as st
 import pandas as pd
 import re
 
+
+# ======================================
+# CONFIGURATION + DESIGN
+# ======================================
+st.set_page_config(page_title="🦖 ReconRaptor — Vendor Reconciliation", layout="wide")
+
+# ---- Resort-themed animated background ----
+st.markdown("""
+<style>
+@keyframes oceanWave {
+    0% {background-position: 0 0;}
+    100% {background-position: 1000px 0;}
+}
+[data-testid="stAppViewContainer"] {
+    background: linear-gradient(120deg, #a8edea, #fed6e3);
+    background-size: 2000px 100%;
+    animation: oceanWave 20s linear infinite;
+}
+[data-testid="stHeader"] {
+    background: rgba(255,255,255,0.0);
+}
+[data-testid="stSidebar"] {
+    background-color: rgba(255,255,255,0.75);
+}
+</style>
+""", unsafe_allow_html=True)
+
+# ---- Resort Header Branding ----
+st.markdown("""
+<div style='text-align:center; margin-top:-30px;'>
+    <h1 style='color:#004d40; font-family:Montserrat; font-weight:700;'>
+        🏖️ ReconRaptor — Automated Vendor Reconciliation
+    </h1>
+    <p style='color:#444; font-size:16px; font-family:Montserrat;'>
+        Optimized for resort finance teams — streamlining invoice, credit note, and payment matching across Ikos & Sani.
+    </p>
+</div>
+""", unsafe_allow_html=True)
+
+# ---- Optional sidebar logo ----
+st.sidebar.image("https://upload.wikimedia.org/wikipedia/en/f/f8/Ikos_Resorts_Logo.png", width=180)
+st.sidebar.markdown("**Finance Automation Suite — ReconRaptor**")
+
 # ======================================
 # CONFIGURATION
 # ======================================
