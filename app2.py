@@ -475,7 +475,12 @@ from openpyxl.utils import get_column_letter
 # ============================================================
 # REPORTING & DOWNLOAD SECTION
 # ============================================================
-if not matched.empty or not erp_missing.empty or not ven_missing.empty:
+if (
+    "matched" in locals()
+    and "erp_missing" in locals()
+    and "ven_missing" in locals()
+    and (not matched.empty or not erp_missing.empty or not ven_missing.empty)
+):
     st.subheader("📤 Export Reconciliation Report")
 
     # -------- helpers --------
