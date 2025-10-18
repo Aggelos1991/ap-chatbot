@@ -83,9 +83,48 @@ def set_background(image_path):
 # Call with correct path (if in same folder)
 set_background("saniikos.jpg")
 
+import streamlit.components.v1 as components
+
+def set_parallax_bg():
+    """Animated parallax background — smooth blue marine gradient with motion."""
+    components.html("""
+    <canvas id="bgCanvas" style="position:fixed;top:0;left:0;width:100%;height:100%;z-index:-1;"></canvas>
+    <script>
+    const canvas = document.getElementById('bgCanvas');
+    const ctx = canvas.getContext('2d');
+    let w,h,gradient;
+    function resize(){
+        w=canvas.width=window.innerWidth;
+        h=canvas.height=window.innerHeight;
+    }
+    window.onresize=resize;
+    resize();
+    function draw(t){
+        gradient=ctx.createLinearGradient(0,0,w,h);
+        gradient.addColorStop(0,'#001F4D');
+        gradient.addColorStop(1,'#004f91');
+        ctx.fillStyle=gradient;
+        ctx.fillRect(0,0,w,h);
+        ctx.globalAlpha=0.12;
+        ctx.beginPath();
+        for(let i=0;i<25;i++){
+            let x=w/2+Math.sin(t/1000+i)*250;
+            let y=h/2+Math.cos(t/1100+i)*250;
+            ctx.arc(x,y,100,0,2*Math.PI);
+        }
+        ctx.fillStyle='#ffffff';
+        ctx.fill();
+        ctx.globalAlpha=1;
+        requestAnimationFrame(draw);
+    }
+    requestAnimationFrame(draw);
+    </script>
+    """, height=0)
+
 # CONFIGURATION
 # ======================================
 st.set_page_config(page_title="🦖 ReconRaptor — Vendor Reconciliation", layout="wide")
+set_parallax_bg()
 st.title("🦖 ReconRaptor — Vendor Invoice Reconciliation")
 
 # ======================================
