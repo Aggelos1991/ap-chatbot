@@ -69,22 +69,24 @@ set_parallax_bg()
 st.markdown("""
 <style>
 .block-container {
-    background-color: rgba(255,255,255,0.88);
-    border-radius: 18px;
-    box-shadow: 0 6px 25px rgba(0,0,0,0.1);
-    padding: 2rem 2.5rem;
-    backdrop-filter: blur(8px);
+    background-color: rgba(255,255,255,0.65); /* lighter transparency */
+    border-radius: 20px;
+    box-shadow: 0 8px 30px rgba(0,0,0,0.15);
+    padding: 2.5rem 3rem;
+    backdrop-filter: blur(10px);
+    transition: background 0.4s ease-in-out;
 }
 [data-testid="stSidebar"] {
-    background-color: rgba(255,255,255,0.8);
-    backdrop-filter: blur(6px);
+    background-color: rgba(255,255,255,0.55);
+    backdrop-filter: blur(8px);
 }
 h1,h2,h3 {
-    color:#001F4D;
+    color:#ffffff;
     font-weight:700;
+    text-shadow: 0 2px 8px rgba(0,0,0,0.3);
 }
 div.stButton>button:first-child {
-    background-color:#001F4D;
+    background-color:#004f91;
     color:white;
     border:none;
     border-radius:8px;
@@ -93,12 +95,11 @@ div.stButton>button:first-child {
     transition:0.3s ease;
 }
 div.stButton>button:first-child:hover {
-    background-color:#002b6b;
+    background-color:#0074cc;
     transform:scale(1.03);
 }
 </style>
 """, unsafe_allow_html=True)
-
 st.title("🦖 ReconRaptor — Vendor Invoice Reconciliation")
 
 # ======================================
