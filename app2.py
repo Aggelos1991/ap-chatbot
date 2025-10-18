@@ -2,42 +2,7 @@ import streamlit as st
 import pandas as pd
 import re
 import streamlit as st
-from streamlit.components.v1 import html
-import streamlit as st
 
-st.markdown("### 🦖 ReconRaptor — Vendor Invoice Reconciliation")
-
-html("""
-<div style="
-  display:flex;
-  justify-content:center;
-  align-items:center;
-  margin-bottom:10px;">
-  <div style="
-    perspective:1000px;
-    width:300px;
-    height:120px;">
-    <div id='logo3d' style="
-      width:100%;
-      height:100%;
-      background-image:url('https://upload.wikimedia.org/wikipedia/commons/2/23/Ikos_Resorts_logo.svg');
-      background-size:contain;
-      background-repeat:no-repeat;
-      background-position:center;
-      transform-style:preserve-3d;
-      animation:spin 8s linear infinite;">
-    </div>
-  </div>
-</div>
-
-<style>
-@keyframes spin {
-  0% { transform:rotateY(0deg) rotateX(2deg) scale(1.02); }
-  50% { transform:rotateY(180deg) rotateX(-2deg) scale(1.03); }
-  100% { transform:rotateY(360deg) rotateX(2deg) scale(1.02); }
-}
-</style>
-""", height=160)
 
 # ======================================
 # CONFIGURATION
