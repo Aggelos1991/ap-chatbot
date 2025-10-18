@@ -7,7 +7,6 @@ import re
 # ======================================
 st.set_page_config(page_title="🦖 ReconRaptor — Vendor Reconciliation", layout="wide")
 st.title("🦖 ReconRaptor — Vendor Invoice Reconciliation")
-
 from streamlit.components.v1 import html
 
 st.subheader("🌴 Resort Interactive 3D Visualization")
@@ -16,119 +15,111 @@ html("""
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <style>
-    body{margin:0;overflow:hidden;background:linear-gradient(180deg,#bde0fe 0%,#fefae0 100%)}
-    #wrap{width:100%;height:420px;border-radius:16px;box-shadow:0 0 15px rgba(0,0,0,.15);overflow:hidden}
-    canvas{display:block;width:100%;height:100%}
-  </style>
+<meta charset="utf-8">
+<style>
+  body {margin:0;overflow:hidden;background:linear-gradient(180deg,#bde0fe 0%,#fefae0 100%)}
+  canvas {width:100%;height:420px;border-radius:16px;box-shadow:0 0 15px rgba(0,0,0,.15)}
+</style>
+
+<!-- Three.js + Controls (UMD versions, non-module) -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.148.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.148.0/examples/js/controls/OrbitControls.js"></script>
 </head>
 <body>
-  <div id="wrap"></div>
+<canvas id="resort"></canvas>
+<script>
+  const canvas = document.getElementById('resort');
+  const renderer = new THREE.WebGLRenderer({canvas, antialias:true});
+  renderer.setPixelRatio(window.devicePixelRatio);
+  renderer.setSize(window.innerWidth, 420);
 
-  <script type="module">
-    import * as THREE from 'https://unpkg.com/three@0.159.0/build/three.module.js';
-    import { OrbitControls } from 'https://unpkg.com/three@0.159.0/examples/jsm/controls/OrbitControls.js';
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0xcfe8fc);
 
-    const wrap = document.getElementById('wrap');
-    const renderer = new THREE.WebGLRenderer({ antialias:true });
-    wrap.appendChild(renderer.domElement);
+  const camera = new THREE.PerspectiveCamera(55, window.innerWidth/420, 0.1, 100);
+  camera.position.set(5, 3, 7);
 
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0xcfe8fc);
+  const controls = new THREE.OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.target.set(0,1,0);
 
-    const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 100);
-    camera.position.set(5,3,7);
+  // Lights
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x888888, 1.2));
+  const sun = new THREE.DirectionalLight(0xffffff, 0.9);
+  sun.position.set(5,10,5);
+  scene.add(sun);
 
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-    controls.target.set(0,1,0);
+  // Sand
+  const sandGeo = new THREE.PlaneGeometry(30,30);
+  const sandMat = new THREE.MeshStandardMaterial({color:0xf3e5ab});
+  const sand = new THREE.Mesh(sandGeo, sandMat);
+  sand.rotation.x = -Math.PI/2;
+  sand.position.y = -0.05;
+  scene.add(sand);
 
-    // Lights
-    scene.add(new THREE.HemisphereLight(0xffffff, 0x888888, 1.1));
-    const sun = new THREE.DirectionalLight(0xffffff, 0.9);
-    sun.position.set(5,10,5);
-    scene.add(sun);
+  // Sea
+  const seaGeo = new THREE.PlaneGeometry(16,16,64,64);
+  const seaMat = new THREE.MeshPhongMaterial({color:0x4fc3f7,transparent:true,opacity:0.9,shininess:80});
+  const sea = new THREE.Mesh(seaGeo, seaMat);
+  sea.rotation.x = -Math.PI/2;
+  sea.position.z = -7;
+  scene.add(sea);
+  const pos = sea.geometry.attributes.position;
+  const w = 65;
 
-    // Sand
-    const sand = new THREE.Mesh(
-      new THREE.PlaneGeometry(30,30),
-      new THREE.MeshStandardMaterial({ color:0xf3e5ab })
+  // Palms
+  function makePalm(x,z){
+    const trunk = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.1,0.15,2,10),
+      new THREE.MeshStandardMaterial({color:0x8b5a2b})
     );
-    sand.rotation.x = -Math.PI/2;
-    sand.position.y = -0.05;
-    scene.add(sand);
-
-    // Sea (BufferGeometry waves)
-    const sea = new THREE.Mesh(
-      new THREE.PlaneGeometry(16,16,64,64),
-      new THREE.MeshPhongMaterial({ color:0x4fc3f7, transparent:true, opacity:0.9, shininess:80 })
-    );
-    sea.rotation.x = -Math.PI/2;
-    sea.position.set(0,0,-7);
-    scene.add(sea);
-    const seaPos = sea.geometry.attributes.position;
-    const w = 65; // segments+1
-
-    // Palms
-    function makePalm(x,z){
-      const trunk = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.1,0.15,2,10),
-        new THREE.MeshStandardMaterial({ color:0x8b5a2b })
-      );
-      trunk.position.set(x,1,z);
-      const crown = new THREE.Group();
-      const leafMat = new THREE.MeshStandardMaterial({ color:0x2e8b57 });
-      for(let i=0;i<6;i++){
-        const leaf = new THREE.Mesh(new THREE.BoxGeometry(0.1,0.02,1.2), leafMat);
-        leaf.position.y = 1.9;
-        leaf.rotation.y = (i/6)*Math.PI*2;
-        crown.add(leaf);
-      }
-      trunk.add(crown);
-      scene.add(trunk);
-      return crown;
+    trunk.position.set(x,1,z);
+    const crown = new THREE.Group();
+    const leafMat = new THREE.MeshStandardMaterial({color:0x2e8b57});
+    for(let i=0;i<6;i++){
+      const leaf = new THREE.Mesh(new THREE.BoxGeometry(0.1,0.02,1.2),leafMat);
+      leaf.position.y=1.9;
+      leaf.rotation.y=(i/6)*Math.PI*2;
+      crown.add(leaf);
     }
-    const palms = [makePalm(2,2), makePalm(-2,-1), makePalm(0,3)];
+    trunk.add(crown);
+    scene.add(trunk);
+    return crown;
+  }
+  const palms = [makePalm(2,2), makePalm(-2,-1), makePalm(0,3)];
 
-    // Resize helper (use actual element size, not window)
-    function resize(){
-      const rect = wrap.getBoundingClientRect();
-      const width = Math.max(300, rect.width);
-      const height = Math.max(220, rect.height);
-      renderer.setSize(width, height, false);
-      camera.aspect = width / height;
-      camera.updateProjectionMatrix();
+  // Animation
+  const clock = new THREE.Clock();
+  function animate(){
+    requestAnimationFrame(animate);
+    const t = clock.getElapsedTime();
+
+    // waves
+    for(let i=0;i<pos.count;i++){
+      const x = i % w;
+      const y = Math.floor(i / w);
+      pos.setZ(i, Math.sin(x*0.25 + t)*0.08 + Math.cos(y*0.25 + t*0.6)*0.08);
     }
-    window.addEventListener('resize', resize);
-    resize();
+    pos.needsUpdate = true;
 
-    // Animate
-    const clock = new THREE.Clock();
-    function animate(){
-      requestAnimationFrame(animate);
-      const t = clock.getElapsedTime();
+    // palms sway
+    palms.forEach((p,i)=> p.rotation.z = Math.sin(t + i)*0.15);
 
-      // waves
-      for(let i=0;i<seaPos.count;i++){
-        const x = i % w;
-        const y = Math.floor(i / w);
-        seaPos.setZ(i, Math.sin(x*0.25 + t)*0.08 + Math.cos(y*0.28 + t*0.6)*0.08);
-      }
-      seaPos.needsUpdate = true;
+    controls.update();
+    renderer.render(scene,camera);
+  }
+  animate();
 
-      // palms sway
-      palms.forEach((p,i)=> p.rotation.z = Math.sin(t + i)*0.15);
-
-      controls.update();
-      renderer.render(scene, camera);
-    }
-    animate();
-  </script>
+  window.addEventListener('resize',()=>{
+    renderer.setSize(window.innerWidth,420);
+    camera.aspect = window.innerWidth/420;
+    camera.updateProjectionMatrix();
+  });
+</script>
 </body>
 </html>
 """, height=440)
-# ======================================
+
 # HELPERS
 # ======================================
 def normalize_number(v):
