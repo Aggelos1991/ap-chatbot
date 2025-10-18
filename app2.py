@@ -8,27 +8,60 @@ import re
 # ======================================
 st.set_page_config(page_title="🦖 ReconRaptor — Vendor Reconciliation", layout="wide")
 
-# ---- Resort-themed animated background ----
+# ---- Elegant Resort Theme (Dark Teal & Sand) ----
 st.markdown("""
 <style>
-@keyframes oceanWave {
-    0% {background-position: 0 0;}
-    100% {background-position: 1000px 0;}
-}
+/* App background */
 [data-testid="stAppViewContainer"] {
-    background: linear-gradient(120deg, #a8edea, #fed6e3);
-    background-size: 2000px 100%;
-    animation: oceanWave 20s linear infinite;
+    background: linear-gradient(135deg, #e3dfd2 0%, #bcd4cf 100%);
+    background-attachment: fixed;
 }
+
+/* Header transparency */
 [data-testid="stHeader"] {
-    background: rgba(255,255,255,0.0);
+    background: rgba(0,0,0,0);
 }
+
+/* Sidebar */
 [data-testid="stSidebar"] {
-    background-color: rgba(255,255,255,0.75);
+    background-color: rgba(255,255,255,0.85);
+    border-right: 1px solid rgba(0,0,0,0.1);
+}
+
+/* Title + typography */
+h1, h2, h3, h4, h5, h6 {
+    font-family: 'Montserrat', sans-serif;
+    color: #0a3d3d;
+}
+p, div, label {
+    font-family: 'Montserrat', sans-serif;
+    color: #1b1b1b;
+}
+
+/* File uploader box */
+[data-testid="stFileUploaderDropzone"] {
+    border: 2px dashed #004d40 !important;
+    background-color: #f5f5f5 !important;
+}
+
+/* Success / Info / Error */
+.stAlert {
+    border-radius: 12px;
+}
+
+/* Dataframe styling */
+[data-testid="stDataFrame"] {
+    background-color: white !important;
+    border-radius: 10px !important;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+/* Remove the ugly gray border lines */
+.block-container {
+    padding-top: 2rem;
 }
 </style>
 """, unsafe_allow_html=True)
-
 # ---- Resort Header Branding ----
 st.markdown("""
 <div style='text-align:center; margin-top:-30px;'>
