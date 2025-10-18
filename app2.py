@@ -8,6 +8,7 @@ import re
 st.set_page_config(page_title="🦖 ReconRaptor — Vendor Reconciliation", layout="wide")
 st.title("🦖 ReconRaptor — Vendor Invoice Reconciliation")
 from streamlit.components.v1 import html
+import streamlit as st
 
 st.subheader("🌴 Resort Interactive 3D Visualization")
 
@@ -17,117 +18,125 @@ html("""
 <head>
 <meta charset="utf-8">
 <style>
-  body {
+  html, body {
     margin: 0;
     overflow: hidden;
-    background: linear-gradient(180deg,#bde0fe 0%,#fefae0 100%);
+    height: 100%;
   }
   #resortCanvas {
     width: 100%;
-    height: 400px;
-    border-radius: 16px;
+    height: 100%;
     display: block;
+    border-radius: 16px;
     box-shadow: 0 0 15px rgba(0,0,0,0.15);
+    background: linear-gradient(180deg,#bde0fe 0%,#fefae0 100%);
   }
 </style>
 </head>
 <body>
 <canvas id="resortCanvas"></canvas>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.158.0/examples/js/controls/OrbitControls.js"></script>
+
 <script>
 (function(){
-  // Inject scripts dynamically (works inside iframe CSP)
-  const s1 = document.createElement('script');
-  s1.src = "https://cdn.jsdelivr.net/npm/three@0.148.0/build/three.min.js";
-  s1.onload = function() {
-    const s2 = document.createElement('script');
-    s2.src = "https://cdn.jsdelivr.net/npm/three@0.148.0/examples/js/controls/OrbitControls.js";
-    s2.onload = main;
-    document.body.appendChild(s2);
-  };
-  document.body.appendChild(s1);
+  const canvas = document.getElementById('resortCanvas');
+  const width = canvas.clientWidth;
+  const height = canvas.clientHeight;
 
-  function main(){
-    const canvas = document.getElementById('resortCanvas');
-    const renderer = new THREE.WebGLRenderer({canvas, antialias:true});
-    renderer.setPixelRatio(window.devicePixelRatio);
-    renderer.setSize(window.innerWidth, 400);
+  const renderer = new THREE.WebGLRenderer({canvas, antialias:true});
+  renderer.setPixelRatio(window.devicePixelRatio);
+  renderer.setSize(width, height);
 
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0xcfe8fc);
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0xcfe8fc);
 
-    const camera = new THREE.PerspectiveCamera(55, window.innerWidth/400, 0.1, 100);
-    camera.position.set(5,3,7);
+  const camera = new THREE.PerspectiveCamera(55, width/height, 0.1, 100);
+  camera.position.set(5,3,7);
 
-    const controls = new THREE.OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-    controls.target.set(0,1,0);
+  const controls = new THREE.OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.target.set(0,1,0);
 
-    const hemi = new THREE.HemisphereLight(0xffffff, 0x888888, 1.2);
-    scene.add(hemi);
-    const sun = new THREE.DirectionalLight(0xffffff, 0.9);
-    sun.position.set(5,10,5);
-    scene.add(sun);
+  // Lights
+  const hemi = new THREE.HemisphereLight(0xffffff, 0x888888, 1.1);
+  scene.add(hemi);
+  const sun = new THREE.DirectionalLight(0xffffff, 0.9);
+  sun.position.set(5,10,5);
+  scene.add(sun);
 
-    const sandGeo = new THREE.PlaneGeometry(30,30);
-    const sandMat = new THREE.MeshStandardMaterial({color:0xf3e5ab});
-    const sand = new THREE.Mesh(sandGeo, sandMat);
-    sand.rotation.x = -Math.PI/2;
-    sand.position.y = -0.05;
-    scene.add(sand);
+  // Sand
+  const sandGeo = new THREE.PlaneGeometry(30,30);
+  const sandMat = new THREE.MeshStandardMaterial({color:0xf3e5ab});
+  const sand = new THREE.Mesh(sandGeo, sandMat);
+  sand.rotation.x = -Math.PI/2;
+  sand.position.y = -0.05;
+  scene.add(sand);
 
-    const seaGeo = new THREE.PlaneGeometry(16,16,64,64);
-    const seaMat = new THREE.MeshPhongMaterial({color:0x4fc3f7,transparent:true,opacity:0.9,shininess:80});
-    const sea = new THREE.Mesh(seaGeo, seaMat);
-    sea.rotation.x = -Math.PI/2;
-    sea.position.z = -7;
-    scene.add(sea);
-    const pos = sea.geometry.attributes.position;
-    const w = 65;
+  // Sea
+  const seaGeo = new THREE.PlaneGeometry(16,16,64,64);
+  const seaMat = new THREE.MeshPhongMaterial({
+    color:0x4fc3f7,
+    transparent:true,
+    opacity:0.9,
+    shininess:80
+  });
+  const sea = new THREE.Mesh(seaGeo, seaMat);
+  sea.rotation.x = -Math.PI/2;
+  sea.position.z = -7;
+  scene.add(sea);
+  const pos = sea.geometry.attributes.position;
+  const w = 65;
 
-    function makePalm(x,z){
-      const trunk = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.1,0.15,2,10),
-        new THREE.MeshStandardMaterial({color:0x8b5a2b})
-      );
-      trunk.position.set(x,1,z);
-      const crown = new THREE.Group();
-      const leafMat = new THREE.MeshStandardMaterial({color:0x2e8b57});
-      for(let i=0;i<6;i++){
-        const leaf = new THREE.Mesh(new THREE.BoxGeometry(0.1,0.02,1.2),leafMat);
-        leaf.position.y=1.9;
-        leaf.rotation.y=(i/6)*Math.PI*2;
-        crown.add(leaf);
-      }
-      trunk.add(crown);
-      scene.add(trunk);
-      return crown;
+  // Palms
+  function makePalm(x,z){
+    const trunk = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.1,0.15,2,10),
+      new THREE.MeshStandardMaterial({color:0x8b5a2b})
+    );
+    trunk.position.set(x,1,z);
+    const crown = new THREE.Group();
+    const leafMat = new THREE.MeshStandardMaterial({color:0x2e8b57});
+    for(let i=0;i<6;i++){
+      const leaf = new THREE.Mesh(new THREE.BoxGeometry(0.1,0.02,1.2),leafMat);
+      leaf.position.y=1.9;
+      leaf.rotation.y=(i/6)*Math.PI*2;
+      crown.add(leaf);
     }
-    const palms = [makePalm(2,2), makePalm(-2,-1), makePalm(0,3)];
-
-    const clock = new THREE.Clock();
-    function animate(){
-      requestAnimationFrame(animate);
-      const t = clock.getElapsedTime();
-
-      for(let i=0;i<pos.count;i++){
-        const x=i%w, y=Math.floor(i/w);
-        pos.setZ(i, Math.sin(x*0.25+t)*0.08 + Math.cos(y*0.25+t*0.6)*0.08);
-      }
-      pos.needsUpdate = true;
-
-      palms.forEach((p,i)=>p.rotation.z=Math.sin(t+i)*0.15);
-
-      controls.update();
-      renderer.render(scene,camera);
-    }
-    animate();
-
-    window.addEventListener('resize',()=>{
-      renderer.setSize(window.innerWidth,400);
-      camera.aspect = window.innerWidth/400;
-      camera.updateProjectionMatrix();
-    });
+    trunk.add(crown);
+    scene.add(trunk);
+    return crown;
   }
+  const palms = [makePalm(2,2), makePalm(-2,-1), makePalm(0,3)];
+
+  const clock = new THREE.Clock();
+  function animate(){
+    requestAnimationFrame(animate);
+    const t = clock.getElapsedTime();
+
+    // Water movement
+    for(let i=0;i<pos.count;i++){
+      const x=i%w, y=Math.floor(i/w);
+      pos.setZ(i, Math.sin(x*0.25+t)*0.08 + Math.cos(y*0.25+t*0.6)*0.08);
+    }
+    pos.needsUpdate = true;
+
+    // Palm sway
+    palms.forEach((p,i)=>p.rotation.z=Math.sin(t+i)*0.15);
+
+    controls.update();
+    renderer.render(scene,camera);
+  }
+  animate();
+
+  window.addEventListener('resize',()=>{
+    const width = canvas.clientWidth;
+    const height = canvas.clientHeight;
+    renderer.setSize(width, height);
+    camera.aspect = width/height;
+    camera.updateProjectionMatrix();
+  });
 })();
 </script>
 </body>
