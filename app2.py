@@ -1,6 +1,49 @@
 import streamlit as st
 import pandas as pd
 import re
+from streamlit.components.v1 import html
+
+html("""
+<div style="display:flex;justify-content:center;align-items:center;flex-direction:column;margin-top:-20px;margin-bottom:20px;">
+  <div style="
+    perspective:1200px;
+    width:320px;
+    height:140px;
+    position:relative;">
+    <div class="logo3d" style="
+      width:100%;
+      height:100%;
+      background:url('https://upload.wikimedia.org/wikipedia/commons/2/23/Ikos_Resorts_logo.svg') center/contain no-repeat;
+      transform-style:preserve-3d;
+      animation:spin 8s linear infinite;
+      filter:drop-shadow(0 0 8px rgba(0,0,0,0.4)) brightness(1.2);
+    "></div>
+
+    <!-- Simulated 3D reflection -->
+    <div style="
+      position:absolute;
+      top:0;
+      left:0;
+      width:100%;
+      height:100%;
+      background:radial-gradient(ellipse at 30% 30%, rgba(255,255,255,0.15), transparent 70%);
+      pointer-events:none;
+      mix-blend-mode:overlay;
+      border-radius:12px;">
+    </div>
+  </div>
+</div>
+
+<style>
+@keyframes spin {
+  0% { transform: rotateY(0deg) rotateX(3deg) scale(1.05); }
+  25% { transform: rotateY(90deg) rotateX(5deg) scale(1.07); }
+  50% { transform: rotateY(180deg) rotateX(-3deg) scale(1.05); }
+  75% { transform: rotateY(270deg) rotateX(-5deg) scale(1.08); }
+  100% { transform: rotateY(360deg) rotateX(3deg) scale(1.05); }
+}
+</style>
+""", height=180)
 
 # CONFIGURATION
 # ======================================
