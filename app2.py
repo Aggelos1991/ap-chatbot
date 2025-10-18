@@ -2,47 +2,43 @@ import streamlit as st
 import pandas as pd
 import re
 import streamlit as st
-import base64
+from streamlit.components.v1 import html
+import streamlit as st
 
-# ======================================
-# LOAD AND ENCODE LOGO
-# ======================================
-def load_logo(path):
-    with open(path, "rb") as f:
-        data = f.read()
-    return base64.b64encode(data).decode()
+st.markdown("### 🦖 ReconRaptor — Vendor Invoice Reconciliation")
 
-logo_base64 = load_logo("saniikos.jpg")
-
-# ======================================
-# DISPLAY LOGO WITH 3D EFFECT
-# ======================================
-st.markdown(f"""
-    <style>
-    .logo-container {{
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        margin-top: 10px;
-        margin-bottom: 30px;
-        perspective: 1000px;
-    }}
-    .logo {{
-        width: 260px;
-        transform: rotateY(10deg);
-        transition: transform 0.8s ease, box-shadow 0.8s ease;
-        box-shadow: 0 6px 25px rgba(0, 0, 0, 0.2);
-        border-radius: 12px;
-    }}
-    .logo:hover {{
-        transform: rotateY(0deg) scale(1.05);
-        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.3);
-    }}
-    </style>
-    <div class="logo-container">
-        <img src="data:image/jpeg;base64,{logo_base64}" class="logo" alt="Sani Ikos Group Logo">
+html("""
+<div style="
+  display:flex;
+  justify-content:center;
+  align-items:center;
+  margin-bottom:10px;">
+  <div style="
+    perspective:1000px;
+    width:300px;
+    height:120px;">
+    <div id='logo3d' style="
+      width:100%;
+      height:100%;
+      background-image:url('https://upload.wikimedia.org/wikipedia/commons/2/23/Ikos_Resorts_logo.svg');
+      background-size:contain;
+      background-repeat:no-repeat;
+      background-position:center;
+      transform-style:preserve-3d;
+      animation:spin 8s linear infinite;">
     </div>
-""", unsafe_allow_html=True)
+  </div>
+</div>
+
+<style>
+@keyframes spin {
+  0% { transform:rotateY(0deg) rotateX(2deg) scale(1.02); }
+  50% { transform:rotateY(180deg) rotateX(-2deg) scale(1.03); }
+  100% { transform:rotateY(360deg) rotateX(2deg) scale(1.02); }
+}
+</style>
+""", height=160)
+
 # ======================================
 # CONFIGURATION
 # ======================================
