@@ -15,7 +15,7 @@ three_js = """
       margin: 0;
       height: 100%;
       overflow: hidden;
-      background-color: #e9ede8;
+      background-color: #d9e2dd;
     }
     #container {
       width: 100%;
@@ -31,96 +31,90 @@ three_js = """
 <body>
   <div id="container"></div>
 
-  <!-- Three.js and OrbitControls -->
   <script src="https://unpkg.com/three@0.158.0/build/three.min.js"></script>
   <script src="https://unpkg.com/three@0.158.0/examples/js/controls/OrbitControls.js"></script>
 
   <script>
     const container = document.getElementById('container');
+
+    // Renderer setup
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(container.clientWidth, container.clientHeight);
     renderer.setPixelRatio(window.devicePixelRatio);
     container.appendChild(renderer.domElement);
 
-    // Scene & camera
+    // Scene setup
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color('#d9e2dd');
-    const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 100);
+    scene.background = new THREE.Color('#e9ede8');
+
+    // Camera setup
+    const camera = new THREE.PerspectiveCamera(50, container.clientWidth / container.clientHeight, 0.1, 100);
     camera.position.set(3, 2, 5);
 
-    // Controls
+    // Orbit Controls
     const controls = new THREE.OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
-    controls.dampingFactor = 0.08;
 
     // Lights
-    const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 0.7);
-    scene.add(hemi);
-    const dir = new THREE.DirectionalLight(0xffffff, 0.7);
-    dir.position.set(5, 10, 7);
-    scene.add(dir);
+    const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.9);
+    hemiLight.position.set(0, 20, 0);
+    scene.add(hemiLight);
 
-    // Plane (floor)
-    const plane = new THREE.Mesh(
-      new THREE.PlaneGeometry(20, 20),
-      new THREE.MeshStandardMaterial({ color: '#d1d8d2', roughness: 1 })
-    );
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    dirLight.position.set(5, 10, 7);
+    scene.add(dirLight);
+
+    // Floor plane
+    const planeGeometry = new THREE.PlaneGeometry(20, 20);
+    const planeMaterial = new THREE.MeshStandardMaterial({ color: '#cfd8dc', roughness: 1 });
+    const plane = new THREE.Mesh(planeGeometry, planeMaterial);
     plane.rotation.x = -Math.PI / 2;
+    plane.position.y = -0.5;
     scene.add(plane);
 
-    // Glowing cube (e.g. vendor or invoice)
-    const cubeGeo = new THREE.BoxGeometry(1, 1, 1);
-    const cubeMat = new THREE.MeshStandardMaterial({
-      color: '#00695c',
-      emissive: '#009688',
-      emissiveIntensity: 0.3,
-      metalness: 0.2,
-      roughness: 0.5
+    // Cube (animated)
+    const geometry = new THREE.BoxGeometry(1, 1, 1);
+    const material = new THREE.MeshStandardMaterial({
+      color: '#009688',
+      metalness: 0.3,
+      roughness: 0.4,
+      emissive: '#00bfa5',
+      emissiveIntensity: 0.2
     });
-    const cube = new THREE.Mesh(cubeGeo, cubeMat);
+    const cube = new THREE.Mesh(geometry, material);
     cube.position.y = 0.5;
     scene.add(cube);
-
-    // Floating light ball for visual depth
-    const sphereGeo = new THREE.SphereGeometry(0.1, 32, 32);
-    const sphereMat = new THREE.MeshBasicMaterial({ color: '#f5af19' });
-    const sphere = new THREE.Mesh(sphereGeo, sphereMat);
-    scene.add(sphere);
-
-    // Handle resizing
-    function resize() {
-      const width = container.clientWidth;
-      const height = container.clientHeight;
-      renderer.setSize(width, height);
-      camera.aspect = width / height;
-      camera.updateProjectionMatrix();
-    }
-    window.addEventListener('resize', resize);
 
     // Animation loop
     let t = 0;
     function animate() {
       requestAnimationFrame(animate);
 
-      // Cube animation
+      t += 0.02;
       cube.rotation.y += 0.01;
       cube.rotation.x += 0.005;
-      cube.position.y = 0.5 + Math.sin(t) * 0.2;
-
-      // Floating light orbit
-      t += 0.02;
-      sphere.position.set(Math.cos(t) * 2, 1.5 + Math.sin(t * 2) * 0.3, Math.sin(t) * 2);
+      cube.position.y = 0.5 + Math.sin(t) * 0.15;
 
       controls.update();
       renderer.render(scene, camera);
     }
+
+    // Handle resize
+    window.addEventListener('resize', () => {
+      const width = container.clientWidth;
+      const height = container.clientHeight;
+      renderer.setSize(width, height);
+      camera.aspect = width / height;
+      camera.updateProjectionMatrix();
+    });
+
+    // Start animation
     animate();
   </script>
 </body>
 </html>
 """
 
-# Embed Three.js in Streamlit
 html(three_js, height=600)
 
 # ======================================
