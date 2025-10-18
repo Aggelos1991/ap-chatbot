@@ -469,7 +469,7 @@ if uploaded_erp and uploaded_vendor:
 import io
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
-from openpyxl.utils.dataframe import dataframe_to_rows
+from openpyxl.utils.dataframe import dataframe_to_rows, get_column_letter
 
 # ============================================================
 # REPORTING & DOWNLOAD SECTION
@@ -477,81 +477,105 @@ from openpyxl.utils.dataframe import dataframe_to_rows
 if not matched.empty or not erp_missing.empty or not ven_missing.empty:
     st.subheader("📤 Export Reconciliation Report")
 
+    # -------- helpers --------
+    def style_header(row_cells, bg="4F81BD", fg="FFFFFF", center=True, bold=True):
+        fill = PatternFill(start_color=bg, end_color=bg, fill_type="solid")
+        for c in row_cells:
+            c.fill = fill
+            c.font = Font(color=fg, bold=bold)
+            if center:
+                c.alignment = Alignment(horizontal="center", vertical="center")
+
+    def set_borders(ws):
+        thin = Side(border_style="thin", color="D0D0D0")
+        for r in ws.iter_rows():
+            for c in r:
+                c.border = Border(top=thin, bottom=thin, left=thin, right=thin)
+
+    def auto_width(ws, min_width=10, pad=2):
+        # Χωρίς χρήση column_letter από κελιά (αντέχει σε merged)
+        for i, col in enumerate(ws.columns, start=1):
+            max_len = 0
+            for cell in col:
+                v = "" if cell.value is None else str(cell.value)
+                if len(v) > max_len:
+                    max_len = len(v)
+            ws.column_dimensions[get_column_letter(i)].width = max(min_width, max_len + pad)
+
+    # -------- workbook --------
     wb = Workbook()
+
+    # === Sheet 1: Matched & Differences ===
     ws1 = wb.active
     ws1.title = "Matched & Differences"
 
-    # === 1️⃣ Matched/Differences Sheet ===
-    ws1.append(["ERP Invoice", "Vendor Invoice", "ERP Amount", "Vendor Amount", "Difference", "Status"])
-    for r in dataframe_to_rows(matched, index=False, header=False):
-        ws1.append(r)
+    headers1 = ["ERP Invoice", "Vendor Invoice", "ERP Amount", "Vendor Amount", "Difference", "Status"]
+    ws1.append(headers1)
+    if not matched.empty:
+        for r in dataframe_to_rows(matched, index=False, header=False):
+            ws1.append(r)
 
-    # Header style
-    header_fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
-    header_font = Font(color="FFFFFF", bold=True)
-    for cell in ws1[1]:
-        cell.fill = header_fill
-        cell.font = header_font
-        cell.alignment = Alignment(horizontal="center")
+    style_header(ws1[1], bg="4F81BD", fg="FFFFFF", center=True, bold=True)
 
-    # Format numeric columns (ERP/Vendor Amounts)
+    # format numbers (cols 3..5)
     for row in ws1.iter_rows(min_row=2, min_col=3, max_col=5):
         for c in row:
             c.number_format = "#,##0.00"
             c.alignment = Alignment(horizontal="right")
 
-    # Auto column widths
-    for col in ws1.columns:
-        max_length = max(len(str(cell.value or "")) for cell in col)
-        ws1.column_dimensions[col[0].column_letter].width = max_length + 3
+    set_borders(ws1)
+    auto_width(ws1)
 
-    # === 2️⃣ Missing Summary Sheet ===
+    # === Sheet 2: Missing (two tables) ===
     ws2 = wb.create_sheet("Missing Invoices")
 
-    ws2.merge_cells("A1:C1")
-    ws2["A1"] = "Missing in ERP (found in Vendor)"
-    ws2["A1"].font = Font(bold=True, color="FFFFFF")
-    ws2["A1"].fill = PatternFill(start_color="C00000", end_color="C00000", fill_type="solid")
-    ws2["A1"].alignment = Alignment(horizontal="center")
-
+    # Block A — Missing in ERP
+    ws2.append(["Missing in ERP (found in Vendor)"])
+    style_header(ws2[1], bg="C00000")
     ws2.append(["Invoice", "Amount"])
-    for r in dataframe_to_rows(erp_missing, index=False, header=False):
-        ws2.append(r)
+    style_header(ws2[2], bg="ED7D31")
+    if not erp_missing.empty:
+        for r in dataframe_to_rows(erp_missing, index=False, header=False):
+            ws2.append(r)
+        # number format
+        for c in ws2.iter_cols(min_row=3, min_col=2, max_col=2):
+            for cell in c:
+                cell.number_format = "#,##0.00"
+                cell.alignment = Alignment(horizontal="right")
+    else:
+        ws2.append(["—", 0])
 
-    # Blank row separator
+    # empty row as spacer
     ws2.append([])
 
-    start_row = ws2.max_row + 1
-    ws2.merge_cells(f"A{start_row}:C{start_row}")
-    ws2[f"A{start_row}"] = "Missing in Vendor (found in ERP)"
-    ws2[f"A{start_row}"].font = Font(bold=True, color="FFFFFF")
-    ws2[f"A{start_row}"].fill = PatternFill(start_color="C00000", end_color="C00000", fill_type="solid")
-    ws2[f"A{start_row}"].alignment = Alignment(horizontal="center")
-
+    # Block B — Missing in Vendor
+    start = ws2.max_row + 1
+    ws2.append(["Missing in Vendor (found in ERP)"])
+    style_header(ws2[start], bg="C00000")
     ws2.append(["Invoice", "Amount"])
-    for r in dataframe_to_rows(ven_missing, index=False, header=False):
-        ws2.append(r)
+    style_header(ws2[start + 1], bg="ED7D31")
+    if not ven_missing.empty:
+        for r in dataframe_to_rows(ven_missing, index=False, header=False):
+            ws2.append(r)
+        for c in ws2.iter_cols(min_row=start + 2, min_col=2, max_col=2):
+            for cell in c:
+                cell.number_format = "#,##0.00"
+                cell.alignment = Alignment(horizontal="right")
+    else:
+        ws2.append(["—", 0])
 
-    # Apply consistent styles
-    for ws in [ws1, ws2]:
-        thin = Side(border_style="thin", color="D0D0D0")
-        for row in ws.iter_rows():
-            for c in row:
-                c.border = Border(top=thin, bottom=thin, left=thin, right=thin)
+    set_borders(ws2)
+    auto_width(ws2)
 
-    # Auto-width all columns in ws2
-    for col in ws2.columns:
-        max_length = max(len(str(cell.value or "")) for cell in col)
-        ws2.column_dimensions[col[0].column_letter].width = max_length + 3
-
-    # === Save to Bytes ===
-    report_buffer = io.BytesIO()
-    wb.save(report_buffer)
-    report_buffer.seek(0)
+    # -------- save & download --------
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
 
     st.download_button(
         label="⬇️ Download Reconciliation Report (Excel)",
-        data=report_buffer,
+        data=buf,
         file_name="ReconRaptor_Reconciliation_Report.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
     )
