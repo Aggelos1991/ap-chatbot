@@ -358,5 +358,62 @@ if uploaded_erp and uploaded_vendor:
         st.dataframe(matched.style.apply(highlight_row, axis=1), use_container_width=True)
     else:
         st.info("No matches found.")
+        
+    st.subheader("❌ Missing in ERP (found in vendor but not in ERP)")
+    if not erp_missing.empty:
+        st.dataframe(
+            erp_missing.style.applymap(lambda _: "background-color: #c62828; color: white"),
+            use_container_width=True
+        )
+    else:
+        st.success("✅ No missing invoices in ERP.")
 
-    st.subheader("❌ Missing in ERP (found in vendor but
+    st.subheader("❌ Missing in Vendor (found in ERP but not in vendor)")
+    if not ven_missing.empty:
+        st.dataframe(
+            ven_missing.style.applymap(lambda _: "background-color: #c62828; color: white"),
+            use_container_width=True
+        )
+    else:
+        st.success("✅ No missing invoices in Vendor.")
+
+    # ====== PAYMENTS ======
+    st.subheader("🏦 Payment Transactions (Identified in both sides)")
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("**💼 ERP Payments**")
+        if not erp_pay.empty:
+            st.dataframe(
+                erp_pay.style.applymap(lambda _: "background-color: #004d40; color: white"),
+                use_container_width=True
+            )
+            st.markdown(f"**Total ERP Payments:** {erp_pay['Amount'].sum():,.2f} EUR")
+        else:
+            st.info("No ERP payments found.")
+
+    with col2:
+        st.markdown("**🧾 Vendor Payments**")
+        if not ven_pay.empty:
+            st.dataframe(
+                ven_pay.style.applymap(lambda _: "background-color: #1565c0; color: white"),
+                use_container_width=True
+            )
+            st.markdown(f"**Total Vendor Payments:** {ven_pay['Amount'].sum():,.2f} EUR")
+        else:
+            st.info("No Vendor payments found.")
+
+    st.markdown("### ✅ Matched Payments")
+    if not matched_pay.empty:
+        st.dataframe(
+            matched_pay.style.applymap(lambda _: "background-color: #2e7d32; color: white"),
+            use_container_width=True
+        )
+        total_erp = matched_pay["ERP Amount"].sum()
+        total_vendor = matched_pay["Vendor Amount"].sum()
+        diff_total = abs(total_erp - total_vendor)
+        st.markdown(f"**Total Matched ERP Payments:** {total_erp:,.2f} EUR")
+        st.markdown(f"**Total Matched Vendor Payments:** {total_vendor:,.2f} EUR")
+        st.markdown(f"**Difference Between ERP and Vendor Payments:** {diff_total:,.2f} EUR")
+    else:
+        st.info("No matching payments found.")
