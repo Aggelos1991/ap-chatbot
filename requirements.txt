@@ -7,4 +7,5 @@ python-dotenv
 fuzzywuzzy
 python-Levenshtein
 pdfplumber
+pyvista stpyvista
 
