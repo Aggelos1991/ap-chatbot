@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import re
-from streamlit.components.v1 import html
+
 
 # ======================================
 # CONFIGURATION
@@ -9,8 +9,8 @@ from streamlit.components.v1 import html
 st.set_page_config(page_title="🦖 ReconRaptor — Vendor Reconciliation", layout="wide")
 st.title("🦖 ReconRaptor — Vendor Invoice Reconciliation")
 
+from streamlit.components.v1 import html
 
-st.subheader("🌴 Resort Interactive 3D Visualization")
 
 html("""
 <!DOCTYPE html>
@@ -21,23 +21,21 @@ html("""
   body {
     margin: 0;
     overflow: hidden;
-    background: linear-gradient(180deg, #bde0fe 0%, #fefae0 100%);
+    background: linear-gradient(180deg,#bde0fe 0%,#fefae0 100%);
   }
   #resortCanvas {
     width: 100%;
-    height: 400px;
-    border-radius: 16px;
+    height: 420px;
     display: block;
-    box-shadow: 0 0 15px rgba(0,0,0,0.15);
+    border-radius: 16px;
+    box-shadow: 0 0 12px rgba(0,0,0,0.2);
   }
 </style>
 </head>
 <body>
 <canvas id="resortCanvas"></canvas>
-
 <script>
 (function(){
-  // Dynamically load Three.js
   const s1 = document.createElement('script');
   s1.src = "https://cdn.jsdelivr.net/npm/three@0.148.0/build/three.min.js";
   s1.onload = () => {
@@ -52,87 +50,91 @@ html("""
     const canvas = document.getElementById('resortCanvas');
     const renderer = new THREE.WebGLRenderer({canvas, antialias:true});
     renderer.setPixelRatio(window.devicePixelRatio);
-    renderer.setSize(window.innerWidth, 400);
+    renderer.setSize(window.innerWidth, 420);
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0xcfe8fc);
+    scene.background = new THREE.Color(0xbde0fe);
 
-    const camera = new THREE.PerspectiveCamera(55, window.innerWidth / 400, 0.1, 100);
-    camera.position.set(5,3,7);
+    const camera = new THREE.PerspectiveCamera(50, window.innerWidth / 420, 0.1, 100);
+    camera.position.set(6, 4, 8);
 
     const controls = new THREE.OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
-    controls.target.set(0,1,0);
+    controls.autoRotate = true; // <- gentle rotation
+    controls.autoRotateSpeed = 0.5;
+    controls.target.set(0, 1, 0);
 
-    scene.add(new THREE.HemisphereLight(0xffffff, 0x888888, 1.2));
-    const sun = new THREE.DirectionalLight(0xffffff, 0.9);
-    sun.position.set(5,10,5);
+    // Lighting
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x888888, 1.2);
+    scene.add(hemi);
+    const sun = new THREE.DirectionalLight(0xffffff, 1);
+    sun.position.set(5, 10, 5);
     scene.add(sun);
 
     // Sand
     const sand = new THREE.Mesh(
-      new THREE.PlaneGeometry(30,30),
-      new THREE.MeshStandardMaterial({color:0xf3e5ab})
+      new THREE.PlaneGeometry(30, 30),
+      new THREE.MeshStandardMaterial({color: 0xf3e5ab})
     );
-    sand.rotation.x = -Math.PI/2;
+    sand.rotation.x = -Math.PI / 2;
     sand.position.y = -0.05;
     scene.add(sand);
 
-    // Sea
+    // Sea (waves)
     const sea = new THREE.Mesh(
-      new THREE.PlaneGeometry(16,16,64,64),
-      new THREE.MeshPhongMaterial({color:0x4fc3f7,transparent:true,opacity:0.9,shininess:80})
+      new THREE.PlaneGeometry(16, 16, 64, 64),
+      new THREE.MeshPhongMaterial({color: 0x4fc3f7, transparent: true, opacity: 0.9, shininess: 80})
     );
-    sea.rotation.x = -Math.PI/2;
-    sea.position.z = -7;
+    sea.rotation.x = -Math.PI / 2;
+    sea.position.set(0, 0, -7);
     scene.add(sea);
     const pos = sea.geometry.attributes.position;
     const w = 65;
 
     // Palms
-    function makePalm(x,z){
+    function makePalm(x, z) {
       const trunk = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.1,0.15,2,10),
-        new THREE.MeshStandardMaterial({color:0x8b5a2b})
+        new THREE.CylinderGeometry(0.1, 0.15, 2, 10),
+        new THREE.MeshStandardMaterial({color: 0x8b5a2b})
       );
-      trunk.position.set(x,1,z);
+      trunk.position.set(x, 1, z);
       const crown = new THREE.Group();
-      const leafMat = new THREE.MeshStandardMaterial({color:0x2e8b57});
-      for(let i=0;i<6;i++){
-        const leaf = new THREE.Mesh(new THREE.BoxGeometry(0.1,0.02,1.2), leafMat);
+      const leafMat = new THREE.MeshStandardMaterial({color: 0x2e8b57});
+      for (let i = 0; i < 6; i++) {
+        const leaf = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.02, 1.2), leafMat);
         leaf.position.y = 1.9;
-        leaf.rotation.y = (i/6)*Math.PI*2;
+        leaf.rotation.y = (i / 6) * Math.PI * 2;
         crown.add(leaf);
       }
       trunk.add(crown);
       scene.add(trunk);
       return crown;
     }
-    const palms = [makePalm(2,2), makePalm(-2,-1), makePalm(0,3)];
+    const palms = [makePalm(2, 2), makePalm(-2, -1), makePalm(0, 3)];
 
     const clock = new THREE.Clock();
-    function animate(){
+    function animate() {
       requestAnimationFrame(animate);
       const t = clock.getElapsedTime();
 
-      // waves
-      for(let i=0;i<pos.count;i++){
+      // Animate waves
+      for (let i = 0; i < pos.count; i++) {
         const x = i % w, y = Math.floor(i / w);
-        pos.setZ(i, Math.sin(x*0.25 + t)*0.08 + Math.cos(y*0.25 + t*0.6)*0.08);
+        pos.setZ(i, Math.sin(x * 0.25 + t) * 0.08 + Math.cos(y * 0.25 + t * 0.6) * 0.08);
       }
       pos.needsUpdate = true;
 
-      // palms sway
-      palms.forEach((p,i)=> p.rotation.z = Math.sin(t + i)*0.15);
+      // Sway palms
+      palms.forEach((p, i) => p.rotation.z = Math.sin(t + i) * 0.15);
 
       controls.update();
       renderer.render(scene, camera);
     }
     animate();
 
-    window.addEventListener('resize', ()=>{
-      renderer.setSize(window.innerWidth, 400);
-      camera.aspect = window.innerWidth / 400;
+    window.addEventListener('resize', () => {
+      renderer.setSize(window.innerWidth, 420);
+      camera.aspect = window.innerWidth / 420;
       camera.updateProjectionMatrix();
     });
   }
@@ -140,8 +142,7 @@ html("""
 </script>
 </body>
 </html>
-""", height=420)
-
+""", height=440)
 
 
 # HELPERS
