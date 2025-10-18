@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import re
 from streamlit.components.v1 import html
+# ======================================
+st.set_page_config(page_title="🦖 ReconRaptor — Vendor Reconciliation", layout="wide")
 
 st.subheader("🌴 Resort Interactive 3D Visualization")
 
@@ -119,8 +121,7 @@ html(three_js, height=600)
 
 # ======================================
 # CONFIGURATION
-# ======================================
-st.set_page_config(page_title="🦖 ReconRaptor — Vendor Reconciliation", layout="wide")
+
 st.title("🦖 ReconRaptor — Vendor Invoice Reconciliation")
 
 # ======================================
