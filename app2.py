@@ -1,12 +1,118 @@
 import streamlit as st
 import pandas as pd
 import re
+from streamlit.components.v1 import html
 
 # ======================================
 # CONFIGURATION
 # ======================================
 st.set_page_config(page_title="🦖 ReconRaptor — Vendor Reconciliation", layout="wide")
 st.title("🦖 ReconRaptor — Vendor Invoice Reconciliation")
+
+# ======================================
+# 3D VISUALIZATION SECTION
+# ======================================
+with st.container():
+    st.subheader("🌴 Resort Interactive 3D Visualization")
+    three_js = """
+    <canvas id="scene" style="width:100%;height:600px;display:block;"></canvas>
+    <script src="https://unpkg.com/three@0.158.0/build/three.min.js"></script>
+    <script src="https://unpkg.com/three@0.158.0/examples/js/controls/OrbitControls.js"></script>
+    <script>
+      const canvas = document.getElementById('scene');
+      const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+      renderer.setSize(window.innerWidth, 600);
+      renderer.setPixelRatio(window.devicePixelRatio);
+      renderer.setClearColor(0xcce0ff);
+
+      const scene = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera(45, window.innerWidth / 600, 0.1, 100);
+      camera.position.set(5, 3, 7);
+
+      const controls = new THREE.OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.05;
+      controls.target.set(0, 1, 0);
+
+      // LIGHTS
+      const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 1.0);
+      hemi.position.set(0, 20, 0);
+      scene.add(hemi);
+      const dir = new THREE.DirectionalLight(0xffffff, 0.8);
+      dir.position.set(-3, 10, -5);
+      scene.add(dir);
+
+      // FLOOR (sand)
+      const planeGeo = new THREE.PlaneGeometry(50, 50);
+      const planeMat = new THREE.MeshPhongMaterial({ color: 0xf4e6c4 });
+      const plane = new THREE.Mesh(planeGeo, planeMat);
+      plane.rotation.x = -Math.PI / 2;
+      scene.add(plane);
+
+      // OCEAN (simple animated wave plane)
+      const waterGeo = new THREE.PlaneGeometry(20, 20, 32, 32);
+      const waterMat = new THREE.MeshPhongMaterial({ color: 0x48cae4, transparent: true, opacity: 0.85, shininess: 100 });
+      const water = new THREE.Mesh(waterGeo, waterMat);
+      water.rotation.x = -Math.PI / 2;
+      water.position.set(0, 0.05, -10);
+      scene.add(water);
+
+      // PALM TREES
+      function createPalm(x, z) {
+        const trunkGeo = new THREE.CylinderGeometry(0.1, 0.2, 2, 8);
+        const trunkMat = new THREE.MeshStandardMaterial({ color: 0x8b5a2b });
+        const trunk = new THREE.Mesh(trunkGeo, trunkMat);
+        trunk.position.set(x, 1, z);
+
+        const leaves = new THREE.Group();
+        const leafMat = new THREE.MeshStandardMaterial({ color: 0x2e8b57 });
+        for (let i = 0; i < 6; i++) {
+          const leafGeo = new THREE.BoxGeometry(0.1, 0.02, 1.2);
+          const leaf = new THREE.Mesh(leafGeo, leafMat);
+          leaf.position.y = 2;
+          leaf.rotation.y = (i / 6) * Math.PI * 2;
+          leaves.add(leaf);
+        }
+        trunk.add(leaves);
+        scene.add(trunk);
+        return leaves;
+      }
+
+      const palms = [createPalm(2, 2), createPalm(-3, -1), createPalm(0, 4)];
+
+      // ANIMATION LOOP
+      let clock = new THREE.Clock();
+      function animate() {
+        requestAnimationFrame(animate);
+        let t = clock.getElapsedTime();
+
+        // wave motion
+        water.geometry.vertices.forEach((v, i) => {
+          v.z = Math.sin(i / 2 + t) * 0.1;
+        });
+        water.geometry.verticesNeedUpdate = true;
+
+        // palm leaf sway
+        palms.forEach((leaves, i) => {
+          leaves.rotation.z = Math.sin(t + i) * 0.15;
+        });
+
+        controls.update();
+        renderer.render(scene, camera);
+      }
+      animate();
+
+      window.addEventListener('resize', () => {
+        renderer.setSize(window.innerWidth, 600);
+        camera.aspect = window.innerWidth / 600;
+        camera.updateProjectionMatrix();
+      });
+    </script>
+    """
+    html(three_js, height=620)
+
+
+
 
 # ======================================
 # HELPERS
