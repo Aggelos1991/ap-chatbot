@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import re
+from streamlit.components.v1 import html
 
 # ======================================
 # CONFIGURATION
