@@ -1,14 +1,10 @@
 import streamlit as st
 import pandas as pd
 import re
-import base64
-import os
+import base64, os
 
-# ======================================
-# STYLING & BACKGROUND
-# ======================================
 def set_background(image_path):
-    """Set company background image and styling."""
+    """Elegant blurred background with subtle Sani Ikos branding."""
     if not os.path.exists(image_path):
         st.warning(f"⚠️ Background image not found at: {image_path}")
         return
@@ -19,65 +15,74 @@ def set_background(image_path):
     st.markdown(
         f"""
         <style>
-        /* === GLOBAL BACKGROUND === */
+        /* ==== GLOBAL BACKGROUND ==== */
         .stApp {{
-            background-image: url("data:image/jpg;base64,{encoded}");
+            background: linear-gradient(rgba(255,255,255,0.92), rgba(255,255,255,0.92)),
+                        url("data:image/jpg;base64,{encoded}");
             background-size: cover;
             background-position: center;
             background-attachment: fixed;
-            color: #001F4D;
             font-family: 'Montserrat', sans-serif;
+            color: #001F4D;
         }}
 
-        /* === MAIN CONTAINER === */
+        /* ==== MAIN CONTAINER ==== */
         .block-container {{
-            background-color: rgba(255, 255, 255, 0.90);
-            padding: 2.5rem;
-            border-radius: 20px;
-            box-shadow: 0 4px 25px rgba(0, 0, 0, 0.1);
+            background-color: rgba(255, 255, 255, 0.88);
+            border-radius: 16px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+            padding: 2.2rem 2.8rem;
+            backdrop-filter: blur(5px);
         }}
 
-        /* === SIDEBAR === */
+        /* ==== SIDEBAR ==== */
         [data-testid="stSidebar"] {{
-            background-color: rgba(255, 255, 255, 0.8);
+            background-color: rgba(255, 255, 255, 0.82);
             backdrop-filter: blur(6px);
         }}
 
-        /* === HEADERS === */
+        /* ==== HEADERS ==== */
         h1, h2, h3 {{
             color: #001F4D;
             font-weight: 700;
         }}
 
-        /* === BUTTONS === */
+        /* ==== BUTTONS ==== */
         div.stButton > button:first-child {{
             background-color: #001F4D;
             color: white;
-            border-radius: 8px;
             border: none;
+            border-radius: 8px;
             padding: 0.6rem 1.2rem;
             font-weight: 600;
-            transition: all 0.3s ease;
+            transition: 0.3s ease;
         }}
         div.stButton > button:first-child:hover {{
-            background-color: #003366;
-            transform: scale(1.02);
+            background-color: #002b6b;
+            transform: scale(1.03);
         }}
 
-        /* === TABLE STYLING === */
+        /* ==== TABLES ==== */
         .stDataFrame {{
             border-radius: 10px;
             overflow: hidden;
+        }}
+
+        /* ==== FOOTER ==== */
+        footer {{
+            visibility: hidden;
+        }}
+        .reportview-container .main footer {{
+            visibility: hidden;
         }}
         </style>
         """,
         unsafe_allow_html=True
     )
 
-# Call this function with the correct relative path:
-set_background("saniikos.jpg")  # Make sure the image is in the same folder as app.py
+# Call with correct path (if in same folder)
+set_background("saniikos.jpg")
 
-# ======================================
 # CONFIGURATION
 # ======================================
 st.set_page_config(page_title="🦖 ReconRaptor — Vendor Reconciliation", layout="wide")
