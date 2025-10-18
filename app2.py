@@ -469,7 +469,8 @@ if uploaded_erp and uploaded_vendor:
 import io
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
-from openpyxl.utils.dataframe import dataframe_to_rows, get_column_letter
+from openpyxl.utils.dataframe import dataframe_to_rows
+from openpyxl.utils import get_column_letter
 
 # ============================================================
 # REPORTING & DOWNLOAD SECTION
