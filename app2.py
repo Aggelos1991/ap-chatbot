@@ -26,9 +26,9 @@ html("""
     canvas {
       display: block;
       width: 100%;
-      height: 450px;
+      height: 420px;
       border-radius: 16px;
-      box-shadow: 0 0 15px rgba(0,0,0,0.2);
+      box-shadow: 0 0 15px rgba(0,0,0,0.15);
     }
   </style>
 
@@ -41,46 +41,42 @@ html("""
     const canvas = document.getElementById('resort');
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     renderer.setPixelRatio(window.devicePixelRatio);
-    renderer.setSize(window.innerWidth, 450);
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0xcfe8fc); // soft sky blue
+    renderer.setSize(window.innerWidth, 420);
 
-    const camera = new THREE.PerspectiveCamera(55, window.innerWidth / 450, 0.1, 100);
-    camera.position.set(5, 3, 6);
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xcfe8fc);
+
+    const camera = new THREE.PerspectiveCamera(55, window.innerWidth / 420, 0.1, 100);
+    camera.position.set(5, 3, 7);
 
     const controls = new THREE.OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
-    controls.dampingFactor = 0.05;
-    controls.target.set(0, 1, 0);
 
     // LIGHTS
-    const hemiLight = new THREE.HemisphereLight(0xffffff, 0x888877, 1.1);
-    hemiLight.position.set(0, 20, 0);
-    scene.add(hemiLight);
-
-    const sunLight = new THREE.DirectionalLight(0xffffff, 0.8);
-    sunLight.position.set(5, 10, 5);
-    scene.add(sunLight);
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x777777, 1.1);
+    scene.add(hemi);
+    const sun = new THREE.DirectionalLight(0xffffff, 0.9);
+    sun.position.set(5, 10, 5);
+    scene.add(sun);
 
     // SAND
-    const sandGeo = new THREE.PlaneGeometry(40, 40);
+    const sandGeo = new THREE.PlaneGeometry(30, 30);
     const sandMat = new THREE.MeshStandardMaterial({ color: 0xf3e5ab });
     const sand = new THREE.Mesh(sandGeo, sandMat);
     sand.rotation.x = -Math.PI / 2;
+    sand.position.y = -0.1;
     scene.add(sand);
 
-    // SEA
-    const seaGeo = new THREE.PlaneGeometry(20, 20, 32, 32);
-    const seaMat = new THREE.MeshPhongMaterial({
-      color: 0x4fc3f7, transparent: true, opacity: 0.9, shininess: 100
-    });
+    // SEA (modern BufferGeometry)
+    const seaGeo = new THREE.PlaneGeometry(15, 15, 40, 40);
+    const seaMat = new THREE.MeshPhongMaterial({ color: 0x4fc3f7, transparent: true, opacity: 0.85 });
     const sea = new THREE.Mesh(seaGeo, seaMat);
     sea.rotation.x = -Math.PI / 2;
-    sea.position.z = -10;
+    sea.position.z = -7;
     scene.add(sea);
 
-    // PALM TREES
-    function createPalm(x, z) {
+    // PALMS
+    function makePalm(x, z) {
       const trunkGeo = new THREE.CylinderGeometry(0.1, 0.15, 2, 8);
       const trunkMat = new THREE.MeshStandardMaterial({ color: 0x8b5a2b });
       const trunk = new THREE.Mesh(trunkGeo, trunkMat);
@@ -99,37 +95,43 @@ html("""
       scene.add(trunk);
       return leaves;
     }
+    const palms = [makePalm(2, 2), makePalm(-3, -1), makePalm(0, 3)];
 
-    const palms = [createPalm(2, 2), createPalm(-2, -1), createPalm(0, 3)];
-
-    // ANIMATION
+    // ANIMATION LOOP
     const clock = new THREE.Clock();
+    const pos = sea.geometry.attributes.position;
+    const w = 41, h = 41;
+
     function animate() {
       requestAnimationFrame(animate);
       const t = clock.getElapsedTime();
 
-      // ocean waves
-      sea.geometry.vertices.forEach((v, i) => { v.z = Math.sin(i / 2 + t) * 0.08; });
-      sea.geometry.verticesNeedUpdate = true;
+      // Animate water
+      for (let i = 0; i < pos.count; i++) {
+        const x = i % w, y = Math.floor(i / w);
+        pos.setZ(i, Math.sin(x * 0.3 + t) * 0.08 + Math.cos(y * 0.3 + t * 0.7) * 0.08);
+      }
+      pos.needsUpdate = true;
 
-      // palm swaying
-      palms.forEach((p, i) => { p.rotation.z = Math.sin(t + i) * 0.15; });
+      // Animate palms
+      palms.forEach((p, i) => {
+        p.rotation.z = Math.sin(t + i) * 0.15;
+      });
 
       controls.update();
       renderer.render(scene, camera);
     }
     animate();
 
-    // Resize handling
     window.addEventListener('resize', () => {
-      renderer.setSize(window.innerWidth, 450);
-      camera.aspect = window.innerWidth / 450;
+      renderer.setSize(window.innerWidth, 420);
+      camera.aspect = window.innerWidth / 420;
       camera.updateProjectionMatrix();
     });
   </script>
 </body>
 </html>
-""", height=480)
+""", height=440)
 
 # ======================================
 # HELPERS
