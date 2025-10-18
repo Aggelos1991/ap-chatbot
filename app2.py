@@ -1,7 +1,48 @@
 import streamlit as st
 import pandas as pd
 import re
+import streamlit as st
+import base64
 
+# ======================================
+# LOAD AND ENCODE LOGO
+# ======================================
+def load_logo(path):
+    with open(path, "rb") as f:
+        data = f.read()
+    return base64.b64encode(data).decode()
+
+logo_base64 = load_logo("saniikos.jpg")
+
+# ======================================
+# DISPLAY LOGO WITH 3D EFFECT
+# ======================================
+st.markdown(f"""
+    <style>
+    .logo-container {{
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        margin-top: 10px;
+        margin-bottom: 30px;
+        perspective: 1000px;
+    }}
+    .logo {{
+        width: 260px;
+        transform: rotateY(10deg);
+        transition: transform 0.8s ease, box-shadow 0.8s ease;
+        box-shadow: 0 6px 25px rgba(0, 0, 0, 0.2);
+        border-radius: 12px;
+    }}
+    .logo:hover {{
+        transform: rotateY(0deg) scale(1.05);
+        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.3);
+    }}
+    </style>
+    <div class="logo-container">
+        <img src="data:image/jpeg;base64,{logo_base64}" class="logo" alt="Sani Ikos Group Logo">
+    </div>
+""", unsafe_allow_html=True)
 # ======================================
 # CONFIGURATION
 # ======================================
