@@ -8,8 +8,7 @@ import re
 st.set_page_config(page_title="🦖 ReconRaptor — Vendor Reconciliation", layout="wide")
 st.title("🦖 ReconRaptor — Vendor Invoice Reconciliation")
 
-import streamlit as st
-from pythreejs import *
+
 
 # Camera and renderer
 camera = PerspectiveCamera(position=[3, 3, 3], up=[0, 0, 1], children=[
