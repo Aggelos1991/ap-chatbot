@@ -1,27 +1,7 @@
 import streamlit as st
 import pandas as pd
 import re
-import streamlit as st
-import pyvista as pv
-from stpyvista import stpyvista
 
-st.title("🦖 ReconRaptor — Vendor Invoice Reconciliation")
-
-# --- Create a simple 3D plane with your logo texture ---
-plotter = pv.Plotter(window_size=[600, 400])
-
-plane = pv.Plane(i_size=1.5, j_size=0.7)
-# Load your logo image (transparent PNG)
-texture = pv.read_texture("sani_ikos_logo.png")
-
-plotter.add_mesh(plane, texture=texture)
-plotter.set_background("black")
-plotter.camera_position = "xy"
-plotter.show_axes = False
-
-stpyvista(plotter, key="saniikos3d", rotation_widget=True)
-
-# ======================================
 # CONFIGURATION
 # ======================================
 st.set_page_config(page_title="🦖 ReconRaptor — Vendor Reconciliation", layout="wide")
