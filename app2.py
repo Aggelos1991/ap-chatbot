@@ -3,6 +3,103 @@ import pandas as pd
 import re
 from streamlit.components.v1 import html
 
+
+with st.container():
+    st.subheader("🌴 Resort Interactive 3D Visualization")
+
+    html("""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="utf-8">
+      <style>
+        body { margin: 0; overflow: hidden; background: #0d1117; }
+        canvas { display: block; width: 100%; height: 100vh; }
+      </style>
+      <script src="https://unpkg.com/three@0.158.0/build/three.min.js"></script>
+      <script src="https://unpkg.com/three@0.158.0/examples/js/controls/OrbitControls.js"></script>
+    </head>
+    <body>
+      <canvas id="resort"></canvas>
+      <script>
+        const canvas = document.getElementById('resort');
+        const renderer = new THREE.WebGLRenderer({canvas, antialias:true});
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x0d1117);
+
+        const camera = new THREE.PerspectiveCamera(55, window.innerWidth/window.innerHeight, 0.1, 100);
+        camera.position.set(5,3,7);
+
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+
+        const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 1.2);
+        hemiLight.position.set(0, 20, 0);
+        scene.add(hemiLight);
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        dirLight.position.set(5,10,5);
+        scene.add(dirLight);
+
+        // sand
+        const sand = new THREE.Mesh(
+          new THREE.PlaneGeometry(50,50),
+          new THREE.MeshStandardMaterial({color:0xd2b48c})
+        );
+        sand.rotation.x = -Math.PI/2;
+        scene.add(sand);
+
+        // simple blue sea plane
+        const seaGeo = new THREE.PlaneGeometry(20,20,30,30);
+        const seaMat = new THREE.MeshPhongMaterial({color:0x1976d2, transparent:true, opacity:0.85, shininess:100});
+        const sea = new THREE.Mesh(seaGeo, seaMat);
+        sea.rotation.x = -Math.PI/2;
+        sea.position.z = -10;
+        scene.add(sea);
+
+        // palm trees
+        function palm(x,z){
+          const trunk = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.1,0.15,2,8),
+            new THREE.MeshStandardMaterial({color:0x8b5a2b})
+          );
+          trunk.position.set(x,1,z);
+          scene.add(trunk);
+          const group = new THREE.Group();
+          const leafMat = new THREE.MeshStandardMaterial({color:0x2e8b57});
+          for(let i=0;i<6;i++){
+            const leaf = new THREE.Mesh(new THREE.BoxGeometry(0.1,0.02,1.2), leafMat);
+            leaf.position.y = 2;
+            leaf.rotation.y = i/6*Math.PI*2;
+            group.add(leaf);
+          }
+          trunk.add(group);
+          return group;
+        }
+        const palms=[palm(2,2),palm(-3,-1),palm(0,4)];
+
+        const clock=new THREE.Clock();
+        function animate(){
+          requestAnimationFrame(animate);
+          const t=clock.getElapsedTime();
+          sea.geometry.vertices.forEach((v,i)=>{v.z=Math.sin(i/2+t)*0.1});
+          sea.geometry.verticesNeedUpdate=true;
+          palms.forEach((p,i)=>p.rotation.z=Math.sin(t+i)*0.2);
+          controls.update();
+          renderer.setSize(window.innerWidth, window.innerHeight*0.6);
+          renderer.render(scene,camera);
+        }
+        animate();
+
+        window.addEventListener('resize',()=>{
+          camera.aspect=window.innerWidth/window.innerHeight;
+          camera.updateProjectionMatrix();
+          renderer.setSize(window.innerWidth, window.innerHeight*0.6);
+        });
+      </script>
+    </body>
+    </html>
+    """, height=600)
+
 # ======================================
 # CONFIGURATION
 # ======================================
