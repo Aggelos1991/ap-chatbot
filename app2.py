@@ -1,7 +1,36 @@
 import streamlit as st
 import pandas as pd
 import re
+import base64
 
+# === BACKGROUND ===
+def set_background(image_file):
+    with open(image_file, "rb") as file:
+        encoded = base64.b64encode(file.read()).decode()
+    st.markdown(
+        f"""
+        <style>
+        .stApp {{
+            background-image: url("data:image/jpg;base64,{encoded}");
+            background-size: cover;
+            background-position: center;
+            background-attachment: fixed;
+        }}
+        div[data-testid="stSidebar"] {{
+            background-color: rgba(255, 255, 255, 0.8);
+        }}
+        .block-container {{
+            background-color: rgba(255, 255, 255, 0.88);
+            border-radius: 18px;
+            padding: 2rem;
+        }}
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+
+# Call it right after page config
+set_background("/mnt/data/saniikos.jpg")
 # ======================================
 # CONFIGURATION
 # ======================================
