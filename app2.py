@@ -1,7 +1,66 @@
 import streamlit as st
 import pandas as pd
 import re
+import streamlit.components.v1 as components
 
+
+
+# ======================================
+# 3D LOGO IN TOP LEFT CORNER
+# ======================================
+components.html(f"""
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  body {{
+    margin: 0;
+    overflow: hidden;
+  }}
+  #logoCanvas {{
+    position: fixed;
+    top: 10px;
+    left: 10px;
+    width: 120px;
+    height: 120px;
+    z-index: 9999;
+  }}
+</style>
+</head>
+<body>
+<canvas id="logoCanvas"></canvas>
+<script type="module">
+  import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js';
+  import {{ GLTFLoader }} from 'https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/loaders/GLTFLoader.js';
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
+  const renderer = new THREE.WebGLRenderer({{canvas: document.getElementById('logoCanvas'), alpha: true}});
+  renderer.setSize(120, 120);
+  camera.position.z = 2;
+
+  const light = new THREE.DirectionalLight(0xffffff, 1);
+  light.position.set(2, 2, 5);
+  scene.add(light);
+
+  const loader = new GLTFLoader();
+  loader.load('Untitled.glb', function(gltf) {{
+      const model = gltf.scene;
+      model.scale.set(1, 1, 1);
+      scene.add(model);
+
+      function animate() {{
+        requestAnimationFrame(animate);
+        model.rotation.y += 0.01;
+        renderer.render(scene, camera);
+      }}
+      animate();
+  }});
+</script>
+</body>
+</html>
+""", height=140)
 
 # CONFIGURATION
 # ======================================
