@@ -76,30 +76,6 @@ loader.load('https://raw.githubusercontent.com/Aggelos1991/ap-chatbot/main/asset
 """, height=200)
 
 
-# ======================================
-# HELPERS
-# ======================================
-def normalize_number(v):
-    """Convert numeric strings like '1.234,56' or '1,234.56' safely to float."""
-    if v is None or str(v).strip() == "":
-        return 0.0
-    s = str(v).strip()
-    s = re.sub(r"[^\d,.\-]", "", s)
-    if s.count(",") == 1 and s.count(".") == 1:
-        if s.find(",") > s.find("."):
-            s = s.replace(".", "").replace(",", ".")
-        else:
-            s = s.replace(",", "")
-    elif s.count(",") == 1:
-        s = s.replace(",", ".")
-    elif s.count(".") > 1:
-        s = s.replace(".", "", s.count(".") - 1)
-    try:
-        return float(s)
-    except:
-        return 0.0
-
-
 def normalize_columns(df, tag):
     """Map multilingual headers to unified names."""
     mapping = {
