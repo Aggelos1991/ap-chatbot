@@ -2,10 +2,62 @@ import streamlit as st
 import pandas as pd
 import re
 
+https://raw.githubusercontent.com/Aggelos1991/ap-chatbot/main/assets/images.png
+# ---- FIXED SINGLE LOGO + WHITE TEXT ----
+if "logo_loaded" not in st.session_state:
+    st.markdown("""
+    <style>
+    .logo-container {
+      position: fixed;
+      top: 20px;
+      left: 20px;
+      width: 160px;
+      animation: float 4s ease-in-out infinite;
+      z-index: 9999;
+    }
+    @keyframes float {
+      0%, 100% { transform: translateY(0px); }
+      50% { transform: translateY(-6px); }
+    }
+    h1, h2, h3, h4, h5, h6, p, span {
+      color: #ffffff !important;
+    }
+    </style>
 
-st.set_page_config(page_title="🦖 ReconRaptor", layout="wide")
+    <div class="logo-container">
+      <img src="https://raw.githubusercontent.com/Aggelos1991/ap-chatbot/main/assets/images.png" width="160">
+    </div>
+    """, unsafe_allow_html=True)
+    st.session_state["logo_loaded"] = True
+
+# ======================================
+# CONFIGURATION
+# ======================================
+st.set_page_config(page_title="🦖 ReconRaptor — Vendor Reconciliation", layout="wide")
 st.title("🦖 ReconRaptor — Vendor Invoice Reconciliation")
 
+# ======================================
+# HELPERS
+# ======================================
+def normalize_number(v):
+    """Convert numeric strings like '1.234,56' or '1,234.56' safely to float."""
+    if v is None or str(v).strip() == "":
+        return 0.0
+    s = str(v).strip()
+    s = re.sub(r"[^\d,.\-]", "", s)
+    if s.count(",") == 1 and s.count(".") == 1:
+        if s.find(",") > s.find("."):
+            s = s.replace(".", "").replace(",", ".")
+        else:
+            s = s.replace(",", "")
+    elif s.count(",") == 1:
+        s = s.replace(",", ".")
+    elif s.count(".") > 1:
+        s = s.replace(".", "", s.count(".") - 1)
+    try:
+        return float(s)
+    except:
+        return 0.0
 
 
 def normalize_columns(df, tag):
@@ -442,122 +494,3 @@ if uploaded_erp and uploaded_vendor:
         st.markdown(f"**Difference Between ERP and Vendor Payments:** {diff_total:,.2f} EUR")
     else:
         st.info("No matching payments found.")
-import io
-from openpyxl import Workbook
-from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
-from openpyxl.utils.dataframe import dataframe_to_rows
-from openpyxl.utils import get_column_letter
-
-# ============================================================
-# REPORTING & DOWNLOAD SECTION
-# ============================================================
-if (
-    "matched" in locals()
-    and "erp_missing" in locals()
-    and "ven_missing" in locals()
-    and (not matched.empty or not erp_missing.empty or not ven_missing.empty)
-):
-    st.subheader("📤 Export Reconciliation Report")
-
-    # -------- helpers --------
-    def style_header(row_cells, bg="4F81BD", fg="FFFFFF", center=True, bold=True):
-        fill = PatternFill(start_color=bg, end_color=bg, fill_type="solid")
-        for c in row_cells:
-            c.fill = fill
-            c.font = Font(color=fg, bold=bold)
-            if center:
-                c.alignment = Alignment(horizontal="center", vertical="center")
-
-    def set_borders(ws):
-        thin = Side(border_style="thin", color="D0D0D0")
-        for r in ws.iter_rows():
-            for c in r:
-                c.border = Border(top=thin, bottom=thin, left=thin, right=thin)
-
-    def auto_width(ws, min_width=10, pad=2):
-        # Χωρίς χρήση column_letter από κελιά (αντέχει σε merged)
-        for i, col in enumerate(ws.columns, start=1):
-            max_len = 0
-            for cell in col:
-                v = "" if cell.value is None else str(cell.value)
-                if len(v) > max_len:
-                    max_len = len(v)
-            ws.column_dimensions[get_column_letter(i)].width = max(min_width, max_len + pad)
-
-    # -------- workbook --------
-    wb = Workbook()
-
-    # === Sheet 1: Matched & Differences ===
-    ws1 = wb.active
-    ws1.title = "Matched & Differences"
-
-    headers1 = ["ERP Invoice", "Vendor Invoice", "ERP Amount", "Vendor Amount", "Difference", "Status"]
-    ws1.append(headers1)
-    if not matched.empty:
-        for r in dataframe_to_rows(matched, index=False, header=False):
-            ws1.append(r)
-
-    style_header(ws1[1], bg="4F81BD", fg="FFFFFF", center=True, bold=True)
-
-    # format numbers (cols 3..5)
-    for row in ws1.iter_rows(min_row=2, min_col=3, max_col=5):
-        for c in row:
-            c.number_format = "#,##0.00"
-            c.alignment = Alignment(horizontal="right")
-
-    set_borders(ws1)
-    auto_width(ws1)
-
-    # === Sheet 2: Missing (two tables) ===
-    ws2 = wb.create_sheet("Missing Invoices")
-
-    # Block A — Missing in ERP
-    ws2.append(["Missing in ERP (found in Vendor)"])
-    style_header(ws2[1], bg="C00000")
-    ws2.append(["Invoice", "Amount"])
-    style_header(ws2[2], bg="ED7D31")
-    if not erp_missing.empty:
-        for r in dataframe_to_rows(erp_missing, index=False, header=False):
-            ws2.append(r)
-        # number format
-        for c in ws2.iter_cols(min_row=3, min_col=2, max_col=2):
-            for cell in c:
-                cell.number_format = "#,##0.00"
-                cell.alignment = Alignment(horizontal="right")
-    else:
-        ws2.append(["—", 0])
-
-    # empty row as spacer
-    ws2.append([])
-
-    # Block B — Missing in Vendor
-    start = ws2.max_row + 1
-    ws2.append(["Missing in Vendor (found in ERP)"])
-    style_header(ws2[start], bg="C00000")
-    ws2.append(["Invoice", "Amount"])
-    style_header(ws2[start + 1], bg="ED7D31")
-    if not ven_missing.empty:
-        for r in dataframe_to_rows(ven_missing, index=False, header=False):
-            ws2.append(r)
-        for c in ws2.iter_cols(min_row=start + 2, min_col=2, max_col=2):
-            for cell in c:
-                cell.number_format = "#,##0.00"
-                cell.alignment = Alignment(horizontal="right")
-    else:
-        ws2.append(["—", 0])
-
-    set_borders(ws2)
-    auto_width(ws2)
-
-    # -------- save & download --------
-    buf = io.BytesIO()
-    wb.save(buf)
-    buf.seek(0)
-
-    st.download_button(
-        label="⬇️ Download Reconciliation Report (Excel)",
-        data=buf,
-        file_name="ReconRaptor_Reconciliation_Report.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True,
-    )
