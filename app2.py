@@ -32,8 +32,8 @@ components.html(f"""
     position: fixed;
     top: 10px;
     left: 10px;
-    width: 120px;
-    height: 120px;
+    width: 140px;
+    height: 140px;
     z-index: 9999;
   }}
 </style>
@@ -46,65 +46,73 @@ components.html(f"""
 
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
-  const renderer = new THREE.WebGLRenderer({{canvas: document.getElementById('logoCanvas'), alpha: true}});
-  renderer.setSize(120, 120);
+  const renderer = new THREE.WebGLRenderer({{canvas: document.getElementById('logoCanvas'), alpha: true, antialias: true}});
+  renderer.setSize(140, 140);
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  camera.position.z = 3;
 
-  // Pull camera back a bit so large models are visible
-  camera.position.z = 3.5;
+  // Lights: stronger and balanced
+  const ambient = new THREE.AmbientLight(0xffffff, 2);
+  const dir1 = new THREE.DirectionalLight(0x99ccff, 2);
+  const dir2 = new THREE.DirectionalLight(0xffffff, 1.5);
+  dir1.position.set(2,2,4);
+  dir2.position.set(-2,-2,3);
+  scene.add(ambient, dir1, dir2);
 
-  // Lights
-  const ambientLight = new THREE.AmbientLight(0xffffff, 1.3);
-  const blueLight = new THREE.DirectionalLight(0x5dade2, 1.8);
-  blueLight.position.set(3, 3, 4);
-  scene.add(ambientLight, blueLight);
-
-  // Convert base64 → blob for loader
+  // Load base64 GLB
   const loader = new GLTFLoader();
-  const modelData = atob("{model_base64}");
-  const arrayBuffer = new ArrayBuffer(modelData.length);
+  const binary = atob("{model_base64}");
+  const len = binary.length;
+  const arrayBuffer = new ArrayBuffer(len);
   const view = new Uint8Array(arrayBuffer);
-  for (let i = 0; i < modelData.length; i++) {{
-    view[i] = modelData.charCodeAt(i);
-  }}
-  const blob = new Blob([arrayBuffer], {{ type: 'model/gltf-binary' }});
+  for (let i=0; i<len; i++) view[i] = binary.charCodeAt(i);
+  const blob = new Blob([arrayBuffer], {{type: 'model/gltf-binary'}});
   const url = URL.createObjectURL(blob);
 
-  loader.load(url, function(gltf) {{
+  loader.load(url, gltf => {{
     const model = gltf.scene;
+    scene.add(model);
 
-    // --- Auto-fit: scale & center so it always shows ---
+    // Auto center + scale
     const box = new THREE.Box3().setFromObject(model);
-    const size = new THREE.Vector3(); box.getSize(size);
-    const maxDim = Math.max(size.x, size.y, size.z) || 1;
-    const scale = 1 / maxDim;              // normalize to unit cube
-    model.scale.set(scale, scale, scale);
+    const size = new THREE.Vector3();
+    box.getSize(size);
+    const center = new THREE.Vector3();
+    box.getCenter(center);
+    model.position.sub(center);
 
-    const center = new THREE.Vector3(); box.getCenter(center);
-    model.position.sub(center);            // center at origin
+    const maxDim = Math.max(size.x, size.y, size.z);
+    const scale = 1.2 / maxDim;
+    model.scale.setScalar(scale);
 
-    // Subtle metallic feel
+    // Slight metallic material
     model.traverse(obj => {{
-      if (obj.isMesh && obj.material) {{
-        obj.material.metalness = 0.8;
-        obj.material.roughness = 0.25;
+      if (obj.isMesh) {{
+        obj.material.metalness = 0.7;
+        obj.material.roughness = 0.3;
+        obj.material.color.set(0x9dc9ff);
       }}
     }});
 
-    scene.add(model);
+    // Camera auto fit
+    const fov = camera.fov * (Math.PI / 180);
+    const dist = maxDim / (2 * Math.tan(fov / 2));
+    camera.position.z = dist * 1.8;
 
     // Animation loop
     function animate() {{
       requestAnimationFrame(animate);
-      model.rotation.y += 0.008;  // slow smooth rotation
+      model.rotation.y += 0.01;
       renderer.render(scene, camera);
     }}
     animate();
-  }});
+
+    console.log("✅ sani.glb loaded successfully");
+  }}, undefined, err => console.error("❌ GLB load error", err));
 </script>
 </body>
 </html>
-""", height=140)
-
+""", height=160)
 
 
 # ======================================
