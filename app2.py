@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import re
 
+st.image("https://raw.githubusercontent.com/Aggelos1991/ap-chatbot/main/assets/image.png", width=160)
+
 # ---- FIXED SINGLE LOGO + WHITE TEXT ----
 if "logo_loaded" not in st.session_state:
     st.markdown("""
@@ -32,7 +34,7 @@ if "logo_loaded" not in st.session_state:
 # ======================================
 # CONFIGURATION
 # ======================================
-st.image("https://raw.githubusercontent.com/Aggelos1991/ap-chatbot/main/assets/image.png", width=160)
+
 st.set_page_config(page_title="🦖 ReconRaptor — Vendor Reconciliation", layout="wide")
 st.title("🦖 ReconRaptor — Vendor Invoice Reconciliation")
 
