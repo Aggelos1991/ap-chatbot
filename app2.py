@@ -37,13 +37,15 @@ components.html(f"""
 </head>
 <body>
 <canvas id="logoCanvas"></canvas>
-<script type="module">
-  import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js';
-  import {{ GLTFLoader }} from 'https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/loaders/GLTFLoader.js';
 
+<!-- ✅ Use non-module builds (works inside Streamlit sandbox) -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.161.0/examples/js/loaders/GLTFLoader.js"></script>
+
+<script>
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
-  const renderer = new THREE.WebGLRenderer({{canvas: document.getElementById('logoCanvas'), alpha: true}});
+  const renderer = new THREE.WebGLRenderer({canvas: document.getElementById('logoCanvas'), alpha: true});
   renderer.setSize(130, 130);
   camera.position.z = 3.5;
 
@@ -54,7 +56,7 @@ components.html(f"""
   fillLight.position.set(-3, -2, -4);
   scene.add(ambient, keyLight, fillLight);
 
-  const loader = new GLTFLoader();
+  const loader = new THREE.GLTFLoader();
   const modelData = atob("{model_base64}");
   const arrayBuffer = new ArrayBuffer(modelData.length);
   const view = new Uint8Array(arrayBuffer);
@@ -91,8 +93,9 @@ components.html(f"""
       renderer.render(scene, camera);
     }}
     animate();
-
-  }}, undefined, function (err) {{
+  }},
+  undefined,
+  function (err) {{
     console.error("❌ Failed to load sani.glb:", err);
   }});
 </script>
