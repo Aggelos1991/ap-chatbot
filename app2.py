@@ -3,36 +3,10 @@ import pandas as pd
 import re
 
 
-st.image("https://raw.githubusercontent.com/Aggelos1991/ap-chatbot/main/assets/Images.png", width=160)
 st.set_page_config(page_title="🦖 ReconRaptor", layout="wide")
 st.title("🦖 ReconRaptor — Vendor Invoice Reconciliation")
 
-# ---- FIXED SINGLE LOGO + WHITE TEXT ----
-if "logo_loaded" not in st.session_state:
-    st.markdown("""
-    <style>
-    .logo-container {
-      position: fixed;
-      top: 20px;
-      left: 20px;
-      width: 160px;
-      animation: float 4s ease-in-out infinite;
-      z-index: 9999;
-    }
-    @keyframes float {
-      0%, 100% { transform: translateY(0px); }
-      50% { transform: translateY(-6px); }
-    }
-    h1, h2, h3, h4, h5, h6, p, span {
-      color: #ffffff !important;
-    }
-    </style>
 
-    <div class="logo-container">
-      <img src="https://raw.githubusercontent.com/Aggelos1991/ap-chatbot/main/assets/images.png" width="160">
-    </div>
-    """, unsafe_allow_html=True)
-    st.session_state["logo_loaded"] = True
 
 def normalize_columns(df, tag):
     """Map multilingual headers to unified names."""
