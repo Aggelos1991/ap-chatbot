@@ -1,10 +1,15 @@
 import streamlit as st
 import pandas as pd
 import re
+
+
+
 import streamlit.components.v1 as components
 import base64
 
-
+# MUST be first Streamlit call
+st.set_page_config(page_title="🦖 ReconRaptor — Vendor Reconciliation", layout="wide")
+st.title("🦖 ReconRaptor — Vendor Invoice Reconciliation")
 
 # ======================================
 # 3D LOGO — Top Left Corner (sani.glb)
@@ -43,7 +48,9 @@ components.html(f"""
   const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
   const renderer = new THREE.WebGLRenderer({{canvas: document.getElementById('logoCanvas'), alpha: true}});
   renderer.setSize(120, 120);
-  camera.position.z = 2;
+
+  // Pull camera back a bit so large models are visible
+  camera.position.z = 3.5;
 
   // Lights
   const ambientLight = new THREE.AmbientLight(0xffffff, 1.3);
@@ -64,13 +71,25 @@ components.html(f"""
 
   loader.load(url, function(gltf) {{
     const model = gltf.scene;
-    model.scale.set(1, 1, 1);
+
+    // --- Auto-fit: scale & center so it always shows ---
+    const box = new THREE.Box3().setFromObject(model);
+    const size = new THREE.Vector3(); box.getSize(size);
+    const maxDim = Math.max(size.x, size.y, size.z) || 1;
+    const scale = 1 / maxDim;              // normalize to unit cube
+    model.scale.set(scale, scale, scale);
+
+    const center = new THREE.Vector3(); box.getCenter(center);
+    model.position.sub(center);            // center at origin
+
+    // Subtle metallic feel
     model.traverse(obj => {{
-      if (obj.isMesh) {{
+      if (obj.isMesh && obj.material) {{
         obj.material.metalness = 0.8;
         obj.material.roughness = 0.25;
       }}
     }});
+
     scene.add(model);
 
     // Animation loop
@@ -86,10 +105,7 @@ components.html(f"""
 </html>
 """, height=140)
 
-# CONFIGURATION
-# ======================================
-st.set_page_config(page_title="🦖 ReconRaptor — Vendor Reconciliation", layout="wide")
-st.title("🦖 ReconRaptor — Vendor Invoice Reconciliation")
+
 
 # ======================================
 # HELPERS
