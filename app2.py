@@ -1,7 +1,105 @@
 import streamlit as st
 import pandas as pd
 import re
+import streamlit.components.v1 as components
+import base64, os
 
+# ======================================
+# 3D LOGO — Top Left Corner
+# ======================================
+if os.path.exists("assets/sani.glb"):
+    with open("assets/sani.glb", "rb") as f:
+        model_bytes = f.read()
+        model_base64 = base64.b64encode(model_bytes).decode()
+else:
+    model_base64 = ""
+    st.warning("⚠️ 3D logo file not found (assets/sani.glb)")
+
+components.html(f"""
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  body {{
+    margin: 0;
+    overflow: hidden;
+  }}
+  #logoCanvas {{
+    position: fixed;
+    top: 12px;
+    left: 12px;
+    width: 130px;
+    height: 130px;
+    z-index: 9999;
+  }}
+</style>
+</head>
+<body>
+<canvas id="logoCanvas"></canvas>
+<script type="module">
+  import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js';
+  import {{ GLTFLoader }} from 'https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/loaders/GLTFLoader.js';
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
+  const renderer = new THREE.WebGLRenderer({{canvas: document.getElementById('logoCanvas'), alpha: true}});
+  renderer.setSize(130, 130);
+  camera.position.z = 3.5;
+
+  // === LIGHTS (soft silver-blue) ===
+  const ambient = new THREE.AmbientLight(0xffffff, 1.0);
+  const keyLight = new THREE.DirectionalLight(0xaec6cf, 1.4);
+  keyLight.position.set(3, 2, 5);
+  const fillLight = new THREE.DirectionalLight(0xb0c4de, 0.8);
+  fillLight.position.set(-3, -2, -4);
+  scene.add(ambient, keyLight, fillLight);
+
+  // === LOAD MODEL ===
+  const loader = new GLTFLoader();
+  const modelData = atob("{model_base64}");
+  const arrayBuffer = new ArrayBuffer(modelData.length);
+  const view = new Uint8Array(arrayBuffer);
+  for (let i = 0; i < modelData.length; i++) {{
+    view[i] = modelData.charCodeAt(i);
+  }}
+  const blob = new Blob([arrayBuffer], {{ type: 'model/gltf-binary' }});
+  const url = URL.createObjectURL(blob);
+
+  loader.load(url, function(gltf) {{
+    const model = gltf.scene;
+
+    // Auto-scale and center
+    const box = new THREE.Box3().setFromObject(model);
+    const size = new THREE.Vector3(); box.getSize(size);
+    const center = new THREE.Vector3(); box.getCenter(center);
+    const scale = 1.5 / Math.max(size.x, size.y, size.z);
+    model.scale.setScalar(scale);
+    model.position.sub(center.multiplyScalar(scale));
+
+    // Metallic material
+    model.traverse(obj => {{
+      if (obj.isMesh && obj.material) {{
+        obj.material.metalness = 0.9;
+        obj.material.roughness = 0.25;
+        obj.material.color.set(0xcfd8dc); // light silver
+      }}
+    }});
+
+    scene.add(model);
+
+    // === ANIMATION ===
+    function animate() {{
+      requestAnimationFrame(animate);
+      model.rotation.y += 0.006;
+      renderer.render(scene, camera);
+    }}
+    animate();
+  }});
+</script>
+</body>
+</html>
+""", height=140)
 
 st.set_page_config(page_title="🦖 ReconRaptor — Vendor Reconciliation", layout="wide")
 st.title("🦖 ReconRaptor — Vendor Invoice Reconciliation")
