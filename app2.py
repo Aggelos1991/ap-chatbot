@@ -4,8 +4,13 @@ import re
 import streamlit.components.v1 as components
 import base64, os
 
+st.set_page_config(page_title="🦖 ReconRaptor — Vendor Reconciliation", layout="wide")
+st.title("🦖 ReconRaptor — Vendor Invoice Reconciliation")
+
+
+
 # ======================================
-# 3D LOGO — Top Left Corner
+# 3D LOGO — Top Left Corner (final version)
 # ======================================
 if os.path.exists("assets/sani.glb"):
     with open("assets/sani.glb", "rb") as f:
@@ -15,7 +20,8 @@ else:
     model_base64 = ""
     st.warning("⚠️ 3D logo file not found (assets/sani.glb)")
 
-components.html(f"""
+# ---- embed HTML/JS safely ----
+html_code = f"""
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -38,14 +44,15 @@ components.html(f"""
 <body>
 <canvas id="logoCanvas"></canvas>
 
-<!-- ✅ Use non-module builds (works inside Streamlit sandbox) -->
+<!-- ✅ Classic (non-module) builds that Streamlit accepts -->
 <script src="https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.161.0/examples/js/loaders/GLTFLoader.js"></script>
 
 <script>
+try {{
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
-  const renderer = new THREE.WebGLRenderer({canvas: document.getElementById('logoCanvas'), alpha: true});
+  const renderer = new THREE.WebGLRenderer({{canvas: document.getElementById('logoCanvas'), alpha: true}});
   renderer.setSize(130, 130);
   camera.position.z = 3.5;
 
@@ -98,13 +105,15 @@ components.html(f"""
   function (err) {{
     console.error("❌ Failed to load sani.glb:", err);
   }});
+}} catch (e) {{
+  console.error("❌ Script error:", e);
+}}
 </script>
 </body>
 </html>
-""", height=140)
-st.set_page_config(page_title="🦖 ReconRaptor — Vendor Reconciliation", layout="wide")
-st.title("🦖 ReconRaptor — Vendor Invoice Reconciliation")
+"""
 
+components.html(html_code, height=140)
 
 # ======================================
 # HELPERS
