@@ -47,15 +47,13 @@ components.html(f"""
   renderer.setSize(130, 130);
   camera.position.z = 3.5;
 
-  // === LIGHTS (soft silver-blue) ===
-  const ambient = new THREE.AmbientLight(0xffffff, 1.0);
-  const keyLight = new THREE.DirectionalLight(0xaec6cf, 1.4);
+  const ambient = new THREE.AmbientLight(0xffffff, 1.1);
+  const keyLight = new THREE.DirectionalLight(0xaec6cf, 1.3);
   keyLight.position.set(3, 2, 5);
   const fillLight = new THREE.DirectionalLight(0xb0c4de, 0.8);
   fillLight.position.set(-3, -2, -4);
   scene.add(ambient, keyLight, fillLight);
 
-  // === LOAD MODEL ===
   const loader = new GLTFLoader();
   const modelData = atob("{model_base64}");
   const arrayBuffer = new ArrayBuffer(modelData.length);
@@ -67,9 +65,9 @@ components.html(f"""
   const url = URL.createObjectURL(blob);
 
   loader.load(url, function(gltf) {{
+    console.log("✅ sani.glb loaded successfully");
     const model = gltf.scene;
 
-    // Auto-scale and center
     const box = new THREE.Box3().setFromObject(model);
     const size = new THREE.Vector3(); box.getSize(size);
     const center = new THREE.Vector3(); box.getCenter(center);
@@ -77,30 +75,30 @@ components.html(f"""
     model.scale.setScalar(scale);
     model.position.sub(center.multiplyScalar(scale));
 
-    // Metallic material
     model.traverse(obj => {{
       if (obj.isMesh && obj.material) {{
         obj.material.metalness = 0.9;
         obj.material.roughness = 0.25;
-        obj.material.color.set(0xcfd8dc); // light silver
+        obj.material.color.set(0xcfd8dc);
       }}
     }});
 
     scene.add(model);
 
-    // === ANIMATION ===
     function animate() {{
       requestAnimationFrame(animate);
       model.rotation.y += 0.006;
       renderer.render(scene, camera);
     }}
     animate();
+
+  }}, undefined, function (err) {{
+    console.error("❌ Failed to load sani.glb:", err);
   }});
 </script>
 </body>
 </html>
 """, height=140)
-
 st.set_page_config(page_title="🦖 ReconRaptor — Vendor Reconciliation", layout="wide")
 st.title("🦖 ReconRaptor — Vendor Invoice Reconciliation")
 
