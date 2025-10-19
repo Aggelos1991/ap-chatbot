@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import re
 
-st.image("https://raw.githubusercontent.com/Aggelos1991/ap-chatbot/main/assets/image.png", width=160)
+st.image("https://raw.githubusercontent.com/Aggelos1991/ap-chatbot/main/assets/images.png", width=160)
 
 # ---- FIXED SINGLE LOGO + WHITE TEXT ----
 if "logo_loaded" not in st.session_state:
