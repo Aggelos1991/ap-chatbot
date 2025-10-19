@@ -8,12 +8,14 @@ st.set_page_config(page_title="🦖 ReconRaptor", layout="wide")
 st.title("🦖 ReconRaptor — Vendor Invoice Reconciliation")
 
 components.html("""
-<script type="module">
-import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.158/build/three.module.js';
-import { GLTFLoader } from 'https://cdn.jsdelivr.net/npm/three@0.158/examples/jsm/loaders/GLTFLoader.js';
-
+<div id="logo-container">
+  <canvas id="logoCanvas" width="160" height="160"></canvas>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/three@0.158/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.158/examples/js/loaders/GLTFLoader.min.js"></script>
+<script>
 const canvas = document.getElementById('logoCanvas');
-const renderer = new THREE.WebGLRenderer({ canvas: canvas, alpha: true });
+const renderer = new THREE.WebGLRenderer({canvas: canvas, alpha: true});
 renderer.setSize(160, 160);
 renderer.setClearColor(0x000000, 0);
 
@@ -25,26 +27,29 @@ const light = new THREE.DirectionalLight(0xffffff, 2);
 light.position.set(2, 2, 5);
 scene.add(light);
 
-// 🔗 Load model from GitHub
-const loader = new GLTFLoader();
+const loader = new THREE.GLTFLoader();
 loader.load('https://raw.githubusercontent.com/Aggelos1991/ap-chatbot/main/assets/sani.glb', function(gltf) {
     const model = gltf.scene;
-    model.scale.set(1.3, 1.3, 1.3);
+    model.traverse((node)=>{
+        if(node.isMesh){
+            node.material = new THREE.MeshStandardMaterial({color:0xffffff, metalness:0.2, roughness:0.4});
+        }
+    });
+    model.scale.set(1.3,1.3,1.3);
     model.rotation.x = 0.3;
     scene.add(model);
 
-    function animate() {
+    function animate(){
         requestAnimationFrame(animate);
         model.rotation.y += 0.01;
-        renderer.render(scene, camera);
+        renderer.render(scene,camera);
     }
     animate();
-}, undefined, function(error) {
-    console.error('Error loading GLB:', error);
+}, undefined, function(err){
+    console.error('Error loading model:', err);
 });
 </script>
-""", height=180)
-
+""", height=200)
 
 # ======================================
 # HELPERS
