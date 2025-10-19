@@ -1,67 +1,11 @@
 import streamlit as st
 import pandas as pd
 import re
-import streamlit.components.v1 as components
+
+
 
 st.set_page_config(page_title="🦖 ReconRaptor", layout="wide")
 st.title("🦖 ReconRaptor — Vendor Invoice Reconciliation")
-
-# ==============================
-# 3D LOGO SECTION (Top-Left)
-# ==============================
-st.markdown("""
-<style>
-#logo-container {
-  position: fixed;
-  top: 20px;
-  left: 20px;
-  width: 180px;
-  height: 180px;
-  z-index: 9999;
-}
-</style>
-<div id="logo-container"></div>
-""", unsafe_allow_html=True)
-
-components.html("""
-<div id="logoCanvasContainer">
-  <canvas id="logoCanvas"></canvas>
-</div>
-<script type="module">
-import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.158/build/three.module.js';
-import { GLTFLoader } from 'https://cdn.jsdelivr.net/npm/three@0.158/examples/jsm/loaders/GLTFLoader.js';
-
-const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(30, 1, 0.1, 100);
-const renderer = new THREE.WebGLRenderer({canvas: document.getElementById('logoCanvas'), alpha: true});
-renderer.setSize(180, 180);
-renderer.setClearColor(0x000000, 0); // transparent background
-
-const light = new THREE.DirectionalLight(0xffffff, 2);
-light.position.set(2, 2, 5);
-scene.add(light);
-
-// Load GLB
-const loader = new GLTFLoader();
-loader.load('sani.glb', function(gltf){
-    const model = gltf.scene;
-    model.scale.set(1.5, 1.5, 1.5);
-    model.rotation.x = 0.3;
-    scene.add(model);
-
-    function animate(){
-        requestAnimationFrame(animate);
-        model.rotation.y += 0.01;
-        renderer.render(scene, camera);
-    }
-    camera.position.z = 5;
-    animate();
-});
-</script>
-""", height=200)
-
-
-
 
 # ======================================
 # HELPERS
