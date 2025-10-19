@@ -5,10 +5,11 @@ import streamlit.components.v1 as components
 import base64
 
 
+
 # ======================================
-# 3D LOGO — Top Left Corner
+# 3D LOGO — Top Left Corner (sani.glb)
 # ======================================
-with open("assets/Untitled.glb", "rb") as f:
+with open("assets/sani.glb", "rb") as f:
     model_bytes = f.read()
     model_base64 = base64.b64encode(model_bytes).decode()
 
@@ -37,7 +38,6 @@ components.html(f"""
 <script type="module">
   import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js';
   import {{ GLTFLoader }} from 'https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/loaders/GLTFLoader.js';
-  import {{ RGBELoader }} from 'https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/loaders/RGBELoader.js';
 
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
@@ -45,12 +45,13 @@ components.html(f"""
   renderer.setSize(120, 120);
   camera.position.z = 2;
 
-  // Lighting setup
-  const ambientLight = new THREE.AmbientLight(0xffffff, 1.2);
-  const directional = new THREE.DirectionalLight(0x8fc1ff, 1.5);
-  directional.position.set(3, 3, 5);
-  scene.add(ambientLight, directional);
+  // Lights
+  const ambientLight = new THREE.AmbientLight(0xffffff, 1.3);
+  const blueLight = new THREE.DirectionalLight(0x5dade2, 1.8);
+  blueLight.position.set(3, 3, 4);
+  scene.add(ambientLight, blueLight);
 
+  // Convert base64 → blob for loader
   const loader = new GLTFLoader();
   const modelData = atob("{model_base64}");
   const arrayBuffer = new ArrayBuffer(modelData.length);
@@ -67,15 +68,15 @@ components.html(f"""
     model.traverse(obj => {{
       if (obj.isMesh) {{
         obj.material.metalness = 0.8;
-        obj.material.roughness = 0.2;
-        obj.material.envMapIntensity = 1.2;
+        obj.material.roughness = 0.25;
       }}
     }});
     scene.add(model);
 
+    // Animation loop
     function animate() {{
       requestAnimationFrame(animate);
-      model.rotation.y += 0.008;
+      model.rotation.y += 0.008;  // slow smooth rotation
       renderer.render(scene, camera);
     }}
     animate();
