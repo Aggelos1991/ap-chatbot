@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import re
-import streamlit.components.v1 as components  # ← ADD THIS LINE
+import streamlit.components.v1 as components
 
 
 st.set_page_config(page_title="🦖 ReconRaptor", layout="wide")
