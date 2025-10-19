@@ -3,7 +3,7 @@ import pandas as pd
 import re
 
 
-st.image("https://raw.githubusercontent.com/Aggelos1991/ap-chatbot/main/assets/saniikos.jpg", width=160)
+st.image("https://raw.githubusercontent.com/Aggelos1991/ap-chatbot/main/assets/image.png", width=160)
 st.set_page_config(page_title="🦖 ReconRaptor", layout="wide")
 st.title("🦖 ReconRaptor — Vendor Invoice Reconciliation")
 
