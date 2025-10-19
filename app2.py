@@ -1,34 +1,11 @@
 import streamlit as st
 import pandas as pd
 import re
-import streamlit.components.v1 as components
+
 
 
 st.set_page_config(page_title="🦖 ReconRaptor", layout="wide")
 st.title("🦖 ReconRaptor — Vendor Invoice Reconciliation")
-
-# ==============================
-# 3D LOGO (Top-Left Corner)
-# ==============================
-st.markdown("""
-<style>
-#logo-container {
-  position: fixed;
-  top: 15px;
-  left: 15px;
-  width: 160px;
-  height: 160px;
-  z-index: 9999;
-}
-#logoCanvas {
-  width: 100%;
-  height: 100%;
-}
-</style>
-<div id="logo-container">
-  <canvas id="logoCanvas"></canvas>
-</div>
-""", unsafe_allow_html=True)
 
 components.html("""
 <script type="module">
@@ -48,9 +25,9 @@ const light = new THREE.DirectionalLight(0xffffff, 2);
 light.position.set(2, 2, 5);
 scene.add(light);
 
-// Load model (local or remote)
+// 🔗 Load model from GitHub
 const loader = new GLTFLoader();
-loader.load('sani.glb', function(gltf) {
+loader.load('https://raw.githubusercontent.com/Aggelos1991/ap-chatbot/main/assets/sani.glb', function(gltf) {
     const model = gltf.scene;
     model.scale.set(1.3, 1.3, 1.3);
     model.rotation.x = 0.3;
@@ -67,6 +44,7 @@ loader.load('sani.glb', function(gltf) {
 });
 </script>
 """, height=180)
+
 
 # ======================================
 # HELPERS
