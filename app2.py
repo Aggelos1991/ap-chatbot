@@ -2,11 +2,18 @@ import streamlit as st
 import pandas as pd
 import re
 import streamlit.components.v1 as components
-
+import base64
 
 
 # ======================================
-# 3D LOGO IN TOP LEFT CORNER
+# Load .glb model as base64 to serve in Streamlit
+# ======================================
+with open("assets/Untitled.glb", "rb") as f:
+    model_bytes = f.read()
+    model_base64 = base64.b64encode(model_bytes).decode()
+
+# ======================================
+# 3D LOGO VIEWER IN TOP LEFT CORNER
 # ======================================
 components.html(f"""
 <!DOCTYPE html>
@@ -45,7 +52,17 @@ components.html(f"""
   scene.add(light);
 
   const loader = new GLTFLoader();
-  loader.load('Untitled.glb', function(gltf) {{
+  const modelData = atob("{model_base64}");
+  const arrayBuffer = new ArrayBuffer(modelData.length);
+  const view = new Uint8Array(arrayBuffer);
+  for (let i = 0; i < modelData.length; i++) {{
+    view[i] = modelData.charCodeAt(i);
+  }}
+
+  const blob = new Blob([arrayBuffer], {{ type: 'model/gltf-binary' }});
+  const url = URL.createObjectURL(blob);
+
+  loader.load(url, function(gltf) {{
       const model = gltf.scene;
       model.scale.set(1, 1, 1);
       scene.add(model);
