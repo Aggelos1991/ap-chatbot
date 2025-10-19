@@ -1,7 +1,89 @@
 import streamlit as st
 import pandas as pd
 import re
+import streamlit.components.v1 as components
+import base64
 
+
+# ======================================
+# 3D LOGO — Top Left Corner
+# ======================================
+with open("assets/Untitled.glb", "rb") as f:
+    model_bytes = f.read()
+    model_base64 = base64.b64encode(model_bytes).decode()
+
+components.html(f"""
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  body {{
+    margin: 0;
+    overflow: hidden;
+  }}
+  #logoCanvas {{
+    position: fixed;
+    top: 10px;
+    left: 10px;
+    width: 120px;
+    height: 120px;
+    z-index: 9999;
+  }}
+</style>
+</head>
+<body>
+<canvas id="logoCanvas"></canvas>
+<script type="module">
+  import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js';
+  import {{ GLTFLoader }} from 'https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/loaders/GLTFLoader.js';
+  import {{ RGBELoader }} from 'https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/loaders/RGBELoader.js';
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
+  const renderer = new THREE.WebGLRenderer({{canvas: document.getElementById('logoCanvas'), alpha: true}});
+  renderer.setSize(120, 120);
+  camera.position.z = 2;
+
+  // Lighting setup
+  const ambientLight = new THREE.AmbientLight(0xffffff, 1.2);
+  const directional = new THREE.DirectionalLight(0x8fc1ff, 1.5);
+  directional.position.set(3, 3, 5);
+  scene.add(ambientLight, directional);
+
+  const loader = new GLTFLoader();
+  const modelData = atob("{model_base64}");
+  const arrayBuffer = new ArrayBuffer(modelData.length);
+  const view = new Uint8Array(arrayBuffer);
+  for (let i = 0; i < modelData.length; i++) {{
+    view[i] = modelData.charCodeAt(i);
+  }}
+  const blob = new Blob([arrayBuffer], {{ type: 'model/gltf-binary' }});
+  const url = URL.createObjectURL(blob);
+
+  loader.load(url, function(gltf) {{
+    const model = gltf.scene;
+    model.scale.set(1, 1, 1);
+    model.traverse(obj => {{
+      if (obj.isMesh) {{
+        obj.material.metalness = 0.8;
+        obj.material.roughness = 0.2;
+        obj.material.envMapIntensity = 1.2;
+      }}
+    }});
+    scene.add(model);
+
+    function animate() {{
+      requestAnimationFrame(animate);
+      model.rotation.y += 0.008;
+      renderer.render(scene, camera);
+    }}
+    animate();
+  }});
+</script>
+</body>
+</html>
+""", height=140)
 
 # CONFIGURATION
 # ======================================
