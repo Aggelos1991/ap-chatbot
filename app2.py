@@ -8,7 +8,7 @@ import base64
 # ======================================
 # Load .glb model as base64 to serve in Streamlit
 # ======================================
-with open("assets/Untitled.glb", "rb") as f:
+with open("/mnt/data/Untitled.glb", "rb") as f:
     model_bytes = f.read()
     model_base64 = base64.b64encode(model_bytes).decode()
 
