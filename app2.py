@@ -117,7 +117,6 @@ def match_invoices(erp_df, ven_df):
             r"^pago",               # Spanish
             r"^transferencia",      # Spanish
             r"(?i)^f[-\s]?\d{4,8}",
-            r"Έμβασμα από πελάτη χειρ\.",   # ✅ EXACT match as seen in Excel
         ]
         if any(re.search(p, reason) for p in payment_patterns):
             return "IGNORE"
@@ -142,26 +141,14 @@ def match_invoices(erp_df, ven_df):
         return 0.0
 
     def detect_vendor_doc_type(row):
-        import unicodedata
-        
-        def clean_text(s):
-            """Normalize Greek text for reliable matching."""
-            if not isinstance(s, str):
-                return ""
-            s = unicodedata.normalize("NFD", s)
-            s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
-            s = s.replace("\xa0", " ").replace("\u200b", "").strip().lower()
-            return s
-        
-        reason = clean_reason(row.get("reason_ven", ""))
-
+        reason = str(row.get("reason_ven", "")).lower()
         debit = normalize_number(row.get("debit_ven"))
         credit = normalize_number(row.get("credit_ven"))
 
         # Unified multilingual keywords
         payment_words = [
             "pago", "payment", "transfer", "bank", "saldo", "trf",
-            "πληρωμή", "μεταφορά", "τράπεζα", "τραπεζικό έμβασμα", "Έμβασμα από πελάτη χειρ.","έμβασμα από πελάτη χειρ."    # ✅ EXACT match as seen in Excel
+            "πληρωμή", "μεταφορά", "τράπεζα", "τραπεζικό έμβασμα"
         ]
         credit_words = [
             "credit", "nota", "abono", "cn", "πιστωτικό", "πίστωση","ακυρωτικό","ακυρωτικό παραστατικό"
