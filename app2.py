@@ -203,6 +203,11 @@ def match_invoices(erp_df, ven_df):
         s = re.sub(r"[^a-z0-9]", "", s)
         s = re.sub(r"^0+", "", s)
         s = re.sub(r"[^\d]", "", s)
+        # --- NEW RULE: detect ADF + space + digits ---
+        m = re.search(r"\bADF\s*\d+\b", str(v), re.IGNORECASE)
+        if m:
+            s = re.sub(r"\D", "", m.group())  # keep only the digits
+    return s
         return s
 
     for e_idx, e in erp_use.iterrows():
