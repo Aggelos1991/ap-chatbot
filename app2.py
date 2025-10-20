@@ -390,7 +390,11 @@ if uploaded_erp and uploaded_vendor:
         )
     else:
         st.success("✅ No missing invoices in Vendor.")
-
+    # ===== Show Difference =====
+    if not erp_missing.empty or not ven_missing.empty:
+        difference = total_vendor - total_erp
+        st.markdown("---")
+        st.markdown(f"### ⚖️ Difference (ERP - Vendor): **{difference:,.2f} EUR**")
     # ====== PAYMENTS ======
     st.subheader("🏦 Payment Transactions (Identified in both sides)")
     col1, col2 = st.columns(2)
