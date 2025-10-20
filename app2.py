@@ -5,10 +5,7 @@ import re
 st.image("https://raw.githubusercontent.com/Aggelos1991/ap-chatbot/main/assets/images.png", width=160)
 
 
-<div class="logo-container">
-  <img src="https://raw.githubusercontent.com/Aggelos1991/ap-chatbot/main/assets/images.png" width="160">
-</div>
-""", unsafe_allow_html=True)
+
 # ======================================
 # CONFIGURATION
 # ======================================
