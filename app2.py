@@ -121,34 +121,35 @@ def match_invoices(erp_df, ven_df):
     charge = normalize_number(row.get("debit_erp"))
     credit = normalize_number(row.get("credit_erp"))
 
-        # 🔥 Universal payment keywords (normalized Greek + Latin)
-        payment_keywords = [
-            "πληρωμ", "αποδειξη πληρωμ", "payment", "bank transfer",
-            "transfer", "trf", "remesa", "pago", "transferencia",
-            "εμβασμα απο πελατη χειρ", "χειροκινητο εμβασμα",
-            "χαε", "xae"
-        ]
-    
-        # remove punctuation and convert to plain lowercase Greek/Latin
-        reason_clean = (
-            reason.replace(".", "")
-                  .replace(",", "")
-                  .replace("·", "")
-                  .replace("xae", "χαε")  # normalize Latin to Greek
-                  .strip()
-        )
-    
-        if any(k in reason_clean for k in payment_keywords):
-            return "IGNORE"
-    
-        credit_words = ["credit", "nota", "abono", "cn", "πιστωτικ", "πιστωτικο", "πίστωση", "ακυρωτικ"]
-        invoice_words = ["factura", "invoice", "inv", "τιμολ", "παραστατικ"]
-    
-        if any(k in reason_clean for k in credit_words):
-            return "CN"
-        elif any(k in reason_clean for k in invoice_words) or credit > 0:
-            return "INV"
+    # 🔥 Universal payment keywords (normalized Greek + Latin)
+    payment_keywords = [
+        "πληρωμ", "αποδειξη πληρωμ", "payment", "bank transfer",
+        "transfer", "trf", "remesa", "pago", "transferencia",
+        "εμβασμα απο πελατη χειρ", "χειροκινητο εμβασμα",
+        "χαε", "xae"
+    ]
+
+    # remove punctuation and convert to plain lowercase Greek/Latin
+    reason_clean = (
+        reason.replace(".", "")
+              .replace(",", "")
+              .replace("·", "")
+              .replace("xae", "χαε")  # normalize Latin to Greek
+              .strip()
+    )
+
+    if any(k in reason_clean for k in payment_keywords):
+        return "IGNORE"
+
+    credit_words = ["credit", "nota", "abono", "cn", "πιστωτικ", "πιστωτικο", "πίστωση", "ακυρωτικ"]
+    invoice_words = ["factura", "invoice", "inv", "τιμολ", "παραστατικ"]
+
+    if any(k in reason_clean for k in credit_words):
+        return "CN"
+    elif any(k in reason_clean for k in invoice_words) or credit > 0:
+        return "INV"
     return "UNKNOWN"
+
 
 
     def calc_erp_amount(row):
