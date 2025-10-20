@@ -247,6 +247,18 @@ def match_invoices(erp_df, ven_df):
 )            
         return s
     # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+    # ==========================================================
+    # 🔄 CANCELLATION RULE — remove fully neutralized invoices
+    # ==========================================================
+    neutralized = (
+        erp_use.groupby("invoice_erp")["__amt"]
+        .sum()
+        .reset_index()
+    )
+    neutralized_invoices = neutralized[neutralized["__amt"].abs() < 0.05]["invoice_erp"].tolist()
+    
+    if neutralized_invoices:
+        erp_use = erp_use[~erp_use["invoice_erp"].isin(neutralized_invoices)]
 
     for e_idx, e in erp_use.iterrows():
         e_inv = str(e.get("invoice_erp", "")).strip()
