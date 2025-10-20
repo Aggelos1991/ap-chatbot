@@ -517,9 +517,40 @@ if uploaded_erp and uploaded_vendor:
                 ws1.column_dimensions[column].width = max_length + 2
 
             # 2️⃣ Missing sheet
-            erp_missing.to_excel(writer, index=False, sheet_name="Missing", startrow=3)
-            start_col = len(erp_missing.columns) + 3
-            ven_missing.to_excel(writer, index=False, sheet_name="Missing", startcol=start_col, startrow=3)
+            # Export both tables with equal alignment
+            erp_missing.to_excel(writer, index=False, sheet_name="Missing", startrow=4)
+            start_col = len(erp_missing.columns) + 4
+            ven_missing.to_excel(writer, index=False, sheet_name="Missing", startcol=start_col, startrow=4)
+            
+            ws2 = writer.sheets["Missing"]
+            
+            # Headers
+            ws2["A2"] = "Missing in ERP"
+            ws2["A2"].font = Font(bold=True, size=14, color="FFFFFF")
+            ws2["A2"].alignment = Alignment(horizontal="center")
+            ws2["A2"].fill = PatternFill(start_color="E53935", end_color="E53935", fill_type="solid")
+            
+            ws2.cell(row=2, column=start_col + 1).value = "Missing in Vendor"
+            ws2.cell(row=2, column=start_col + 1).font = Font(bold=True, size=14, color="FFFFFF")
+            ws2.cell(row=2, column=start_col + 1).alignment = Alignment(horizontal="center")
+            ws2.cell(row=2, column=start_col + 1).fill = PatternFill(start_color="1E88E5", end_color="1E88E5", fill_type="solid")
+            
+            # Add TOTAL below each table properly
+            erp_total = erp_missing["Amount"].sum() if not erp_missing.empty else 0
+            ven_total = ven_missing["Amount"].sum() if not ven_missing.empty else 0
+            erp_total_row = erp_missing.shape[0] + 5
+            
+            ws2[f"A{erp_total_row}"] = "TOTAL:"
+            ws2[f"A{erp_total_row}"].font = Font(bold=True, color="E53935")
+            ws2[f"B{erp_total_row}"] = float(erp_total)
+            ws2[f"B{erp_total_row}"].font = Font(bold=True)
+            
+            ven_total_row = ven_missing.shape[0] + 5
+            ws2.cell(row=ven_total_row, column=start_col + 1).value = "TOTAL:"
+            ws2.cell(row=ven_total_row, column=start_col + 1).font = Font(bold=True, color="1E88E5")
+            ws2.cell(row=ven_total_row, column=start_col + 2).value = float(ven_total)
+            ws2.cell(row=ven_total_row, column=start_col + 2).font = Font(bold=True)
+
 
             ws2 = writer.sheets["Missing"]
             ws2["A1"] = "Missing in ERP"
