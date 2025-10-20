@@ -436,7 +436,6 @@ from io import BytesIO
 from openpyxl import Workbook
 from openpyxl.utils.dataframe import dataframe_to_rows
 from openpyxl.styles import PatternFill, Font
-import pandas as pd
 
 def export_reconciliation_excel(matched, erp_missing, ven_missing):
     wb = Workbook()
@@ -452,17 +451,17 @@ def export_reconciliation_excel(matched, erp_missing, ven_missing):
     # Matched
     add_sheet(matched, "Matched", "1e88e5")
 
-    # Combined Missing
+    # Missing in ERP
     if not erp_missing.empty:
-        erp_missing["Source"] = "Vendor file (not in ERP)"
-    if not ven_missing.empty:
-        ven_missing["Source"] = "ERP file (not in Vendor)"
-    combined = pd.concat([erp_missing, ven_missing], ignore_index=True)
-    add_sheet(combined, "Missing (ERP & Vendor)", "6a1b9a")
+        add_sheet(erp_missing, "Missing in ERP", "6a1b9a")
 
-    # Save to buffer
+    # Missing in Vendor
+    if not ven_missing.empty:
+        add_sheet(ven_missing, "Missing in Vendor", "9c27b0")
+
+    # Save to memory buffer
     buffer = BytesIO()
-    wb.remove(wb["Sheet"])  # remove default
+    wb.remove(wb["Sheet"])  # remove default empty sheet
     wb.save(buffer)
     buffer.seek(0)
     return buffer
