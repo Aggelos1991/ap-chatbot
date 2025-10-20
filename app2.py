@@ -207,6 +207,7 @@ def match_invoices(erp_df, ven_df):
         m = re.search(r"\bADF\s*\d+\b", str(v), re.IGNORECASE)
         if m:
             s = re.sub(r"\D", "", m.group())  # keep only the digits
+            return s
         return s
 
     for e_idx, e in erp_use.iterrows():
