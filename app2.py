@@ -308,22 +308,11 @@ def match_invoices(erp_df, ven_df):
             same_full  = (e_inv == v_inv)
             same_clean = (e_code == v_code)
 
-            len_diff = abs(len(e_code) - len(v_code))
-            suffix_ok = (
-                len(e_code) > 2 and len(v_code) > 2 and
-                len_diff <= 2 and (
-                    e_code.endswith(v_code) or
-                    v_code.endswith(e_code) or
-                    e_code in v_code or
-                    v_code in e_code  # ✅ Fixes 106↔4106 and 12219↔2219
-                )
-            )
-            same_type = (e["__doctype"] == v["__doctype"])
+            same_type  = (e["__doctype"] == v["__doctype"])
+            amt_close  = abs(diff) < 0.05
 
-            # --- ΝΕΟΣ κανόνας αποδοχής ---
-            if same_type and same_full:
-                take_it = True
-            elif same_type and (same_clean or suffix_ok):
+            # ✅ Strict matching — only exact or cleaned-equal invoice codes
+            if same_type and (same_full or same_clean):
                 take_it = True
             else:
                 take_it = False
