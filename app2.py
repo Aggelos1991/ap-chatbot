@@ -412,6 +412,15 @@ if uploaded_erp and uploaded_vendor:
         else:
             st.info("No ERP payments found.")
 
+
+            # ===== Show Payment Difference =====
+        if not erp_pay.empty and not ven_pay.empty:
+            total_erp_pay = erp_pay["Amount"].sum()
+            total_vendor_pay = ven_pay["Amount"].sum()
+            pay_difference = total_erp_pay - total_vendor_pay
+        
+            st.markdown("---")
+            st.markdown(f"### ⚖️ Difference (ERP - Vendor Payments): **{pay_difference:,.2f} EUR**")
     with col2:
         st.markdown("**🧾 Vendor Payments**")
         if not ven_pay.empty:
