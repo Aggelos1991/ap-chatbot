@@ -526,6 +526,14 @@ if not matched_pay.empty:
         use_container_width=True
     )
 
+    st.markdown("### ✅ Payment Summary")
+
+if not matched_pay.empty:
+    st.dataframe(
+        matched_pay.style.applymap(lambda _: "background-color: #2e7d32; color: white"),
+        use_container_width=True
+    )
+
     # --- Totals for matched only ---
     total_matched_erp = matched_pay["ERP Amount"].sum()
     total_matched_vendor = matched_pay["Vendor Amount"].sum()
@@ -544,8 +552,9 @@ if not matched_pay.empty:
     st.markdown(f"**💰 Total Vendor Payments (All):** {total_all_vendor:,.2f} EUR")
     st.markdown(f"**🔺 Total Difference Between ERP and Vendor Payments:** {diff_all:,.2f} EUR")
 
-    else:
-        st.info("No matching payments found.")
+else:
+    st.info("No matching payments found.")
+
     # ======================================
 def export_reconciliation_excel(matched, erp_missing, ven_missing):
     """Stable version with correct alignment, titles, and totals for Missing tables."""
