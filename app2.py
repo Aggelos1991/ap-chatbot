@@ -181,6 +181,12 @@ def match_invoices(erp_df, ven_df):
     erp_df["__amt"] = erp_df.apply(calc_erp_amount, axis=1)
     ven_df["__doctype"] = ven_df.apply(detect_vendor_doc_type, axis=1)
     ven_df["__amt"] = ven_df.apply(calc_vendor_amount, axis=1)
+    # ==========================================================
+    # 🚫 REMOVE IGNORE ROWS COMPLETELY
+    # ==========================================================
+    erp_df = erp_df[erp_df["__doctype"] != "IGNORE"].reset_index(drop=True)
+    ven_df = ven_df[ven_df["__doctype"] != "IGNORE"].reset_index(drop=True)
+
 
     erp_use = erp_df[erp_df["__doctype"].isin(["INV", "CN"])].copy()
     ven_use = ven_df[ven_df["__doctype"].isin(["INV", "CN"])].copy()
