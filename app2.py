@@ -648,8 +648,17 @@ def export_reconciliation_excel(matched, erp_missing, ven_missing):
 # ====== DOWNLOAD BUTTON ======
 st.markdown("### 📥 Download Reconciliation Excel Report")
 
-# ✅ Fully silent safe export — no messages, no crashes
+# ✅ Safe export (no visible error messages)
 try:
     excel_output = export_reconciliation_excel(matched, erp_missing, ven_missing)
 except Exception:
     excel_output = None
+
+# ====== DOWNLOAD LINK ======
+if excel_output:
+    st.download_button(
+        label="⬇️ Download Excel File",
+        data=excel_output,
+        file_name="Reconciliation_Report.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
