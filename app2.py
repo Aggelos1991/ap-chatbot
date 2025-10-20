@@ -496,7 +496,6 @@ if uploaded_erp and uploaded_vendor:
         st.markdown(f"**Difference Between ERP and Vendor Payments:** {diff_total:,.2f} EUR")
     else:
         st.info("No matching payments found.")
-)
 
 # ====== DOWNLOAD BUTTON ======
 st.markdown("### 📥 Download Excel Report")
