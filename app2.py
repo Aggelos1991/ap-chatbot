@@ -583,4 +583,15 @@ def export_reconciliation_excel(matched, erp_missing, ven_missing):
 
     output.seek(0)
     return output
+# ====== DOWNLOAD BUTTON ======
+st.markdown("### 📥 Download Reconciliation Excel Report")
+
+excel_output = export_reconciliation_excel(matched, erp_missing, ven_missing)
+
+st.download_button(
+    label="⬇️ Download Excel Report",
+    data=excel_output,
+    file_name="Reconciliation_Report.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+)
 
