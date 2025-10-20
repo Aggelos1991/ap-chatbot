@@ -381,28 +381,6 @@ def extract_payments(erp_df: pd.DataFrame, ven_df: pd.DataFrame):
 
     return erp_pay, ven_pay, pd.DataFrame(matched_payments)
 
-from io import BytesIO
-
-def build_excel_bytes(matched, erp_missing, ven_missing, erp_pay, ven_pay, matched_pay):
-    """Create multi-sheet Excel export."""
-    buf = BytesIO()
-    with pd.ExcelWriter(buf, engine="openpyxl") as writer:  # safe, no extra install
-        (matched if not matched.empty else pd.DataFrame(columns=["ERP Invoice","Vendor Invoice","ERP Amount","Vendor Amount","Difference","Status"])
-        ).to_excel(writer, index=False, sheet_name="Matched_Differences")
-        (erp_missing if not erp_missing.empty else pd.DataFrame(columns=["Invoice","Amount"])
-        ).to_excel(writer, index=False, sheet_name="Missing_in_ERP")
-        (ven_missing if not ven_missing.empty else pd.DataFrame(columns=["Invoice","Amount"])
-        ).to_excel(writer, index=False, sheet_name="Missing_in_Vendor")
-        (erp_pay if not erp_pay.empty else pd.DataFrame(columns=["reason_erp","debit_erp","credit_erp","Amount"])
-        ).to_excel(writer, index=False, sheet_name="ERP_Payments")
-        (ven_pay if not ven_pay.empty else pd.DataFrame(columns=["reason_ven","debit_ven","credit_ven","Amount"])
-        ).to_excel(writer, index=False, sheet_name="Vendor_Payments")
-        (matched_pay if not matched_pay.empty else pd.DataFrame(columns=["ERP Reason","Vendor Reason","ERP Amount","Vendor Amount","Difference"])
-        ).to_excel(writer, index=False, sheet_name="Matched_Payments")
-    buf.seek(0)
-    return buf
-
-
 # ======================================
 # STREAMLIT UI
 # ======================================
@@ -497,14 +475,59 @@ if uploaded_erp and uploaded_vendor:
     else:
         st.info("No matching payments found.")
 
+# ======================================
+# EXPORT SIMPLIFIED REPORT (2-SHEET FORMAT)
+# ======================================
+import io
+from openpyxl import load_workbook
+from openpyxl.utils import get_column_letter
+from openpyxl.styles import Font, Alignment
+
+def export_reconciliation_excel(matched, erp_missing, ven_missing):
+    """Generate a clean 2-tab Excel report."""
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        # 1️⃣ Matched / Differences
+        matched.to_excel(writer, index=False, sheet_name="Matched & Differences")
+
+        # 2️⃣ Missing tables (ERP + Vendor)
+        start_row = 2
+        # Write Missing in ERP
+        erp_missing.to_excel(writer, index=False, sheet_name="Missing", startrow=start_row)
+        # Write Missing in Vendor beside it
+        start_col = len(erp_missing.columns) + 3
+        ven_missing.to_excel(writer, index=False, sheet_name="Missing", startcol=start_col, startrow=start_row)
+
+        ws = writer.sheets["Missing"]
+        ws["A1"] = "Missing in ERP"
+        ws["A1"].font = Font(bold=True, size=12)
+        ws["A1"].alignment = Alignment(horizontal="center")
+
+        ws.cell(row=1, column=start_col + 1).value = "Missing in Vendor"
+        ws.cell(row=1, column=start_col + 1).font = Font(bold=True, size=12)
+        ws.cell(row=1, column=start_col + 1).alignment = Alignment(horizontal="center")
+
+        # Auto width
+        for i, col in enumerate(ws.columns, 1):
+            max_len = 0
+            col_letter = get_column_letter(i)
+            for cell in col:
+                try:
+                    max_len = max(max_len, len(str(cell.value)))
+                except:
+                    pass
+            ws.column_dimensions[col_letter].width = max_len + 2
+
+    output.seek(0)
+    return output
+
+
 # ====== DOWNLOAD BUTTON ======
 st.markdown("### 📥 Download Excel Report")
-excel_data = build_excel_bytes(matched, erp_missing, ven_missing, erp_pay, ven_pay, matched_pay)
+excel_output = export_reconciliation_excel(matched, erp_missing, ven_missing)
 st.download_button(
     label="⬇️ Download Reconciliation Report (Excel)",
-    data=excel_data,
-    file_name="reconciliation_results.xlsx",
+    data=excel_output,
+    file_name="Reconciliation_Report.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 )
-
-
