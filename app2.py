@@ -219,7 +219,7 @@ def clean_invoice_code(v):
     Normalize invoice strings for comparison:
     Matches patterns like #F123, F123, F-123, F 123 → f123
     """
-        if not v:
+    if not v:
             return ""
         s = str(v).strip().lower()
     
