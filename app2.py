@@ -548,8 +548,15 @@ if uploaded_erp and uploaded_vendor:
                     c.font = Font(bold=True)
             
             # Add totals under each table
+            # Ensure numeric conversion before summing
+            if "Amount" in erp_missing.columns:
+                erp_missing["Amount"] = pd.to_numeric(erp_missing["Amount"], errors="coerce").fillna(0)
+            if "Amount" in ven_missing.columns:
+                ven_missing["Amount"] = pd.to_numeric(ven_missing["Amount"], errors="coerce").fillna(0)
+            
             erp_total = erp_missing["Amount"].sum() if not erp_missing.empty else 0
             ven_total = ven_missing["Amount"].sum() if not ven_missing.empty else 0
+
             erp_total_row = erp_missing.shape[0] + 5
             ven_total_row = ven_missing.shape[0] + 5
             
