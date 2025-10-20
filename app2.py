@@ -518,18 +518,32 @@ if uploaded_erp and uploaded_vendor:
         else:
             st.info("No Vendor payments found.")
 
-    st.markdown("### ✅ Matched Payments")
-    if not matched_pay.empty:
-        st.dataframe(
-            matched_pay.style.applymap(lambda _: "background-color: #2e7d32; color: white"),
-            use_container_width=True
-        )
-        total_erp = matched_pay["ERP Amount"].sum()
-        total_vendor = matched_pay["Vendor Amount"].sum()
-        diff_total = abs(total_erp - total_vendor)
-        st.markdown(f"**Total Matched ERP Payments:** {total_erp:,.2f} EUR")
-        st.markdown(f"**Total Matched Vendor Payments:** {total_vendor:,.2f} EUR")
-        st.markdown(f"**Difference Between ERP and Vendor Payments:** {diff_total:,.2f} EUR")
+    st.markdown("### ✅ Payment Summary")
+
+if not matched_pay.empty:
+    st.dataframe(
+        matched_pay.style.applymap(lambda _: "background-color: #2e7d32; color: white"),
+        use_container_width=True
+    )
+
+    # --- Totals for matched only ---
+    total_matched_erp = matched_pay["ERP Amount"].sum()
+    total_matched_vendor = matched_pay["Vendor Amount"].sum()
+    diff_matched = abs(total_matched_erp - total_matched_vendor)
+
+    # --- Totals for ALL payments (ERP + Vendor) ---
+    total_all_erp = erp_pay["Amount"].sum() if not erp_pay.empty else 0
+    total_all_vendor = ven_pay["Amount"].sum() if not ven_pay.empty else 0
+    diff_all = abs(total_all_erp - total_all_vendor)
+
+    st.markdown(f"**Total Matched ERP Payments:** {total_matched_erp:,.2f} EUR")
+    st.markdown(f"**Total Matched Vendor Payments:** {total_matched_vendor:,.2f} EUR")
+    st.markdown(f"**Difference Between Matched Payments:** {diff_matched:,.2f} EUR")
+    st.markdown("---")
+    st.markdown(f"**💰 Total ERP Payments (All):** {total_all_erp:,.2f} EUR")
+    st.markdown(f"**💰 Total Vendor Payments (All):** {total_all_vendor:,.2f} EUR")
+    st.markdown(f"**🔺 Total Difference Between ERP and Vendor Payments:**
+
     else:
         st.info("No matching payments found.")
     # ======================================
