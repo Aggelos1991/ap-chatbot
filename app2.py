@@ -1,7 +1,7 @@
+
 import streamlit as st
 import pandas as pd
 import re
-
 
 # ======================================
 # CONFIGURATION
@@ -108,20 +108,20 @@ def match_invoices(erp_df, ven_df):
 
         # Unified multilingual keywords/patterns
         payment_patterns = [
-            r"^πληρωμ",             # Greek "Πληρωμή"
-            r"^απόδειξη\s*πληρωμ",  # Greek "Απόδειξη πληρωμής"
-            r"^payment",            # English: "Payment"
-            r"^bank\s*transfer",    # "Bank Transfer"
-            r"^trf",                # "TRF ..."
-            r"^remesa",             # Spanish
-            r"^pago",               # Spanish
-            r"^transferencia",      # Spanish
-            r"(?i)^f[-\s]?\d{4,8}",
+            r"^πληρωμ",             # Greek
+            r"^απόδειξη\s*πληρωμ",  # Greek
+            r"^payment",            # English
+            r"^bank\s*transfer",
+            r"^trf",
+            r"^remesa",
+            r"^pago",
+            r"^transferencia",
+            r"(?i)^f[-\s]?\d{4,8}"
         ]
         if any(re.search(p, reason) for p in payment_patterns):
             return "IGNORE"
 
-        credit_words = ["credit", "nota", "abono", "cn", "πιστωτικό", "πίστωση","ακυρωτικό","ακυρωτικό παραστατικό"]
+        credit_words = ["credit", "nota", "abono", "cn", "πιστωτικό", "πίστωση", "ακυρωτικό", "ακυρωτικό παραστατικό"]
         invoice_words = ["factura", "invoice", "inv", "τιμολόγιο", "παραστατικό"]
 
         if any(k in reason for k in credit_words):
@@ -145,13 +145,12 @@ def match_invoices(erp_df, ven_df):
         debit = normalize_number(row.get("debit_ven"))
         credit = normalize_number(row.get("credit_ven"))
 
-        # Unified multilingual keywords
         payment_words = [
             "pago", "payment", "transfer", "bank", "saldo", "trf",
             "πληρωμή", "μεταφορά", "τράπεζα", "τραπεζικό έμβασμα"
         ]
         credit_words = [
-            "credit", "nota", "abono", "cn", "πιστωτικό", "πίστωση","ακυρωτικό","ακυρωτικό παραστατικό"
+            "credit", "nota", "abono", "cn", "πιστωτικό", "πίστωση", "ακυρωτικό", "ακυρωτικό παραστατικό"
         ]
         invoice_words = [
             "factura", "invoice", "inv", "τιμολόγιο", "παραστατικό"
@@ -183,106 +182,45 @@ def match_invoices(erp_df, ven_df):
     erp_use = erp_df[erp_df["__doctype"].isin(["INV", "CN"])].copy()
     ven_use = ven_df[ven_df["__doctype"].isin(["INV", "CN"])].copy()
 
-    # ====== SCENARIO 1 & 2: MERGE MULTIPLE AND CREDIT NOTES ======
-    merged_rows = []
-    for inv, group in erp_use.groupby("invoice_erp", dropna=False):
-        if group.empty:
-            continue
-
-        # If 3 or more entries → take the last (latest)
-        if len(group) >= 3:
-            group = group.tail(1)
-
-        # If both INV and CN exist for same number → combine
-        inv_rows = group[group["__doctype"] == "INV"]
-        cn_rows = group[group["__doctype"] == "CN"]
-
-        if not inv_rows.empty and not cn_rows.empty:
-            total_inv = inv_rows["__amt"].sum()
-            total_cn = cn_rows["__amt"].sum()
-            net = round(total_inv + total_cn, 2)
-            base_row = inv_rows.iloc[-1].copy()
-            base_row["__amt"] = net
-            merged_rows.append(base_row)
-        else:
-            merged_rows.append(group.iloc[-1])
-
-    erp_use = pd.DataFrame(merged_rows).reset_index(drop=True)
-
-        def extract_digits(v):
+    def extract_digits(v):
         return re.sub(r"\D", "", str(v or "")).lstrip("0")
 
-    # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-        def extract_digits(v):
-        return re.sub(r"\D", "", str(v or "")).lstrip("0")
-
-    # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-    # Add missing cleaner so we can compute e_code / v_code
-        def clean_invoice_code(v):
-            """
-            Normalize invoice strings for comparison:
-            Matches patterns like #F123, F123, F-123, F 123 → f123
-            """
-            if not v:
-                return ""
-            s = str(v).strip().lower()
-    
-            # ✅ normalize patterns like "#F123", "F-123", "F 123", "#F 00123" → "f123"
-            s = re.sub(r"(?i)[#\s]*f[-\s]*0*", "f", s)
-    
-            # remove known prefixes and year snippets
-            s = re.sub(r"^(αρ|τιμ|pf|ab|inv|tim|cn|ar|pa|πφ|πα|apo|ref|doc|num|no|fa|sf|ba|vn)", "", s)
-            s = re.sub(r"20\d{2}", "", s)
-    
-            # keep only alphanumeric
-            s = re.sub(r"[^a-z0-9]", "", s)
-
+    # ✅ Updated cleaner with #F123 / F-123 / F 00123 pattern support
+    def clean_invoice_code(v):
+        if not v:
+            return ""
+        s = str(v).strip().lower()
+        s = re.sub(r"(?i)[#\s]*f[-\s]*0*", "f", s)  # normalize "#F123" → "f123"
+        s = re.sub(r"^(αρ|τιμ|pf|ab|inv|tim|cn|ar|pa|πφ|πα|apo|ref|doc|num|no|fa|sf|ba|vn)", "", s)
+        s = re.sub(r"20\d{2}", "", s)
+        s = re.sub(r"[^a-z0-9]", "", s)
         return s
-    # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
-    # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
-
-    # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+    matched = []
+    used_vendor_rows = set()
 
     for e_idx, e in erp_use.iterrows():
         e_inv = str(e.get("invoice_erp", "")).strip()
         e_amt = round(float(e["__amt"]), 2)
-        e_digits = extract_digits(e_inv)
-        e_code = clean_invoice_code(e_inv)  # <<< compute cleaned code
-
+        e_code = clean_invoice_code(e_inv)
         for v_idx, v in ven_use.iterrows():
             if v_idx in used_vendor_rows:
                 continue
             v_inv = str(v.get("invoice_ven", "")).strip()
             v_amt = round(float(v["__amt"]), 2)
-            v_digits = extract_digits(v_inv)
-            v_code = clean_invoice_code(v_inv)  # <<< compute cleaned code
+            v_code = clean_invoice_code(v_inv)
             diff = round(e_amt - v_amt, 2)
             amt_close = abs(diff) < 0.05
-
-            # --- Υποψήφιοι έλεγχοι ομοιότητας ---
-            same_full  = (e_inv == v_inv)
+            same_full = (e_inv == v_inv)
             same_clean = (e_code == v_code)
-
             len_diff = abs(len(e_code) - len(v_code))
             suffix_ok = (
-                len(e_code) > 2 and len(v_code) > 2 and
-                len_diff <= 2 and (
+                len(e_code) > 2 and len(v_code) > 2 and len_diff <= 2 and (
                     e_code.endswith(v_code) or v_code.endswith(e_code)
                 )
             )
-
             same_type = (e["__doctype"] == v["__doctype"])
-
-            # --- ΝΕΟΣ κανόνας αποδοχής ---
-            if same_type and same_full:
-                take_it = True
-            elif same_type and (same_clean or suffix_ok) and amt_close:
-                take_it = True
-            else:
-                take_it = False
-
-            if take_it:
+            if same_type and (same_full or same_clean or suffix_ok) and amt_close:
                 matched.append({
                     "ERP Invoice": e_inv,
                     "Vendor Invoice": v_inv,
@@ -298,19 +236,14 @@ def match_invoices(erp_df, ven_df):
     matched_erp = {m["ERP Invoice"] for _, m in matched_df.iterrows()}
     matched_ven = {m["Vendor Invoice"] for _, m in matched_df.iterrows()}
 
-    missing_in_erp = (
-        ven_use[~ven_use["invoice_ven"].isin(matched_ven)][["invoice_ven", "__amt"]]
-        if "invoice_ven" in ven_use else pd.DataFrame()
-    )
-    missing_in_vendor = (
-        erp_use[~erp_use["invoice_erp"].isin(matched_erp)][["invoice_erp", "__amt"]]
-        if "invoice_erp" in erp_use else pd.DataFrame()
-    )
+    missing_in_erp = ven_use[~ven_use["invoice_ven"].isin(matched_ven)][["invoice_ven", "__amt"]] if "invoice_ven" in ven_use else pd.DataFrame()
+    missing_in_vendor = erp_use[~erp_use["invoice_erp"].isin(matched_erp)][["invoice_erp", "__amt"]] if "invoice_erp" in erp_use else pd.DataFrame()
 
     missing_in_erp = missing_in_erp.rename(columns={"invoice_ven": "Invoice", "__amt": "Amount"})
     missing_in_vendor = missing_in_vendor.rename(columns={"invoice_erp": "Invoice", "__amt": "Amount"})
 
     return matched_df, missing_in_erp, missing_in_vendor
+
 
 
 # ======================================
