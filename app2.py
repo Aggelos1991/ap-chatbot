@@ -213,27 +213,33 @@ def match_invoices(erp_df, ven_df):
         return re.sub(r"\D", "", str(v or "")).lstrip("0")
 
     # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+        def extract_digits(v):
+        return re.sub(r"\D", "", str(v or "")).lstrip("0")
+
+    # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
     # Add missing cleaner so we can compute e_code / v_code
-    def clean_invoice_code(v):
-        """
-        Normalize invoice strings for comparison:
-        Matches patterns like #F123, F123, F-123, F 123 → f123
-        """
-        if not v:
-            return ""
-        s = str(v).strip().lower()
-
-        # ✅ normalize patterns like "#F123", "F-123", "F 123", "#F 00123" → "f123"
-        s = re.sub(r"(?i)[#\s]*f[-\s]*0*", "f", s)
-
-        # remove known prefixes and year snippets
-        s = re.sub(r"^(αρ|τιμ|pf|ab|inv|tim|cn|ar|pa|πφ|πα|apo|ref|doc|num|no|fa|sf|ba|vn)", "", s)
-        s = re.sub(r"20\d{2}", "", s)
-
-        # keep only alphanumeric
-        s = re.sub(r"[^a-z0-9]", "", s)
+        def clean_invoice_code(v):
+            """
+            Normalize invoice strings for comparison:
+            Matches patterns like #F123, F123, F-123, F 123 → f123
+            """
+            if not v:
+                return ""
+            s = str(v).strip().lower()
+    
+            # ✅ normalize patterns like "#F123", "F-123", "F 123", "#F 00123" → "f123"
+            s = re.sub(r"(?i)[#\s]*f[-\s]*0*", "f", s)
+    
+            # remove known prefixes and year snippets
+            s = re.sub(r"^(αρ|τιμ|pf|ab|inv|tim|cn|ar|pa|πφ|πα|apo|ref|doc|num|no|fa|sf|ba|vn)", "", s)
+            s = re.sub(r"20\d{2}", "", s)
+    
+            # keep only alphanumeric
+            s = re.sub(r"[^a-z0-9]", "", s)
 
         return s
+    # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+
     # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
     # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
