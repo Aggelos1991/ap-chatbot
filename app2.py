@@ -148,7 +148,8 @@ def match_invoices(erp_df, ven_df):
         # Unified multilingual keywords
         payment_words = [
             "pago", "payment", "transfer", "bank", "saldo", "trf",
-            "πληρωμή", "μεταφορά", "τράπεζα", "τραπεζικό έμβασμα"
+            "πληρωμή", "μεταφορά", "τράπεζα", "τραπεζικό έμβασμα",
+            "cancellation - invoice - corrective entry"  # ✅ NEW phrase
         ]
         credit_words = [
             "credit", "nota", "abono", "cn", "πιστωτικό", "πίστωση","ακυρωτικό","ακυρωτικό παραστατικό","CANCELLATION - Invoice - Corrective entry"
