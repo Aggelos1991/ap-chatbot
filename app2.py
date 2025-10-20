@@ -434,8 +434,10 @@ if uploaded_erp and uploaded_vendor:
 
 from io import BytesIO
 from openpyxl import Workbook
-from openpyxl.utils import dataframe_to_rows, get_column_letter
+from openpyxl.utils.dataframe import dataframe_to_rows   # ✅ first import
+from openpyxl.utils import get_column_letter             # ✅ second import
 from openpyxl.styles import PatternFill, Font, Alignment
+import pandas as pd
 
 def export_reconciliation_excel(matched, erp_missing, ven_missing):
     wb = Workbook()
