@@ -2,9 +2,6 @@ import streamlit as st
 import pandas as pd
 import re
 
-st.image("https://raw.githubusercontent.com/Aggelos1991/ap-chatbot/main/assets/images.png", width=160)
-
-
 
 # ======================================
 # CONFIGURATION
