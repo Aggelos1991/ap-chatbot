@@ -186,17 +186,30 @@ def match_invoices(erp_df, ven_df):
   
     # ==========================================================
    # ==========================================================
+    # ==========================================================
     # 🔄 CANCELLATION RULE — remove fully neutralized invoices (ERP + Vendor)
     # ==========================================================
     def remove_neutralized(df, inv_col):
+        """Remove invoices that cancel themselves out (+X and -X = 0)."""
         if inv_col not in df.columns or "__amt" not in df.columns:
             return df
-        grouped = df.groupby(inv_col)["__amt"].sum().reset_index()
-        neutralized = grouped[abs(grouped["__amt"]) < 0.05][inv_col].tolist()
-        return df[~df[inv_col].isin(neutralized)].reset_index(drop=True)
     
+        # Ensure numeric
+        df["__amt"] = pd.to_numeric(df["__amt"], errors="coerce").fillna(0)
+    
+        # Group and find invoices with near-zero net
+        grouped = df.groupby(inv_col, dropna=False)["__amt"].sum().reset_index()
+        to_drop = grouped[abs(grouped["__amt"]) < 0.05][inv_col].dropna().astype(str).tolist()
+    
+        # Filter them out completely
+        df = df[~df[inv_col].astype(str).isin(to_drop)].copy()
+        return df.reset_index(drop=True)
+    
+    
+    # ✅ Apply to both ERP and Vendor before merging
     erp_use = remove_neutralized(erp_use, "invoice_erp")
     ven_use = remove_neutralized(ven_use, "invoice_ven")
+
 
 
 
