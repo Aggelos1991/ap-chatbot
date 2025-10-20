@@ -232,10 +232,6 @@ def match_invoices(erp_df, ven_df):
             if re.fullmatch(r"\d{4,}", p) and not re.fullmatch(r"20[0-3]\d", p):
                 s = p.lstrip("0")  # trim leading zeros (001248 → 1248)
                 break
-        s = str(v).strip().lower()
-
-        # ✅ normalize patterns like "#F123", "F-123", "F 123", "#F 00123" → "f123"
-        s = re.sub(r"(?i)[#\s]*f[-\s]*0*", "f", s)
         s = re.sub(r"^(αρ|τιμ|pf|ab|inv|tim|cn|ar|pa|πφ|πα|apo|ref|doc|num|no)\W*", "", s)
         s = re.sub(r"20\d{2}", "", s)
         s = re.sub(r"[^a-z0-9]", "", s)
@@ -243,9 +239,10 @@ def match_invoices(erp_df, ven_df):
         # keep only digits for the final compare (like earlier logic)
         s = re.sub(r"[^\d]", "", s)
         s = re.sub(
-        s = re.sub(r"^(αρ|τιμ|pf|ab|inv|tim|cn|ar|pa|πφ|πα|apo|ref|doc|num|no|fa|sf|ba|vn)", "", s)
-        s = re.sub(r"20\d{2}", "", s)
-        s = re.sub(r"[^a-z0-9]", "", s)
+    r"^(αρ|τιμ|pf|ab|inv|tim|cn|ar|pa|πφ|πα|apo|ref|doc|num|no|fa|sf|ba|vn)\W*", 
+    "", 
+    s
+)            
         return s
     # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
