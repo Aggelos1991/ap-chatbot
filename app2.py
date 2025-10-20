@@ -122,7 +122,7 @@ def match_invoices(erp_df, ven_df):
             return "IGNORE"
 
         credit_words = ["credit", "nota", "abono", "cn", "πιστωτικό", "πίστωση","ακυρωτικό","ακυρωτικό παραστατικό"]
-        invoice_words = ["factura", "invoice", "inv", "τιμολόγιο", "παραστατικό"]
+        invoice_words = ["factura", "invoice", "inv", "τιμολόγιο", "παραστατικό","F", "#F"]
 
         if any(k in reason for k in credit_words):
             return "CN"
