@@ -116,7 +116,7 @@ def match_invoices(erp_df, ven_df):
             r"^remesa",             # Spanish
             r"^pago",               # Spanish
             r"^transferencia",      # Spanish
-            r"έμβασμα από πελάτη χειρ",      # full phrase for manual transfer
+            r"Έμβασμα από πελάτη χειρ.",      # full phrase for manual transfer
             r"(?i)^f[-\s]?\d{4,8}",
             r"(?i)cancellation\s*-\s*invoice\s*-\s*corrective\s*entry"  # ✅ NEW pattern,
         ]
