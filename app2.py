@@ -440,32 +440,29 @@ import pandas as pd
 
 def export_reconciliation_excel(matched, erp_missing, ven_missing):
     wb = Workbook()
-    ws1 = wb.active
-    ws1.title = "Matched"
 
-    # --- Helper: simple header style ---
-    def style_header(ws, color):
-        for cell in ws[1]:
-            cell.fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
-            cell.font = Font(color="FFFFFF", bold=True)
+    def add_sheet(df, name, color):
+        ws = wb.create_sheet(name)
+        for r in dataframe_to_rows(df, index=False, header=True):
+            ws.append(r)
+        for c in ws[1]:
+            c.fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
+            c.font = Font(color="FFFFFF", bold=True)
 
-    # ===== Sheet 1: Matched =====
-    for r in dataframe_to_rows(matched, index=False, header=True):
-        ws1.append(r)
-    style_header(ws1, "1e88e5")
+    # Matched
+    add_sheet(matched, "Matched", "1e88e5")
 
-    # ===== Sheet 2: Combined Missing =====
-    ws2 = wb.create_sheet("Missing (ERP & Vendor)")
+    # Combined Missing
     if not erp_missing.empty:
         erp_missing["Source"] = "Vendor file (not in ERP)"
     if not ven_missing.empty:
         ven_missing["Source"] = "ERP file (not in Vendor)"
     combined = pd.concat([erp_missing, ven_missing], ignore_index=True)
-    for r in dataframe_to_rows(combined, index=False, header=True):
-        ws2.append(r)
-    style_header(ws2, "6a1b9a")
+    add_sheet(combined, "Missing (ERP & Vendor)", "6a1b9a")
 
+    # Save to buffer
     buffer = BytesIO()
+    wb.remove(wb["Sheet"])  # remove default
     wb.save(buffer)
     buffer.seek(0)
     return buffer
