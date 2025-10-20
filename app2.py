@@ -649,7 +649,13 @@ if 'matched' in locals() and 'erp_missing' in locals() and 'ven_missing' in loca
     excel_output = export_reconciliation_excel(matched, erp_missing, ven_missing)
 else:
     st.error("⚠️ Reconciliation data not available — please upload valid ERP and Vendor files first.")
-excel_output = export_reconciliation_excel(matched, erp_missing, ven_missing)
+# ✅ Safe Excel export
+try:
+    excel_output = export_reconciliation_excel(matched, erp_missing, ven_missing)
+except NameError:
+    st.error("⚠️ Reconciliation data not available — please upload valid ERP and Vendor files first.")
+except Exception as e:
+    st.error(f"❌ Error while exporting Excel report: {e}")
 
 st.download_button(
     label="⬇️ Download Excel Report",
