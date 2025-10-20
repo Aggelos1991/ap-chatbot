@@ -93,21 +93,6 @@ def normalize_columns(df, tag):
 
     return out
 
-import unicodedata
-
-def normalize_greek(text):
-    """Remove accents, normalize spaces and punctuation for consistent Greek regex/string matching."""
-    if not isinstance(text, str):
-        return ""
-    # Normalize accents
-    text = unicodedata.normalize("NFD", text)
-    text = "".join(ch for ch in text if unicodedata.category(ch) != "Mn")
-    # Replace non-breaking spaces and weird Unicode spaces
-    text = text.replace("\xa0", " ").replace("\u200b", "").replace(".", "")
-    # Convert to lowercase and trim
-    text = text.lower().strip()
-    return text
-
 
 # ======================================
 # CORE MATCHING
@@ -117,41 +102,33 @@ def match_invoices(erp_df, ven_df):
     used_vendor_rows = set()
 
     def detect_erp_doc_type(row):
-    reason = normalize_greek(row.get("reason_erp", ""))
-    charge = normalize_number(row.get("debit_erp"))
-    credit = normalize_number(row.get("credit_erp"))
+        reason = str(row.get("reason_erp", "")).lower()
+        charge = normalize_number(row.get("debit_erp"))
+        credit = normalize_number(row.get("credit_erp"))
 
-    # 🔥 Universal payment keywords (normalized Greek + Latin)
-    payment_keywords = [
-        "πληρωμ", "αποδειξη πληρωμ", "payment", "bank transfer",
-        "transfer", "trf", "remesa", "pago", "transferencia",
-        "εμβασμα απο πελατη χειρ", "χειροκινητο εμβασμα",
-        "χαε", "xae"
-    ]
+        # Unified multilingual keywords/patterns
+        payment_patterns = [
+            r"^πληρωμ",             # Greek "Πληρωμή"
+            r"^απόδειξη\s*πληρωμ",  # Greek "Απόδειξη πληρωμής"
+            r"^payment",            # English: "Payment"
+            r"^bank\s*transfer",    # "Bank Transfer"
+            r"^trf",                # "TRF ..."
+            r"^remesa",             # Spanish
+            r"^pago",               # Spanish
+            r"^transferencia",      # Spanish
+            r"(?i)^f[-\s]?\d{4,8}",
+        ]
+        if any(re.search(p, reason) for p in payment_patterns):
+            return "IGNORE"
 
-    # remove punctuation and convert to plain lowercase Greek/Latin
-    reason_clean = (
-        reason.replace(".", "")
-              .replace(",", "")
-              .replace("·", "")
-              .replace("xae", "χαε")  # normalize Latin to Greek
-              .strip()
-    )
+        credit_words = ["credit", "nota", "abono", "cn", "πιστωτικό", "πίστωση","ακυρωτικό","ακυρωτικό παραστατικό"]
+        invoice_words = ["factura", "invoice", "inv", "τιμολόγιο", "παραστατικό"]
 
-    if any(k in reason_clean for k in payment_keywords):
-        return "IGNORE"
-
-    credit_words = ["credit", "nota", "abono", "cn", "πιστωτικ", "πιστωτικο", "πίστωση", "ακυρωτικ"]
-    invoice_words = ["factura", "invoice", "inv", "τιμολ", "παραστατικ"]
-
-    if any(k in reason_clean for k in credit_words):
-        return "CN"
-    elif any(k in reason_clean for k in invoice_words) or credit > 0:
-        return "INV"
-    return "UNKNOWN"
-
-
-
+        if any(k in reason for k in credit_words):
+            return "CN"
+        elif any(k in reason for k in invoice_words) or credit > 0:
+            return "INV"
+        return "UNKNOWN"
 
     def calc_erp_amount(row):
         doc = row.get("__doctype", "")
@@ -164,27 +141,21 @@ def match_invoices(erp_df, ven_df):
         return 0.0
 
     def detect_vendor_doc_type(row):
-        reason = normalize_greek(row.get("reason_ven", ""))
+        reason = str(row.get("reason_ven", "")).lower()
         debit = normalize_number(row.get("debit_ven"))
         credit = normalize_number(row.get("credit_ven"))
 
         # Unified multilingual keywords
         payment_words = [
             "pago", "payment", "transfer", "bank", "saldo", "trf",
-            "πληρωμή", "μεταφορά", "τράπεζα", "τραπεζικό έμβασμα",
-            "cancellation - invoice - corrective entry"  # ✅ NEW phrase,
-            "Έμβασμα από πελάτη χειρ."   # ✅ added lowercase variant without dot,
-            "ΧΑΕ", "XAE"     # ✅ added manual transfer markers,
-            "εμβασμα απο πελατη χειρ.",  "χαε", "xae", "χειροκινητο εμβασμα"
+            "πληρωμή", "μεταφορά", "τράπεζα", "τραπεζικό έμβασμα"
         ]
         credit_words = [
-            "credit", "nota", "abono", "cn", "πιστωτικό", "πίστωση","ακυρωτικό","ακυρωτικό παραστατικό","CANCELLATION - Invoice - Corrective entry"
+            "credit", "nota", "abono", "cn", "πιστωτικό", "πίστωση","ακυρωτικό","ακυρωτικό παραστατικό"
         ]
         invoice_words = [
             "factura", "invoice", "inv", "τιμολόγιο", "παραστατικό"
         ]
-        if "cancellation - invoice - corrective entry" in reason:
-            return "CN"
 
         if any(k in reason for k in payment_words):
             return "IGNORE"
@@ -208,12 +179,6 @@ def match_invoices(erp_df, ven_df):
     erp_df["__amt"] = erp_df.apply(calc_erp_amount, axis=1)
     ven_df["__doctype"] = ven_df.apply(detect_vendor_doc_type, axis=1)
     ven_df["__amt"] = ven_df.apply(calc_vendor_amount, axis=1)
-    # ==========================================================
-    # 🚫 REMOVE IGNORE ROWS COMPLETELY
-    # ==========================================================
-    erp_df = erp_df[erp_df["__doctype"] != "IGNORE"].reset_index(drop=True)
-    ven_df = ven_df[ven_df["__doctype"] != "IGNORE"].reset_index(drop=True)
-
 
     erp_use = erp_df[erp_df["__doctype"].isin(["INV", "CN"])].copy()
     ven_use = ven_df[ven_df["__doctype"].isin(["INV", "CN"])].copy()
@@ -411,8 +376,8 @@ def match_invoices(erp_df, ven_df):
 def extract_payments(erp_df: pd.DataFrame, ven_df: pd.DataFrame):
     # --- λέξεις που δείχνουν πληρωμή ---
     payment_keywords = [
-        "πληρωμή", "payment", "bank transfer", "transferencia bancaria","TRANSFERENCIA",
-        "transfer", "trf", "remesa", "pago", "deposit", "μεταφορά", "έμβασμα","Έμβασμα από πελάτη χειρ."
+        "πληρωμή", "payment", "bank transfer", "transferencia bancaria",
+        "transfer", "trf", "remesa", "pago", "deposit", "μεταφορά", "έμβασμα"
     ]
 
     # --- λέξεις που δείχνουν ότι ΔΕΝ είναι πληρωμή ---
@@ -670,15 +635,13 @@ def export_reconciliation_excel(matched, erp_missing, ven_missing):
 
 
 # ====== DOWNLOAD BUTTON ======
-if uploaded_erp and uploaded_vendor:
-    st.markdown("### 📥 Download Reconciliation Excel Report")
+st.markdown("### 📥 Download Reconciliation Excel Report")
 
-    excel_output = export_reconciliation_excel(matched, erp_missing, ven_missing)
+excel_output = export_reconciliation_excel(matched, erp_missing, ven_missing)
 
-    st.download_button(
-        label="⬇️ Download Excel Report",
-        data=excel_output,
-        file_name="Reconciliation_Report.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
-
+st.download_button(
+    label="⬇️ Download Excel Report",
+    data=excel_output,
+    file_name="Reconciliation_Report.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+)
