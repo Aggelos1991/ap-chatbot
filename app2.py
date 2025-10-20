@@ -241,8 +241,14 @@ def match_invoices(erp_df, ven_df):
                 match_type = "Last3"
             elif e_core.lstrip("0") == v_core.lstrip("0") and amt_close:
                 match_type = "Prefixless"
-            elif e_num == v_num and amt_close:
-                match_type = "Prefix+Space Numeric"
+                        # NEW universal prefix-space numeric rule
+            elif amt_close:
+                e_num = re.sub(r"[^0-9]", "", re.sub(r"^[A-Za-z]{2,4}\s+", "", e_inv))
+                v_num = re.sub(r"[^0-9]", "", re.sub(r"^[A-Za-z]{2,4}\s+", "", v_inv))
+                if e_num and v_num and e_num == v_num:
+                    match_type = "Prefix+Space Numeric"
+                else:
+                    continue
             else:
                 continue
 
