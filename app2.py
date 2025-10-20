@@ -225,6 +225,8 @@ def match_invoices(erp_df, ven_df):
         if not v:
             return ""
         s = str(v).strip().lower()
+        # ✅ normalize patterns like "#F123", "F-123", "F 123", "#F 00123" → "f123"
+        s = re.sub(r"(?i)[#\s]*f[-\s]*0*", "f", s)
             # 🧩 Handle structured invoice patterns like 2025-FV-00001-001248-01
         parts = re.split(r"[-_]", s)
         for p in reversed(parts):
