@@ -116,8 +116,7 @@ def match_invoices(erp_df, ven_df):
             r"^remesa",             # Spanish
             r"^pago",               # Spanish
             r"^transferencia",      # Spanish
-            re.search(r"^F[-\s]?\d{2,6}", text, re.IGNORECASE)
-
+           r"^F[-\s]?\d{2,6}",   # Matches FA123, FA-123, FA 123, FA00123, etc.
         ]
         if any(re.search(p, reason) for p in payment_patterns):
             return "IGNORE"
