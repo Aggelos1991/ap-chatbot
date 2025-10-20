@@ -389,7 +389,7 @@ def match_invoices(erp_df, ven_df):
 def extract_payments(erp_df: pd.DataFrame, ven_df: pd.DataFrame):
     # --- λέξεις που δείχνουν πληρωμή ---
     payment_keywords = [
-        "πληρωμή", "payment", "bank transfer", "transferencia bancaria",
+        "πληρωμή", "payment", "bank transfer", "transferencia bancaria","TRANSFERENCIA",
         "transfer", "trf", "remesa", "pago", "deposit", "μεταφορά", "έμβασμα"
     ]
 
