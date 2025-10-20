@@ -142,14 +142,26 @@ def match_invoices(erp_df, ven_df):
         return 0.0
 
     def detect_vendor_doc_type(row):
-        reason = str(row.get("reason_ven", "")).lower()
+        import unicodedata
+        
+        def clean_reason(text):
+            """Normalize Greek strings (removes accents, hidden spaces, makes lowercase)."""
+            if not isinstance(text, str):
+                return ""
+            text = unicodedata.normalize("NFD", text)
+            text = "".join(ch for ch in text if unicodedata.category(ch) != "Mn")
+            text = text.replace("\xa0", " ").replace("\u200b", "").strip().lower()
+            return text
+        
+        reason = clean_reason(row.get("reason_ven", ""))
+
         debit = normalize_number(row.get("debit_ven"))
         credit = normalize_number(row.get("credit_ven"))
 
         # Unified multilingual keywords
         payment_words = [
             "pago", "payment", "transfer", "bank", "saldo", "trf",
-            "πληρωμή", "μεταφορά", "τράπεζα", "τραπεζικό έμβασμα", "Έμβασμα από πελάτη χειρ."   # ✅ EXACT match as seen in Excel
+            "πληρωμή", "μεταφορά", "τράπεζα", "τραπεζικό έμβασμα", "Έμβασμα από πελάτη χειρ.","έμβασμα από πελάτη χειρ."    # ✅ EXACT match as seen in Excel
         ]
         credit_words = [
             "credit", "nota", "abono", "cn", "πιστωτικό", "πίστωση","ακυρωτικό","ακυρωτικό παραστατικό"
