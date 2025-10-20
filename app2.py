@@ -482,7 +482,8 @@ def export_reconciliation_excel(matched, erp_missing, ven_missing):
     for ws in [ws1, ws2]:
         for col in ws.columns:
             max_len = max(len(str(c.value)) if c.value else 0 for c in col)
-            ws.column_dimensions[col[0].column_letter].width = max_len + 3
+            from openpyxl.utils import get_column_letter
+            ws.column_dimensions[get_column_letter(col[0].column)].width = max_len + 3
 
     # ===== Save =====
     buffer = BytesIO()
