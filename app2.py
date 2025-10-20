@@ -185,6 +185,9 @@ def match_invoices(erp_df, ven_df):
             merged_rows.append(group.iloc[-1])
 
     erp_use = pd.DataFrame(merged_rows).reset_index(drop=True)
+    # ensure netting works even when one side is debit and the other is credit
+    erp_use["__amt"] = erp_use["__amt"].astype(float)
+    ven_use["__amt"] = ven_use["__amt"].astype(float)
     erp_use = erp_use.groupby(["invoice_erp", "__doctype"], as_index=False)["__amt"].sum()
     ven_use = ven_use.groupby(["invoice_ven", "__doctype"], as_index=False)["__amt"].sum()
 
