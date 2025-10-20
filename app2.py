@@ -365,11 +365,27 @@ def match_invoices(erp_df, ven_df):
         return df[~df["Invoice"].isin(to_drop)].reset_index(drop=True)
     
     # 🔧 FIXED variable names here (only change)
-    missing_in_erp = remove_residual_neutralized(missing_in_erp)
-    missing_in_vendor = remove_residual_neutralized(missing_in_vendor)
+        missing_in_erp = remove_residual_neutralized(missing_in_erp)
+        missing_in_vendor = remove_residual_neutralized(missing_in_vendor)
+    
+        # ==========================================================
+        # 🔥 GLOBAL CROSS-CANCELLATION FIX
+        # ==========================================================
+        # If same invoice exists as +X in one side and -X in the other → drop from both
+        if not missing_in_erp.empty and not missing_in_vendor.empty:
+            df_all = pd.concat([
+                missing_in_erp.assign(Source="ERP"),
+                missing_in_vendor.assign(Source="VENDOR")
+            ], ignore_index=True)
+            df_all["Amount"] = pd.to_numeric(df_all["Amount"], errors="coerce").fillna(0)
+            cross = df_all.groupby("Invoice")["Amount"].sum().reset_index()
+            neutralized_cross = cross[abs(cross["Amount"]) < 0.05]["Invoice"].tolist()
+    
+            missing_in_erp = missing_in_erp[~missing_in_erp["Invoice"].isin(neutralized_cross)]
+            missing_in_vendor = missing_in_vendor[~missing_in_vendor["Invoice"].isin(neutralized_cross)]
+    
+        return matched_df, missing_in_erp.reset_index(drop=True), missing_in_vendor.reset_index(drop=True)
 
-
-    return matched_df, missing_in_erp, missing_in_vendor
 
 
 # ======================================
