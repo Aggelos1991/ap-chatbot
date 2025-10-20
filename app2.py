@@ -254,51 +254,51 @@ def match_invoices(erp_df, ven_df):
     # Add missing cleaner so we can compute e_code / v_code
     def clean_invoice_code(v):
     """
-    Stable normalization:
-    - Removes prefixes (INV, CN, TIM, etc.)
-    - Handles structured invoices like 2025-FV-00001-001248-01
-    - Keeps all significant numeric blocks joined (00124801 -> 124801)
-    - Removes only years (20xx), not random digits
-    - Never truncates short codes (2042 ≠ 2046)
-    """
-    if not v:
-        return ""
-    s = str(v).strip().lower()
-
-    # Remove known prefixes
-    s = re.sub(r"(?i)[#\s]*f[-\s]*0*", "f", s)
-    s = re.sub(
-        r"^(αρ|τιμ|pf|ab|inv|tim|cn|ar|pa|πφ|πα|apo|ref|doc|num|no|fa|sf|ba|vn)\W*", 
-        "", 
-        s
-    )
-
-    # Remove years
-    s = re.sub(r"20\d{2}", "", s)
-
-    # Split by delimiters (-, _, /)
-    parts = re.split(r"[-_/]", s)
-    clean_parts = []
-
-    for p in parts:
-        p = re.sub(r"[^a-z0-9]", "", p)
-        if not p:
-            continue
-        # Skip purely numeric year-like chunks (2020–2039)
-        if re.fullmatch(r"20[0-3]\d", p):
-            continue
-        # Keep everything else, trimmed of leading zeros
-        clean_parts.append(p.lstrip("0") or "0")
-
-    # Join everything back together
-    s = "".join(clean_parts)
-
-    # Final cleanup: keep only alphanumerics
-    s = re.sub(r"[^a-z0-9]", "", s)
-    return s
-    # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
-    # ==========================================================
-  
+        Stable normalization:
+        - Removes prefixes (INV, CN, TIM, etc.)
+        - Handles structured invoices like 2025-FV-00001-001248-01
+        - Keeps all significant numeric blocks joined (00124801 -> 124801)
+        - Removes only years (20xx), not random digits
+        - Never truncates short codes (2042 ≠ 2046)
+        """
+        if not v:
+            return ""
+        s = str(v).strip().lower()
+    
+        # Remove known prefixes
+        s = re.sub(r"(?i)[#\s]*f[-\s]*0*", "f", s)
+        s = re.sub(
+            r"^(αρ|τιμ|pf|ab|inv|tim|cn|ar|pa|πφ|πα|apo|ref|doc|num|no|fa|sf|ba|vn)\W*", 
+            "", 
+            s
+        )
+    
+        # Remove years
+        s = re.sub(r"20\d{2}", "", s)
+    
+        # Split by delimiters (-, _, /)
+        parts = re.split(r"[-_/]", s)
+        clean_parts = []
+    
+        for p in parts:
+            p = re.sub(r"[^a-z0-9]", "", p)
+            if not p:
+                continue
+            # Skip purely numeric year-like chunks (2020–2039)
+            if re.fullmatch(r"20[0-3]\d", p):
+                continue
+            # Keep everything else, trimmed of leading zeros
+            clean_parts.append(p.lstrip("0") or "0")
+    
+        # Join everything back together
+        s = "".join(clean_parts)
+    
+        # Final cleanup: keep only alphanumerics
+        s = re.sub(r"[^a-z0-9]", "", s)
+        return s
+        # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+        # ==========================================================
+      
 
     for e_idx, e in erp_use.iterrows():
         e_inv = str(e.get("invoice_erp", "")).strip()
