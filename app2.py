@@ -478,18 +478,18 @@ if uploaded_erp and uploaded_vendor:
         st.info("No matching payments found.")
     # ======================================
 def export_reconciliation_excel(matched, erp_missing, ven_missing):
-    """✅ Clean, stable, correct version with colors, headers, and accurate totals."""
+    """Stable version with correct alignment, titles, and totals for Missing tables."""
     import io
     from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
     from openpyxl.utils import get_column_letter
 
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        # ===== 1️⃣ Matched & Differences sheet =====
+        # ===== 1️⃣ Matched & Differences =====
         matched.to_excel(writer, index=False, sheet_name="Matched & Differences")
         ws1 = writer.sheets["Matched & Differences"]
 
-        # Header formatting
+        # Header
         header_fill = PatternFill(start_color="4CAF50", end_color="4CAF50", fill_type="solid")
         header_font = Font(bold=True, color="FFFFFF")
         for cell in ws1[1]:
@@ -497,92 +497,88 @@ def export_reconciliation_excel(matched, erp_missing, ven_missing):
             cell.font = header_font
             cell.alignment = Alignment(horizontal="center", vertical="center")
 
-        # Alternate row shading
+        # Alternate shading
         for i, row in enumerate(ws1.iter_rows(min_row=2), start=2):
             if i % 2 == 0:
                 for cell in row:
                     cell.fill = PatternFill(start_color="E8F5E9", end_color="E8F5E9", fill_type="solid")
 
-        # Auto column width
+        # Auto width
         for col in ws1.columns:
-            max_length = 0
-            column = get_column_letter(col[0].column)
-            for cell in col:
-                try:
-                    max_length = max(max_length, len(str(cell.value)))
-                except:
-                    pass
-            ws1.column_dimensions[column].width = max_length + 2
+            max_len = max(len(str(c.value)) if c.value else 0 for c in col)
+            ws1.column_dimensions[get_column_letter(col[0].column)].width = max_len + 2
 
-        # ===== 2️⃣ Missing sheet =====
-        erp_missing.to_excel(writer, index=False, sheet_name="Missing", startrow=3)
-        start_col = len(erp_missing.columns) + 3
-        ven_missing.to_excel(writer, index=False, sheet_name="Missing", startcol=start_col, startrow=3)
+        # ===== 2️⃣ Missing =====
+        ws_name = "Missing"
+        erp_missing = erp_missing.copy()
+        ven_missing = ven_missing.copy()
 
-        ws2 = writer.sheets["Missing"]
-
-        # Headers
-        ws2["A1"] = "Missing in ERP"
-        ws2["A1"].font = Font(bold=True, size=14, color="FFFFFF")
-        ws2["A1"].alignment = Alignment(horizontal="center")
-        ws2["A1"].fill = PatternFill(start_color="E53935", end_color="E53935", fill_type="solid")
-
-        ws2.cell(row=1, column=start_col + 1).value = "Missing in Vendor"
-        ws2.cell(row=1, column=start_col + 1).font = Font(bold=True, size=14, color="FFFFFF")
-        ws2.cell(row=1, column=start_col + 1).alignment = Alignment(horizontal="center")
-        ws2.cell(row=1, column=start_col + 1).fill = PatternFill(start_color="1E88E5", end_color="1E88E5", fill_type="solid")
-
-        # Header styles
-        header_fill_erp = PatternFill(start_color="FFCDD2", end_color="FFCDD2", fill_type="solid")
-        header_fill_ven = PatternFill(start_color="BBDEFB", end_color="BBDEFB", fill_type="solid")
-        for cell in ws2[3]:
-            cell.fill = header_fill_erp
-            cell.font = Font(bold=True)
-        for cell in ws2.iter_rows(min_row=3, min_col=start_col + 1, max_row=3):
-            for c in cell:
-                c.fill = header_fill_ven
-                c.font = Font(bold=True)
-
-        # ✅ Numeric safety before totals
+        # Ensure numeric Amount column
         if "Amount" in erp_missing.columns:
             erp_missing["Amount"] = pd.to_numeric(erp_missing["Amount"], errors="coerce").fillna(0)
         if "Amount" in ven_missing.columns:
             ven_missing["Amount"] = pd.to_numeric(ven_missing["Amount"], errors="coerce").fillna(0)
 
-        # Totals
-        erp_total = erp_missing["Amount"].sum() if not erp_missing.empty else 0
-        ven_total = ven_missing["Amount"].sum() if not ven_missing.empty else 0
-        erp_total_row = erp_missing.shape[0] + 4
-        ven_total_col = start_col + 1
+        # Write both tables
+        erp_missing.to_excel(writer, index=False, sheet_name=ws_name, startrow=4)
+        start_col = len(erp_missing.columns) + 4
+        ven_missing.to_excel(writer, index=False, sheet_name=ws_name, startcol=start_col, startrow=4)
+
+        ws2 = writer.sheets[ws_name]
+
+        # Titles
+        ws2["A1"] = "Missing in ERP"
+        ws2["A1"].font = Font(bold=True, size=14, color="FFFFFF")
+        ws2["A1"].fill = PatternFill(start_color="E53935", end_color="E53935", fill_type="solid")
+        ws2["A1"].alignment = Alignment(horizontal="center")
+
+        ws2.cell(row=1, column=start_col + 1).value = "Missing in Vendor"
+        ws2.cell(row=1, column=start_col + 1).font = Font(bold=True, size=14, color="FFFFFF")
+        ws2.cell(row=1, column=start_col + 1).fill = PatternFill(start_color="1E88E5", end_color="1E88E5", fill_type="solid")
+        ws2.cell(row=1, column=start_col + 1).alignment = Alignment(horizontal="center")
+
+        # Header formatting
+        header_fill_erp = PatternFill(start_color="FFCDD2", end_color="FFCDD2", fill_type="solid")
+        header_fill_ven = PatternFill(start_color="BBDEFB", end_color="BBDEFB", fill_type="solid")
+        for c in ws2[5]:
+            c.fill = header_fill_erp
+            c.font = Font(bold=True)
+        for cell in ws2.iter_rows(min_row=5, min_col=start_col + 1, max_row=5):
+            for c in cell:
+                c.fill = header_fill_ven
+                c.font = Font(bold=True)
+
+        # Totals right below data
+        erp_total_row = len(erp_missing) + 6
+        ven_total_row = len(ven_missing) + 6
+
+        erp_total = erp_missing["Amount"].sum()
+        ven_total = ven_missing["Amount"].sum()
 
         ws2[f"A{erp_total_row}"] = "TOTAL:"
         ws2[f"A{erp_total_row}"].font = Font(bold=True, color="E53935")
         ws2[f"B{erp_total_row}"] = float(erp_total)
         ws2[f"B{erp_total_row}"].font = Font(bold=True)
 
-        ws2.cell(row=erp_total_row, column=ven_total_col).value = "TOTAL:"
-        ws2.cell(row=erp_total_row, column=ven_total_col).font = Font(bold=True, color="1E88E5")
-        ws2.cell(row=erp_total_row, column=ven_total_col + 1).value = float(ven_total)
-        ws2.cell(row=erp_total_row, column=ven_total_col + 1).font = Font(bold=True)
+        ws2.cell(row=ven_total_row, column=start_col + 1).value = "TOTAL:"
+        ws2.cell(row=ven_total_row, column=start_col + 1).font = Font(bold=True, color="1E88E5")
+        ws2.cell(row=ven_total_row, column=start_col + 2).value = float(ven_total)
+        ws2.cell(row=ven_total_row, column=start_col + 2).font = Font(bold=True)
 
-        # Borders + auto width
+        # Borders + width
         thin = Border(left=Side(style="thin"), right=Side(style="thin"), top=Side(style="thin"), bottom=Side(style="thin"))
-        for row in ws2.iter_rows(min_row=3):
+        for row in ws2.iter_rows(min_row=4):
             for cell in row:
                 cell.border = thin
 
         for col in ws2.columns:
-            max_length = 0
-            column = get_column_letter(col[0].column)
-            for cell in col:
-                try:
-                    max_length = max(max_length, len(str(cell.value)))
-                except:
-                    pass
-            ws2.column_dimensions[column].width = max_length + 2
+            max_len = max(len(str(c.value)) if c.value else 0 for c in col)
+            ws2.column_dimensions[get_column_letter(col[0].column)].width = max_len + 2
 
     output.seek(0)
     return output
+
+
 # ====== DOWNLOAD BUTTON ======
 st.markdown("### 📥 Download Reconciliation Excel Report")
 
