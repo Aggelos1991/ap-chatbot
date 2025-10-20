@@ -378,7 +378,7 @@ def extract_payments(erp_df: pd.DataFrame, ven_df: pd.DataFrame):
     # --- λέξεις που δείχνουν πληρωμή ---
     payment_keywords = [
         "πληρωμή", "payment", "bank transfer", "transferencia bancaria",
-        "transfer", "trf", "remesa", "pago", "deposit", "μεταφορά", "έμβασμα"
+        "transfer", "trf", "remesa", "pago", "deposit", "μεταφορά", "έμβασμα","εμβασμα απο πελατη χειρ."
     ]
 
     # --- λέξεις που δείχνουν ότι ΔΕΝ είναι πληρωμή ---
