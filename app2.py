@@ -475,59 +475,57 @@ if uploaded_erp and uploaded_vendor:
     else:
         st.info("No matching payments found.")
 
-# ======================================
-# EXPORT SIMPLIFIED REPORT (2-SHEET FORMAT)
-# ======================================
-import io
-from openpyxl import load_workbook
-from openpyxl.utils import get_column_letter
-from openpyxl.styles import Font, Alignment
 
-def export_reconciliation_excel(matched, erp_missing, ven_missing):
-    """Generate a clean 2-tab Excel report."""
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        # 1️⃣ Matched / Differences
-        matched.to_excel(writer, index=False, sheet_name="Matched & Differences")
+    # ======================================
+    # 📥 EXCEL EXPORT (2-SHEET VERSION)
+    # ======================================
+    import io
+    from openpyxl import load_workbook
+    from openpyxl.utils import get_column_letter
+    from openpyxl.styles import Font, Alignment
 
-        # 2️⃣ Missing tables (ERP + Vendor)
-        start_row = 2
-        # Write Missing in ERP
-        erp_missing.to_excel(writer, index=False, sheet_name="Missing", startrow=start_row)
-        # Write Missing in Vendor beside it
-        start_col = len(erp_missing.columns) + 3
-        ven_missing.to_excel(writer, index=False, sheet_name="Missing", startcol=start_col, startrow=start_row)
+    def export_reconciliation_excel(matched, erp_missing, ven_missing):
+        """Generate a clean 2-tab Excel report."""
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            # 1️⃣ Matched / Differences
+            matched.to_excel(writer, index=False, sheet_name="Matched & Differences")
 
-        ws = writer.sheets["Missing"]
-        ws["A1"] = "Missing in ERP"
-        ws["A1"].font = Font(bold=True, size=12)
-        ws["A1"].alignment = Alignment(horizontal="center")
+            # 2️⃣ Missing tables (ERP + Vendor)
+            start_row = 2
+            erp_missing.to_excel(writer, index=False, sheet_name="Missing", startrow=start_row)
+            start_col = len(erp_missing.columns) + 3
+            ven_missing.to_excel(writer, index=False, sheet_name="Missing", startcol=start_col, startrow=start_row)
 
-        ws.cell(row=1, column=start_col + 1).value = "Missing in Vendor"
-        ws.cell(row=1, column=start_col + 1).font = Font(bold=True, size=12)
-        ws.cell(row=1, column=start_col + 1).alignment = Alignment(horizontal="center")
+            ws = writer.sheets["Missing"]
+            ws["A1"] = "Missing in ERP"
+            ws["A1"].font = Font(bold=True, size=12)
+            ws["A1"].alignment = Alignment(horizontal="center")
 
-        # Auto width
-        for i, col in enumerate(ws.columns, 1):
-            max_len = 0
-            col_letter = get_column_letter(i)
-            for cell in col:
-                try:
-                    max_len = max(max_len, len(str(cell.value)))
-                except:
-                    pass
-            ws.column_dimensions[col_letter].width = max_len + 2
+            ws.cell(row=1, column=start_col + 1).value = "Missing in Vendor"
+            ws.cell(row=1, column=start_col + 1).font = Font(bold=True, size=12)
+            ws.cell(row=1, column=start_col + 1).alignment = Alignment(horizontal="center")
 
-    output.seek(0)
-    return output
+            # Auto width
+            for i, col in enumerate(ws.columns, 1):
+                max_len = 0
+                col_letter = get_column_letter(i)
+                for cell in col:
+                    try:
+                        max_len = max(max_len, len(str(cell.value)))
+                    except:
+                        pass
+                ws.column_dimensions[col_letter].width = max_len + 2
 
+        output.seek(0)
+        return output
 
-# ====== DOWNLOAD BUTTON ======
-st.markdown("### 📥 Download Excel Report")
-excel_output = export_reconciliation_excel(matched, erp_missing, ven_missing)
-st.download_button(
-    label="⬇️ Download Reconciliation Report (Excel)",
-    data=excel_output,
-    file_name="Reconciliation_Report.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-)
+    # ====== DOWNLOAD BUTTON ======
+    st.markdown("### 📥 Download Excel Report")
+    excel_output = export_reconciliation_excel(matched, erp_missing, ven_missing)
+    st.download_button(
+        label="⬇️ Download Reconciliation Report (Excel)",
+        data=excel_output,
+        file_name="Reconciliation_Report.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
