@@ -144,14 +144,14 @@ def match_invoices(erp_df, ven_df):
     def detect_vendor_doc_type(row):
         import unicodedata
         
-        def clean_reason(text):
-            """Normalize Greek strings (removes accents, hidden spaces, makes lowercase)."""
-            if not isinstance(text, str):
+        def clean_text(s):
+            """Normalize Greek text for reliable matching."""
+            if not isinstance(s, str):
                 return ""
-            text = unicodedata.normalize("NFD", text)
-            text = "".join(ch for ch in text if unicodedata.category(ch) != "Mn")
-            text = text.replace("\xa0", " ").replace("\u200b", "").strip().lower()
-            return text
+            s = unicodedata.normalize("NFD", s)
+            s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
+            s = s.replace("\xa0", " ").replace("\u200b", "").strip().lower()
+            return s
         
         reason = clean_reason(row.get("reason_ven", ""))
 
