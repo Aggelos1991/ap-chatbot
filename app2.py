@@ -117,41 +117,39 @@ def match_invoices(erp_df, ven_df):
     used_vendor_rows = set()
 
     def detect_erp_doc_type(row):
-        reason = normalize_greek(row.get("reason_erp", ""))
-        charge = normalize_number(row.get("debit_erp"))
-        credit = normalize_number(row.get("credit_erp"))
+    reason = normalize_greek(row.get("reason_erp", ""))
+    charge = normalize_number(row.get("debit_erp"))
+    credit = normalize_number(row.get("credit_erp"))
 
-        # Unified multilingual keywords/patterns
-        payment_patterns = [
-            r"^πληρωμ",             # Greek "Πληρωμή"
-            r"^απόδειξη\s*πληρωμ",  # Greek "Απόδειξη πληρωμής"
-            r"^payment",            # English: "Payment"
-            r"^bank\s*transfer",    # "Bank Transfer"
-            r"^trf",                # "TRF ..."
-            r"^remesa",             # Spanish
-            r"^pago",               # Spanish
-            r"^transferencia",      # Spanish
-            r"'Εμβασμα\s*από\s*πελάτη\s*χειρ.",  # έμβασμα από πελάτη χειρ
-            r"\bΧΑΕ\b",                    # ΧΑΕ = Χειροκίνητο Έμβασμα
-            r"\bXAE\b",                    # XAE (Latin)
-            r"χειροκινητο\s*εμβασμα",      # full Greek form
-            r"(?i)^f[-\s]?\d{4,8}",
-            r"(?i)cancellation\s*-\s*invoice\s*-\s*corrective\s*entry"  # ✅ NEW pattern,
+        # 🔥 Universal payment keywords (normalized Greek + Latin)
+        payment_keywords = [
+            "πληρωμ", "αποδειξη πληρωμ", "payment", "bank transfer",
+            "transfer", "trf", "remesa", "pago", "transferencia",
+            "εμβασμα απο πελατη χειρ", "χειροκινητο εμβασμα",
+            "χαε", "xae"
         ]
-        if "cancellation - invoice - corrective entry" in reason:
-            return "CN"  # ✅ treat as credit note, cancels invoice
-
-        if any(re.search(p, reason) for p in payment_patterns):
+    
+        # remove punctuation and convert to plain lowercase Greek/Latin
+        reason_clean = (
+            reason.replace(".", "")
+                  .replace(",", "")
+                  .replace("·", "")
+                  .replace("xae", "χαε")  # normalize Latin to Greek
+                  .strip()
+        )
+    
+        if any(k in reason_clean for k in payment_keywords):
             return "IGNORE"
-
-        credit_words = ["credit", "nota", "abono", "cn", "πιστωτικό", "πίστωση","ακυρωτικό","ακυρωτικό παραστατικό"]
-        invoice_words = ["factura", "invoice", "inv", "τιμολόγιο", "παραστατικό"]
-
-        if any(k in reason for k in credit_words):
+    
+        credit_words = ["credit", "nota", "abono", "cn", "πιστωτικ", "πιστωτικο", "πίστωση", "ακυρωτικ"]
+        invoice_words = ["factura", "invoice", "inv", "τιμολ", "παραστατικ"]
+    
+        if any(k in reason_clean for k in credit_words):
             return "CN"
-        elif any(k in reason for k in invoice_words) or credit > 0:
+        elif any(k in reason_clean for k in invoice_words) or credit > 0:
             return "INV"
-        return "UNKNOWN"
+    return "UNKNOWN"
+
 
     def calc_erp_amount(row):
         doc = row.get("__doctype", "")
