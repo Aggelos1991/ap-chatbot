@@ -203,18 +203,33 @@ def match_invoices(erp_df, ven_df):
         s = re.sub(r"[^a-z0-9]", "", s)
         s = re.sub(r"^0+", "", s)
         s = re.sub(r"[^\d]", "", s)
-        # --- NEW RULE: detect ADF + space + digits ---
-        m = re.search(r"\bADF\s*\d+\b", str(v), re.IGNORECASE)
-        if m:
-            s = re.sub(r"\D", "", m.group())  # keep only the digits
-            return s
         return s
 
     for e_idx, e in erp_use.iterrows():
         e_inv = str(e.get("invoice_erp", "")).strip()
         e_amt = round(float(e["__amt"]), 2)
         e_code = clean_invoice_code(e_inv)
-
+        # ====== MATCHING RULES (Enhanced) ======
+        def extract_num_after_prefix(v):
+            m = re.search(r"\b[A-Z]{2,4}\s+(\d+)\b", str(v), re.IGNORECASE)
+            if m:
+                return m.group(1)
+            return re.sub(r"\D", "", str(v or ""))  # fallback to digits
+        
+        e_num = extract_num_after_prefix(e_inv)
+        v_num = extract_num_after_prefix(v_inv)
+        
+        # --- Matching Logic ---
+        if e_inv == v_inv and amt_close:
+            match_type = "Full"
+        elif len(e_core) >= 3 and len(v_core) >= 3 and e_core[-3:] == v_core[-3:] and amt_close:
+            match_type = "Last3"
+        elif e_core.lstrip("0") == v_core.lstrip("0") and amt_close:
+            match_type = "Prefixless"
+        elif e_num == v_num and amt_close:
+            match_type = "Prefix+Space Numeric"
+        else:
+            continue
         for v_idx, v in ven_use.iterrows():
             if v_idx in used_vendor_rows:
                 continue
@@ -229,18 +244,9 @@ def match_invoices(erp_df, ven_df):
             same_type = (e["__doctype"] == v["__doctype"])
 
             # --- ΝΕΟΣ κανόνας αποδοχής ---
-           # --- NEW RULES FOR SPACE-SEPARATED INVOICE MATCHES ---
-            space_pattern = r"\b(?:ADF|APD)\s+(\d+)\b"
-            
-            e_space = re.search(space_pattern, e_inv, re.IGNORECASE)
-            v_space = re.search(space_pattern, v_inv, re.IGNORECASE)
-            
             if same_type and same_full:
                 take_it = True
             elif same_type and same_clean and amt_close:
-                take_it = True
-            elif same_type and e_space and v_space and e_space.group(1) == v_space.group(1) and amt_close:
-                # Both have ADF/APD + space + digits and same numeric value
                 take_it = True
             else:
                 take_it = False
