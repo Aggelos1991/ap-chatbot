@@ -125,9 +125,9 @@ def match_invoices(erp_df, ven_df):
             r"^remesa",             # Spanish
             r"^pago",               # Spanish
             r"^transferencia",      # Spanish
-            r"εμβασμα\s*απο\s*πελατη\s*χειρ",  # έμβασμα από πελάτη χειρ
-            r"\bχαε\b",                    # ΧΑΕ = Χειροκίνητο Έμβασμα
-            r"\bxae\b",                    # XAE (Latin)
+            r"'Εμβασμα\s*από\s*πελάτη\s*χειρ.",  # έμβασμα από πελάτη χειρ
+            r"\bΧΑΕ\b",                    # ΧΑΕ = Χειροκίνητο Έμβασμα
+            r"\bXAE\b",                    # XAE (Latin)
             r"χειροκινητο\s*εμβασμα",      # full Greek form
             r"(?i)^f[-\s]?\d{4,8}",
             r"(?i)cancellation\s*-\s*invoice\s*-\s*corrective\s*entry"  # ✅ NEW pattern,
