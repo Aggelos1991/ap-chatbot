@@ -312,10 +312,12 @@ def match_invoices(erp_df, ven_df):
             suffix_ok = (
                 len(e_code) > 2 and len(v_code) > 2 and
                 len_diff <= 2 and (
-                    e_code.endswith(v_code) or v_code.endswith(e_code)
+                    e_code.endswith(v_code) or
+                    v_code.endswith(e_code) or
+                    e_code in v_code or
+                    v_code in e_code  # ✅ Fixes 106↔4106 and 12219↔2219
                 )
             )
-
             same_type = (e["__doctype"] == v["__doctype"])
 
             # --- ΝΕΟΣ κανόνας αποδοχής ---
