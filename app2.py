@@ -655,12 +655,7 @@ excel_output = export_reconciliation_excel(matched, erp_missing, ven_missing)
 st.markdown("### 📥 Download Reconciliation Excel Report")
 
 # ✅ Safe Excel export
-try:
-    excel_output = export_reconciliation_excel(matched, erp_missing, ven_missing)
-except NameError:
-    st.error("⚠️ Reconciliation data not available — please upload valid ERP and Vendor files first.")
-except Exception as e:
-    st.error(f"❌ Error while exporting Excel report: {e}")
+excel_output = export_reconciliation_excel(matched, erp_missing, ven_missing)
 st.download_button(
     label="⬇️ Download Excel Report",
     data=excel_output,
