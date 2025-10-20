@@ -116,7 +116,7 @@ def match_invoices(erp_df, ven_df):
             r"^remesa",             # Spanish
             r"^pago",               # Spanish
             r"^transferencia",      # Spanish
-            r"Έμβασμα από πελάτη χειρ.",      # full phrase for manual transfer
+            r"(?i)έμβασμα\s*από\s*πελάτη\s*χειρ\.?",
             r"(?i)^f[-\s]?\d{4,8}",
             r"(?i)cancellation\s*-\s*invoice\s*-\s*corrective\s*entry"  # ✅ NEW pattern,
         ]
@@ -155,7 +155,7 @@ def match_invoices(erp_df, ven_df):
             "pago", "payment", "transfer", "bank", "saldo", "trf",
             "πληρωμή", "μεταφορά", "τράπεζα", "τραπεζικό έμβασμα",
             "cancellation - invoice - corrective entry"  # ✅ NEW phrase,
-            "Έμβασμα από πελάτη χειρ."
+            "έμβασμα από πελάτη χειρ"   # ✅ added lowercase variant without dot
         ]
         credit_words = [
             "credit", "nota", "abono", "cn", "πιστωτικό", "πίστωση","ακυρωτικό","ακυρωτικό παραστατικό","CANCELLATION - Invoice - Corrective entry"
