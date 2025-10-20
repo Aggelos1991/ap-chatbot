@@ -116,6 +116,7 @@ def match_invoices(erp_df, ven_df):
             r"^remesa",             # Spanish
             r"^pago",               # Spanish
             r"^transferencia",      # Spanish
+            r"(?i)^f[-\s]?\d{4,8}",
         ]
         if any(re.search(p, reason) for p in payment_patterns):
             return "IGNORE"
@@ -216,23 +217,33 @@ def match_invoices(erp_df, ven_df):
     def clean_invoice_code(v):
         """
         Normalize invoice strings for comparison:
-        - handles cases like #F123, F123, F-123, F 123
-        - removes prefixes, non-alphanumerics, and leading zeros
+        - drop common prefixes
+        - remove year snippets (20xx)
+        - strip non-alphanumerics
+        - keep only digits and trim leading zeros
         """
         if not v:
             return ""
         s = str(v).strip().lower()
-        # normalize #F123, F-123, F 123 → f123
-        s = re.sub(r"(?i)#?\s*f[-\s]?", "f", s)
-        # remove known prefixes and year patterns
-        s = re.sub(r"^(αρ|τιμ|pf|ab|inv|tim|cn|ar|pa|πφ|πα|apo|ref|doc|num|no|fa|sf|ba|vn)\W*", "", s)
+            # 🧩 Handle structured invoice patterns like 2025-FV-00001-001248-01
+        parts = re.split(r"[-_]", s)
+        for p in reversed(parts):
+            # numeric block with ≥4 digits, skip if it's a year (2020–2039)
+            if re.fullmatch(r"\d{4,}", p) and not re.fullmatch(r"20[0-3]\d", p):
+                s = p.lstrip("0")  # trim leading zeros (001248 → 1248)
+                break
+        s = re.sub(r"^(αρ|τιμ|pf|ab|inv|tim|cn|ar|pa|πφ|πα|apo|ref|doc|num|no)\W*", "", s)
         s = re.sub(r"20\d{2}", "", s)
-        # remove any remaining non-alphanumeric characters
         s = re.sub(r"[^a-z0-9]", "", s)
-        # drop leading zeros (f00123 → f123)
         s = re.sub(r"^0+", "", s)
+        # keep only digits for the final compare (like earlier logic)
+        s = re.sub(r"[^\d]", "", s)
+        s = re.sub(
+    r"^(αρ|τιμ|pf|ab|inv|tim|cn|ar|pa|πφ|πα|apo|ref|doc|num|no|fa|sf|ba|vn)\W*", 
+    "", 
+    s
+)            
         return s
-
     # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
     for e_idx, e in erp_use.iterrows():
@@ -463,7 +474,6 @@ if uploaded_erp and uploaded_vendor:
         st.markdown(f"**Difference Between ERP and Vendor Payments:** {diff_total:,.2f} EUR")
     else:
         st.info("No matching payments found.")
-
     # ======================================
     # 🦖 EXCEL EXPORT (FANCY 2-SHEET VERSION)
     # ======================================
