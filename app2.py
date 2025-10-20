@@ -479,7 +479,7 @@ if uploaded_erp and uploaded_vendor:
     # ======================================
     # 📥 EXCEL EXPORT (2-SHEET VERSION)
     # ======================================
-        else:
+    else:
         st.info("No matching payments found.")
 
     # ======================================
