@@ -537,8 +537,7 @@ if uploaded_erp and uploaded_vendor:
     st.markdown(f"**Difference:** {diff_total:,.2f} EUR")
 
 
-else:
-    st.info("No payments found.")
+
 
     # ======================================
 def export_reconciliation_excel(matched, erp_missing, ven_missing):
