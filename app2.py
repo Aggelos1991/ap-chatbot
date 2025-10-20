@@ -4,28 +4,6 @@ import re
 
 st.image("https://raw.githubusercontent.com/Aggelos1991/ap-chatbot/main/assets/images.png", width=160)
 
-st.markdown("""
-<style>
-.logo-container {
-  position: fixed;
-  top: 20px;
-  left: 20px;
-  width: 160px;
-  animation: float 4s ease-in-out infinite;
-  z-index: 9999;
-}
-@keyframes float {
-  0%, 100% { transform: translateY(0px); }
-  50% { transform: translateY(-6px); }
-}
-/* 🔥 Force image to look white (inverts dark logo) */
-.logo-container img {
-  filter: brightness(0) invert(1);
-}
-h1, h2, h3, h4, h5, h6, p, span {
-  color: #ffffff !important;
-}
-</style>
 
 <div class="logo-container">
   <img src="https://raw.githubusercontent.com/Aggelos1991/ap-chatbot/main/assets/images.png" width="160">
