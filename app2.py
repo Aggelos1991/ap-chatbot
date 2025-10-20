@@ -479,6 +479,12 @@ if uploaded_erp and uploaded_vendor:
     # ======================================
     # 📥 EXCEL EXPORT (2-SHEET VERSION)
     # ======================================
+        else:
+        st.info("No matching payments found.")
+
+    # ======================================
+    # 📥 EXCEL EXPORT (2-SHEET VERSION)
+    # ======================================
     import io
     from openpyxl import load_workbook
     from openpyxl.utils import get_column_letter
