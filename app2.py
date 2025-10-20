@@ -96,12 +96,18 @@ def normalize_columns(df, tag):
 import unicodedata
 
 def normalize_greek(text):
-    """Remove accents and normalize Greek text for consistent regex matching."""
+    """Remove accents, normalize spaces and punctuation for consistent Greek regex/string matching."""
     if not isinstance(text, str):
         return ""
+    # Normalize accents
     text = unicodedata.normalize("NFD", text)
     text = "".join(ch for ch in text if unicodedata.category(ch) != "Mn")
-    return text.lower().strip()
+    # Replace non-breaking spaces and weird Unicode spaces
+    text = text.replace("\xa0", " ").replace("\u200b", "").replace(".", "")
+    # Convert to lowercase and trim
+    text = text.lower().strip()
+    return text
+
 
 # ======================================
 # CORE MATCHING
