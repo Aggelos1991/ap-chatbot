@@ -229,9 +229,18 @@ def match_invoices(erp_df, ven_df):
             same_type = (e["__doctype"] == v["__doctype"])
 
             # --- ΝΕΟΣ κανόνας αποδοχής ---
+           # --- NEW RULES FOR SPACE-SEPARATED INVOICE MATCHES ---
+            space_pattern = r"\b(?:ADF|APD)\s+(\d+)\b"
+            
+            e_space = re.search(space_pattern, e_inv, re.IGNORECASE)
+            v_space = re.search(space_pattern, v_inv, re.IGNORECASE)
+            
             if same_type and same_full:
                 take_it = True
             elif same_type and same_clean and amt_close:
+                take_it = True
+            elif same_type and e_space and v_space and e_space.group(1) == v_space.group(1) and amt_close:
+                # Both have ADF/APD + space + digits and same numeric value
                 take_it = True
             else:
                 take_it = False
