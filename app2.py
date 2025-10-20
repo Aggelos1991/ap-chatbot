@@ -542,7 +542,7 @@ if not matched_pay.empty:
     st.markdown("---")
     st.markdown(f"**💰 Total ERP Payments (All):** {total_all_erp:,.2f} EUR")
     st.markdown(f"**💰 Total Vendor Payments (All):** {total_all_vendor:,.2f} EUR")
-    st.markdown(f"**🔺 Total Difference Between ERP and Vendor Payments:**
+    st.markdown(f"**🔺 Total Difference Between ERP and Vendor Payments:** {diff_all:,.2f} EUR")
 
     else:
         st.info("No matching payments found.")
