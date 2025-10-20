@@ -233,6 +233,8 @@ def clean_invoice_code(v):
     return s
 
     # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+    print("ERP cleaned:", clean_invoice_code("F250241"))
+    print("Vendor cleaned:", clean_invoice_code("#F250241"))
 
     for e_idx, e in erp_use.iterrows():
         e_inv = str(e.get("invoice_erp", "")).strip()
