@@ -183,18 +183,17 @@ def match_invoices(erp_df, ven_df):
     erp_use = erp_df[erp_df["__doctype"].isin(["INV", "CN"])].copy()
     ven_use = ven_df[ven_df["__doctype"].isin(["INV", "CN"])].copy()
     # ==========================================================
-    # 🔄 CANCELLATION RULE — remove fully neutralized invoices (before merge)
     # ==========================================================
-    def neutralize(df, col_invoice):
-        """Remove invoice codes that net to ~0 after cleaning."""
-        tmp = df.copy()
-        tmp["__clean_code"] = tmp[col_invoice].apply(lambda x: re.sub(r"\s+", "", str(x)).lower())
-        summed = tmp.groupby("__clean_code")["__amt"].sum().reset_index()
-        neutral_codes = summed[summed["__amt"].abs() < 0.05]["__clean_code"].tolist()
-        return tmp[~tmp["__clean_code"].isin(neutral_codes)].drop(columns="__clean_code")
+    # 🔄 CANCEL OUT 2-ENTRY INVOICES WITH OPPOSITE AMOUNTS
+    # ==========================================================
+    def remove_opposites(df, inv_col):
+        grouped = df.groupby(inv_col)["__amt"].sum().reset_index()
+        canceled = grouped[grouped["__amt"].abs() < 0.05][inv_col].tolist()
+        return df[~df[inv_col].isin(canceled)]
     
-    erp_use = neutralize(erp_use, "invoice_erp")
-    ven_use = neutralize(ven_use, "invoice_ven")
+    erp_use = remove_opposites(erp_use, "invoice_erp")
+    ven_use = remove_opposites(ven_use, "invoice_ven")
+       
 
 
     # ====== SCENARIO 1 & 2: MERGE MULTIPLE AND CREDIT NOTES ======
