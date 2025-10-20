@@ -116,13 +116,12 @@ def match_invoices(erp_df, ven_df):
             r"^remesa",             # Spanish
             r"^pago",               # Spanish
             r"^transferencia",      # Spanish
-            r"(?i)#?\s*f[-\s]?\d{2,8}",
         ]
         if any(re.search(p, reason) for p in payment_patterns):
             return "IGNORE"
 
         credit_words = ["credit", "nota", "abono", "cn", "πιστωτικό", "πίστωση","ακυρωτικό","ακυρωτικό παραστατικό"]
-        invoice_words = ["factura", "invoice", "inv", "τιμολόγιο", "παραστατικό","F", "#F"]
+        invoice_words = ["factura", "invoice", "inv", "τιμολόγιο", "παραστατικό"]
 
         if any(k in reason for k in credit_words):
             return "CN"
