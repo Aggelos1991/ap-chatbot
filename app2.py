@@ -645,7 +645,10 @@ def export_reconciliation_excel(matched, erp_missing, ven_missing):
 
 # ====== DOWNLOAD BUTTON ======
 st.markdown("### 📥 Download Reconciliation Excel Report")
-
+if 'matched' in locals() and 'erp_missing' in locals() and 'ven_missing' in locals():
+    excel_output = export_reconciliation_excel(matched, erp_missing, ven_missing)
+else:
+    st.error("⚠️ Reconciliation data not available — please upload valid ERP and Vendor files first.")
 excel_output = export_reconciliation_excel(matched, erp_missing, ven_missing)
 
 st.download_button(
