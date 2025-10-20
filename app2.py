@@ -520,11 +520,11 @@ if uploaded_erp and uploaded_vendor:
 
     st.markdown("### ✅ Payment Matches")
 
-if not matched_pay.empty:
-    st.dataframe(
-        matched_pay.style.applymap(lambda _: "background-color: #2e7d32; color: white"),
-        use_container_width=True
-    )
+    if not matched_pay.empty:
+        st.dataframe(
+            matched_pay.style.applymap(lambda _: "background-color: #2e7d32; color: white"),
+            use_container_width=True
+        )
 
     st.markdown("### 💰 Payment Summary (ERP vs Vendor)")
 
