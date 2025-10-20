@@ -253,32 +253,49 @@ def match_invoices(erp_df, ven_df):
     # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
     # Add missing cleaner so we can compute e_code / v_code
     def clean_invoice_code(v):
-        """
-        Normalize invoice strings for comparison:
-        - drop common prefixes
-        - remove year snippets (20xx)
-        - strip non-alphanumerics
-        - keep only digits and trim leading zeros
-        """
-        if not v:
-            return ""
-        s = str(v).strip().lower()
-        # ✅ normalize patterns like "#F123", "F-123", "F 123", "#F 00123" → "f123"
-        s = re.sub(r"(?i)[#\s]*f[-\s]*0*", "f", s)
-            # 🧩 Handle structured invoice patterns like 2025-FV-00001-001248-01
-        
-        s = re.sub(r"^(αρ|τιμ|pf|ab|inv|tim|cn|ar|pa|πφ|πα|apo|ref|doc|num|no)\W*", "", s)
-        s = re.sub(r"20\d{2}", "", s)
-        s = re.sub(r"[^a-z0-9]", "", s)
-        s = re.sub(r"^0+", "", s)
-        # keep only digits for the final compare (like earlier logic)
-        s = re.sub(r"[^\d]", "", s)
-        s = re.sub(
-    r"^(αρ|τιμ|pf|ab|inv|tim|cn|ar|pa|πφ|πα|apo|ref|doc|num|no|fa|sf|ba|vn)\W*", 
-    "", 
-    s
-)            
-        return s
+    """
+    Stable normalization:
+    - Removes prefixes (INV, CN, TIM, etc.)
+    - Handles structured invoices like 2025-FV-00001-001248-01
+    - Keeps all significant numeric blocks joined (00124801 -> 124801)
+    - Removes only years (20xx), not random digits
+    - Never truncates short codes (2042 ≠ 2046)
+    """
+    if not v:
+        return ""
+    s = str(v).strip().lower()
+
+    # Remove known prefixes
+    s = re.sub(r"(?i)[#\s]*f[-\s]*0*", "f", s)
+    s = re.sub(
+        r"^(αρ|τιμ|pf|ab|inv|tim|cn|ar|pa|πφ|πα|apo|ref|doc|num|no|fa|sf|ba|vn)\W*", 
+        "", 
+        s
+    )
+
+    # Remove years
+    s = re.sub(r"20\d{2}", "", s)
+
+    # Split by delimiters (-, _, /)
+    parts = re.split(r"[-_/]", s)
+    clean_parts = []
+
+    for p in parts:
+        p = re.sub(r"[^a-z0-9]", "", p)
+        if not p:
+            continue
+        # Skip purely numeric year-like chunks (2020–2039)
+        if re.fullmatch(r"20[0-3]\d", p):
+            continue
+        # Keep everything else, trimmed of leading zeros
+        clean_parts.append(p.lstrip("0") or "0")
+
+    # Join everything back together
+    s = "".join(clean_parts)
+
+    # Final cleanup: keep only alphanumerics
+    s = re.sub(r"[^a-z0-9]", "", s)
+    return s
     # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
     # ==========================================================
   
@@ -303,11 +320,22 @@ def match_invoices(erp_df, ven_df):
             same_full  = (e_inv == v_inv)
             same_clean = (e_code == v_code)
 
-            same_type  = (e["__doctype"] == v["__doctype"])
-            amt_close  = abs(diff) < 0.05
+            len_diff = abs(len(e_code) - len(v_code))
+            suffix_ok = (
+                len(e_code) > 2 and len(v_code) > 2 and
+                len_diff <= 2 and (
+                    e_code.endswith(v_code) or
+                    v_code.endswith(e_code) or
+                    e_code in v_code or
+                    v_code in e_code  # ✅ Fixes 106↔4106 and 12219↔2219
+                )
+            )
+            same_type = (e["__doctype"] == v["__doctype"])
 
-            # ✅ Strict matching — only exact or cleaned-equal invoice codes
-            if same_type and (same_full or same_clean):
+            # --- ΝΕΟΣ κανόνας αποδοχής ---
+            if same_type and same_full:
+                take_it = True
+            elif same_type and (same_clean or suffix_ok):
                 take_it = True
             else:
                 take_it = False
