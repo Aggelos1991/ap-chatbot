@@ -106,29 +106,29 @@ def match_invoices(erp_df, ven_df):
         charge = normalize_number(row.get("debit_erp"))
         credit = normalize_number(row.get("credit_erp"))
 
-        # ✅ FIXED — no more F123 being ignored
-    payment_patterns = [
-        r"^πληρωμ",             # Greek "Πληρωμή"
-        r"^απόδειξη\s*πληρωμ",  # Greek "Απόδειξη πληρωμής"
-        r"^payment",            # English "Payment"
-        r"^bank\s*transfer",    # "Bank Transfer"
-        r"^trf",                # "TRF ..."
-        r"^remesa",             # Spanish
-        r"^pago",               # Spanish
-        r"^transferencia"       # Spanish
-    ]
+        # Unified multilingual keywords/patterns
+        payment_patterns = [
+            r"^πληρωμ",             # Greek "Πληρωμή"
+            r"^απόδειξη\s*πληρωμ",  # Greek "Απόδειξη πληρωμής"
+            r"^payment",            # English: "Payment"
+            r"^bank\s*transfer",    # "Bank Transfer"
+            r"^trf",                # "TRF ..."
+            r"^remesa",             # Spanish
+            r"^pago",               # Spanish
+            r"^transferencia",      # Spanish
+            r"(?i)^f[-\s]?\d{4,8}",
+        ]
+        if any(re.search(p, reason) for p in payment_patterns):
+            return "IGNORE"
 
-    if any(re.search(p, reason, re.IGNORECASE) for p in payment_patterns):
-        return "IGNORE"
+        credit_words = ["credit", "nota", "abono", "cn", "πιστωτικό", "πίστωση","ακυρωτικό","ακυρωτικό παραστατικό"]
+        invoice_words = ["factura", "invoice", "inv", "τιμολόγιο", "παραστατικό"]
 
-    credit_words = ["credit", "nota", "abono", "cn", "πιστωτικό", "πίστωση","ακυρωτικό","ακυρωτικό παραστατικό"]
-    invoice_words = ["factura", "invoice", "inv", "τιμολόγιο", "παραστατικό"]
-
-    if any(k in reason for k in credit_words):
-        return "CN"
-    elif any(k in reason for k in invoice_words) or credit > 0:
-        return "INV"
-    return "UNKNOWN"
+        if any(k in reason for k in credit_words):
+            return "CN"
+        elif any(k in reason for k in invoice_words) or credit > 0:
+            return "INV"
+        return "UNKNOWN"
 
     def calc_erp_amount(row):
         doc = row.get("__doctype", "")
@@ -475,14 +475,6 @@ if uploaded_erp and uploaded_vendor:
     else:
         st.info("No matching payments found.")
 
-
-    # ======================================
-    # 📥 EXCEL EXPORT (2-SHEET VERSION)
-    # ======================================
-
-    # ======================================
-     
-
     # ======================================
     # 🦖 EXCEL EXPORT (FANCY 2-SHEET VERSION)
     # ======================================
@@ -587,7 +579,7 @@ if uploaded_erp and uploaded_vendor:
         return output
 
     # ====== DOWNLOAD BUTTON ======
-    st.markdown("### 📥 Download Excel Report")
+    st.markdown("### 📥 Download Fancy Excel Report")
     excel_output = export_reconciliation_excel(matched, erp_missing, ven_missing)
     st.download_button(
         label="⬇️ Download Reconciliation Report (Excel)",
