@@ -534,26 +534,19 @@ if not matched_pay.empty:
         use_container_width=True
     )
 
-    # --- Totals for matched only ---
-    total_matched_erp = matched_pay["ERP Amount"].sum()
-    total_matched_vendor = matched_pay["Vendor Amount"].sum()
-    diff_matched = abs(total_matched_erp - total_matched_vendor)
+    st.markdown("### 💰 Payment Summary (ERP vs Vendor)")
 
-    # --- Totals for ALL payments (ERP + Vendor) ---
-    total_all_erp = erp_pay["Amount"].sum() if not erp_pay.empty else 0
-    total_all_vendor = ven_pay["Amount"].sum() if not ven_pay.empty else 0
-    diff_all = abs(total_all_erp - total_all_vendor)
+    total_erp = erp_pay["Amount"].sum() if not erp_pay.empty else 0
+    total_vendor = ven_pay["Amount"].sum() if not ven_pay.empty else 0
+    diff_total = round(abs(total_erp - total_vendor), 2)
+    
+    st.markdown(f"**ERP Payments Total:** {total_erp:,.2f} EUR")
+    st.markdown(f"**Vendor Payments Total:** {total_vendor:,.2f} EUR")
+    st.markdown(f"**Difference:** {diff_total:,.2f} EUR")
 
-    st.markdown(f"**Total Matched ERP Payments:** {total_matched_erp:,.2f} EUR")
-    st.markdown(f"**Total Matched Vendor Payments:** {total_matched_vendor:,.2f} EUR")
-    st.markdown(f"**Difference Between Matched Payments:** {diff_matched:,.2f} EUR")
-    st.markdown("---")
-    st.markdown(f"**💰 Total ERP Payments (All):** {total_all_erp:,.2f} EUR")
-    st.markdown(f"**💰 Total Vendor Payments (All):** {total_all_vendor:,.2f} EUR")
-    st.markdown(f"**🔺 Total Difference Between ERP and Vendor Payments:** {diff_all:,.2f} EUR")
 
 else:
-    st.info("No matching payments found.")
+    st.info("No payments found.")
 
     # ======================================
 def export_reconciliation_excel(matched, erp_missing, ven_missing):
