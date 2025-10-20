@@ -263,13 +263,12 @@ def match_invoices(erp_df, ven_df):
             same_type = (e["__doctype"] == v["__doctype"])
 
             # --- ΝΕΟΣ κανόνας αποδοχής ---
-            if same_type and same_full:
-                take_it = True
-            elif same_type and same_clean and amt_close:
-    			take_it = True
-            else:
-                take_it = False
-
+           if same_type and same_full:
+                    take_it = True
+                elif same_type and same_clean and amt_close:
+                    take_it = True
+                else:
+                    take_it = False
             if take_it:
                 matched.append({
                     "ERP Invoice": e_inv,
