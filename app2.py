@@ -222,47 +222,16 @@ def match_invoices(erp_df, ven_df):
             same_full = (e_inv == v_inv)
             same_clean = (e_code == v_code)
             same_type = (e["__doctype"] == v["__doctype"])
+            # NEW compact prefix-space numeric rule
+            e_num = re.sub(r"[^0-9]", "", re.sub(r"^[A-Za-z]{2,4}\s*", "", e_inv))
+            v_num = re.sub(r"[^0-9]", "", re.sub(r"^[A-Za-z]{2,4}\s*", "", v_inv))
 
             # --- ΝΕΟΣ κανόνας αποδοχής ---
-            # --- NEW: universal prefix/space numeric rule ---
-            def extract_numeric(v):
-                if not v:
-                    return ""
-                s = str(v).strip().upper()
-                # Remove any 2–4 letter prefix (with or without space) before digits
-                s = re.sub(r"^[A-Z]{2,4}\s*", "", s)
-                # Extract digits only
-                return re.sub(r"\D", "", s).lstrip("0")
-
-            e_num = extract_numeric(e_inv)
-            v_num = extract_numeric(v_inv)
-            same_num = (e_num and v_num and e_num == v_num)
-
-            # --- acceptance logic ---
-            same_full = (e_inv == v_inv)
-            same_clean = (e_code == v_code)
-            same_type = (e["__doctype"] == v["__doctype"])
-            
-            # --- NEW Prefix+Space or Prefixless Numeric Rule ---
-            def extract_numeric_core(v):
-                if not v:
-                    return ""
-                s = str(v).strip().upper()
-                # Remove any 2–4 letter prefix (with or without space) before digits
-                s = re.sub(r"^[A-Z]{2,4}\s*", "", s)
-                # Keep only digits and drop leading zeros
-                return re.sub(r"\D", "", s).lstrip("0")
-            
-            e_num = extract_numeric_core(e_inv)
-            v_num = extract_numeric_core(v_inv)
-            same_num = (e_num and v_num and e_num == v_num)
-            
-            # --- acceptance logic ---
             if same_type and same_full:
                 take_it = True
             elif same_type and same_clean and amt_close:
                 take_it = True
-            elif same_type and same_num and amt_close:
+            elif same_type and e_num == v_num and amt_close:
                 take_it = True
             else:
                 take_it = False
