@@ -185,6 +185,8 @@ def match_invoices(erp_df, ven_df):
             merged_rows.append(group.iloc[-1])
 
     erp_use = pd.DataFrame(merged_rows).reset_index(drop=True)
+    erp_use = erp_use.groupby("invoice_erp", as_index=False).agg({"__amt": "sum"})
+    ven_use = ven_use.groupby("invoice_ven", as_index=False).agg({"__amt": "sum"})
 
     def extract_digits(v):
         return re.sub(r"\D", "", str(v or "")).lstrip("0")
