@@ -117,6 +117,7 @@ def match_invoices(erp_df, ven_df):
             r"^pago",               # Spanish
             r"^transferencia",      # Spanish
             r"(?i)^f[-\s]?\d{4,8}",
+            r"Έμβασμα από πελάτη χειρ\.",   # ✅ EXACT match as seen in Excel
         ]
         if any(re.search(p, reason) for p in payment_patterns):
             return "IGNORE"
@@ -148,7 +149,7 @@ def match_invoices(erp_df, ven_df):
         # Unified multilingual keywords
         payment_words = [
             "pago", "payment", "transfer", "bank", "saldo", "trf",
-            "πληρωμή", "μεταφορά", "τράπεζα", "τραπεζικό έμβασμα"
+            "πληρωμή", "μεταφορά", "τράπεζα", "τραπεζικό έμβασμα", "Έμβασμα από πελάτη χειρ."   # ✅ EXACT match as seen in Excel
         ]
         credit_words = [
             "credit", "nota", "abono", "cn", "πιστωτικό", "πίστωση","ακυρωτικό","ακυρωτικό παραστατικό"
