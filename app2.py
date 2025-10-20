@@ -169,7 +169,7 @@ def match_invoices(erp_df, ven_df):
             "cancellation - invoice - corrective entry"  # ✅ NEW phrase,
             "Έμβασμα από πελάτη χειρ."   # ✅ added lowercase variant without dot,
             "ΧΑΕ", "XAE"     # ✅ added manual transfer markers,
-            "εμβασμα απο πελατη χειρ",  "χαε", "xae", "χειροκινητο εμβασμα"
+            "εμβασμα απο πελατη χειρ.",  "χαε", "xae", "χειροκινητο εμβασμα"
         ]
         credit_words = [
             "credit", "nota", "abono", "cn", "πιστωτικό", "πίστωση","ακυρωτικό","ακυρωτικό παραστατικό","CANCELLATION - Invoice - Corrective entry"
