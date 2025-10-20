@@ -225,11 +225,15 @@ def match_invoices(erp_df, ven_df):
             # NEW compact prefix-space numeric rule
             e_num = re.sub(r"[^0-9]", "", re.sub(r"^[A-Za-z]{2,4}\s*", "", e_inv))
             v_num = re.sub(r"[^0-9]", "", re.sub(r"^[A-Za-z]{2,4}\s*", "", v_inv))
+            e_num = re.sub(r".*?(\d{2,})$", r"\1", str(e_inv))
+            v_num = re.sub(r".*?(\d{2,})$", r"\1", str(v_inv))
 
             # --- ΝΕΟΣ κανόνας αποδοχής ---
             if same_type and same_full:
                 take_it = True
             elif same_type and same_clean and amt_close:
+                take_it = True
+            elif same_type and e_num == v_num and amt_close:
                 take_it = True
             elif same_type and e_num == v_num and (amt_close or abs(diff) < 0.1):
                 take_it = True
