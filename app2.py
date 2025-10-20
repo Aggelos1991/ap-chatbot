@@ -320,7 +320,25 @@ def match_invoices(erp_df, ven_df):
             )
             same_type = (e["__doctype"] == v["__doctype"])
 
-       
+            # --- ΝΕΟΣ κανόνας αποδοχής ---
+            if same_type and same_full:
+                take_it = True
+            elif same_type and (same_clean or suffix_ok):
+                take_it = True
+            else:
+                take_it = False
+
+            if take_it:
+                matched.append({
+                    "ERP Invoice": e_inv,
+                    "Vendor Invoice": v_inv,
+                    "ERP Amount": e_amt,
+                    "Vendor Amount": v_amt,
+                    "Difference": diff,
+                    "Status": "Match" if amt_close else "Difference"
+                })
+                used_vendor_rows.add(v_idx)
+                break
 
     matched_df = pd.DataFrame(matched)
     matched_erp = {m["ERP Invoice"] for _, m in matched_df.iterrows()}
@@ -624,6 +642,9 @@ def export_reconciliation_excel(matched, erp_missing, ven_missing):
 
     output.seek(0)
     return output
+
+
+
 
 
 # ====== DOWNLOAD BUTTON ======
