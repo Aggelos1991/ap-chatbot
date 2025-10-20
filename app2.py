@@ -183,28 +183,35 @@ def match_invoices(erp_df, ven_df):
     erp_use = erp_df[erp_df["__doctype"].isin(["INV", "CN"])].copy()
     ven_use = ven_df[ven_df["__doctype"].isin(["INV", "CN"])].copy()
     # ==========================================================
-  
-    # ==========================================================
-   # ==========================================================
-    # ==========================================================
-    # 🔄 CANCELLATION RULE — remove fully neutralized invoices (ERP + Vendor)
+    # 🔄 UNIVERSAL CANCELLATION RULE — remove neutralized invoices
     # ==========================================================
     def remove_neutralized(df, inv_col):
-        """Remove invoices that cancel themselves out (+X and -X = 0)."""
+        """
+        Removes invoices that cancel themselves (+X and -X = 0),
+        so they don’t appear in any tab (ERP or Vendor).
+        """
         if inv_col not in df.columns or "__amt" not in df.columns:
-            return df
+            return df.copy()
     
         # Ensure numeric
         df["__amt"] = pd.to_numeric(df["__amt"], errors="coerce").fillna(0)
     
-        # Group and find invoices with near-zero net
+        # Group and find invoices with near-zero total
         grouped = df.groupby(inv_col, dropna=False)["__amt"].sum().reset_index()
-        to_drop = grouped[abs(grouped["__amt"]) < 0.05][inv_col].dropna().astype(str).tolist()
+        neutralized = grouped[abs(grouped["__amt"]) < 0.05][inv_col].dropna().astype(str).tolist()
     
-        # Filter them out completely
-        df = df[~df[inv_col].astype(str).isin(to_drop)].copy()
+        # Drop those completely
+        df = df[~df[inv_col].astype(str).isin(neutralized)].copy()
         return df.reset_index(drop=True)
     
+    
+    # ✅ Apply to both ERP and Vendor before any further processing
+    erp_use = remove_neutralized(erp_use, "invoice_erp")
+    ven_use = remove_neutralized(ven_use, "invoice_ven")
+
+    # ==========================================================
+  
+   
     
     # ✅ Apply to both ERP and Vendor before merging
     erp_use = remove_neutralized(erp_use, "invoice_erp")
@@ -345,6 +352,21 @@ def match_invoices(erp_df, ven_df):
 
     missing_in_erp = missing_in_erp.rename(columns={"invoice_ven": "Invoice", "__amt": "Amount"})
     missing_in_vendor = missing_in_vendor.rename(columns={"invoice_erp": "Invoice", "__amt": "Amount"})
+    # ==========================================================
+    # 🧹 FINAL CLEANUP — remove neutralized leftovers from Missing tables
+    # ==========================================================
+    def remove_residual_neutralized(df):
+        """Drop invoices that have both +X and -X inside Missing tables."""
+        if "Invoice" not in df.columns or "Amount" not in df.columns:
+            return df
+        df["Amount"] = pd.to_numeric(df["Amount"], errors="coerce").fillna(0)
+        neutralized = df.groupby("Invoice")["Amount"].sum().reset_index()
+        to_drop = neutralized[abs(neutralized["Amount"]) < 0.05]["Invoice"].tolist()
+        return df[~df["Invoice"].isin(to_drop)].reset_index(drop=True)
+    
+    erp_missing = remove_residual_neutralized(erp_missing)
+    ven_missing = remove_residual_neutralized(ven_missing)
+
 
     return matched_df, missing_in_erp, missing_in_vendor
 
