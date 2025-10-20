@@ -468,6 +468,7 @@ def export_reconciliation_excel(matched, erp_missing, ven_missing):
     return buffer
 
 st.markdown("### 📥 Download Reconciliation Excel Report")
+matched, erp_missing, ven_missing = matched if 'matched' in locals() else pd.DataFrame(), erp_missing if 'erp_missing' in locals() else pd.DataFrame(), ven_missing if 'ven_missing' in locals() else pd.DataFrame()
 excel_output = export_reconciliation_excel(matched, erp_missing, ven_missing)
 st.download_button(
     "💾 Download Excel File",
