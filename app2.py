@@ -183,39 +183,21 @@ def match_invoices(erp_df, ven_df):
     erp_use = erp_df[erp_df["__doctype"].isin(["INV", "CN"])].copy()
     ven_use = ven_df[ven_df["__doctype"].isin(["INV", "CN"])].copy()
     # ==========================================================
-   # ====== SCENARIO 1 & 2: MERGE MULTIPLE AND CREDIT NOTES ======
-    merged_rows = []
-    for inv, group in erp_use.groupby("invoice_erp", dropna=False):
-        if group.empty:
-            continue
+  
+    # ==========================================================
+    # 🔄 CANCELLATION RULE — remove fully neutralized invoices
+    # ==========================================================
+    neutralized = (
+        erp_use.groupby("invoice_erp")["__amt"]
+        .sum()
+        .reset_index()
+    )
+    neutralized_invoices = neutralized[neutralized["__amt"].abs() < 0.05]["invoice_erp"].tolist()
     
-        # 🔄 If exactly 2 opposite entries → skip them entirely
-        if len(group) == 2 and abs(group["__amt"].sum()) < 0.05:
-            continue
+    if neutralized_invoices:
+        erp_use = erp_use[~erp_use["invoice_erp"].isin(neutralized_invoices)]
     
-        # If 3 or more entries → keep only the last (latest)
-        if len(group) >= 3:
-            group = group.tail(1)
-    
-        # If both INV and CN exist → combine their net
-        inv_rows = group[group["__doctype"] == "INV"]
-        cn_rows = group[group["__doctype"] == "CN"]
-    
-        if not inv_rows.empty and not cn_rows.empty:
-            total_inv = inv_rows["__amt"].sum()
-            total_cn = cn_rows["__amt"].sum()
-            net = round(total_inv + total_cn, 2)
-            if abs(net) < 0.05:
-                continue
-            base_row = inv_rows.iloc[-1].copy()
-            base_row["__amt"] = net
-            merged_rows.append(base_row)
-        else:
-            merged_rows.append(group.iloc[-1])
-    
-    erp_use = pd.DataFrame(merged_rows).reset_index(drop=True)
-
-       
+           
 
 
     # ====== SCENARIO 1 & 2: MERGE MULTIPLE AND CREDIT NOTES ======
