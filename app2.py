@@ -434,13 +434,12 @@ if uploaded_erp and uploaded_vendor:
 
 from io import BytesIO
 from openpyxl import Workbook
-from openpyxl.utils.dataframe import dataframe_to_rows
+from openpyxl.utils.dataframe import dataframe_to_rows, get_column_letter
 from openpyxl.styles import PatternFill, Font, Alignment
 
 def export_reconciliation_excel(matched, erp_missing, ven_missing):
     wb = Workbook()
 
-    # ===== Helper to style headers =====
     def style_header(ws, color, row):
         for cell in ws[row]:
             cell.fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
@@ -456,7 +455,6 @@ def export_reconciliation_excel(matched, erp_missing, ven_missing):
 
     # ===== Sheet 2: Missing =====
     ws2 = wb.create_sheet("Missing")
-
     current_row = 1
 
     # --- Section 1: Missing in ERP ---
@@ -464,25 +462,32 @@ def export_reconciliation_excel(matched, erp_missing, ven_missing):
         ws2.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=erp_missing.shape[1])
         ws2.cell(row=current_row, column=1, value="❌ Missing in ERP (found in vendor but not in ERP)").font = Font(bold=True, size=14, color="FF0000")
         current_row += 2
+
+        # Append table
         for r in dataframe_to_rows(erp_missing, index=False, header=True):
             ws2.append(r)
-        style_header(ws2, "c62828", current_row)  # red header
-        current_row = ws2.max_row + 3  # space before next section
+
+        # Color header line
+        style_header(ws2, "c62828", current_row)
+
+        current_row = ws2.max_row + 3  # add spacing before next section
 
     # --- Section 2: Missing in Vendor ---
     if not ven_missing.empty:
         ws2.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=ven_missing.shape[1])
         ws2.cell(row=current_row, column=1, value="❌ Missing in Vendor (found in ERP but not in vendor)").font = Font(bold=True, size=14, color="FF0000")
         current_row += 2
+
         for r in dataframe_to_rows(ven_missing, index=False, header=True):
             ws2.append(r)
-        style_header(ws2, "ad1457", current_row)  # magenta header
 
-    # ===== Autofit columns =====
+        # Color header line
+        style_header(ws2, "ad1457", current_row)
+
+    # ===== Auto-fit columns =====
     for ws in [ws1, ws2]:
         for col in ws.columns:
             max_len = max(len(str(c.value)) if c.value else 0 for c in col)
-            from openpyxl.utils import get_column_letter
             ws.column_dimensions[get_column_letter(col[0].column)].width = max_len + 3
 
     # ===== Save =====
