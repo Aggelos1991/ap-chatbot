@@ -185,19 +185,19 @@ def match_invoices(erp_df, ven_df):
     # ==========================================================
   
     # ==========================================================
-    # 🔄 CANCELLATION RULE — remove fully neutralized invoices
+   # ==========================================================
+    # 🔄 CANCELLATION RULE — remove fully neutralized invoices (ERP + Vendor)
     # ==========================================================
-    neutralized = (
-        erp_use.groupby("invoice_erp")["__amt"]
-        .sum()
-        .reset_index()
-    )
-    neutralized_invoices = neutralized[neutralized["__amt"].abs() < 0.05]["invoice_erp"].tolist()
+    def remove_neutralized(df, inv_col):
+        if inv_col not in df.columns or "__amt" not in df.columns:
+            return df
+        grouped = df.groupby(inv_col)["__amt"].sum().reset_index()
+        neutralized = grouped[abs(grouped["__amt"]) < 0.05][inv_col].tolist()
+        return df[~df[inv_col].isin(neutralized)].reset_index(drop=True)
     
-    if neutralized_invoices:
-        erp_use = erp_use[~erp_use["invoice_erp"].isin(neutralized_invoices)]
-    
-           
+    erp_use = remove_neutralized(erp_use, "invoice_erp")
+    ven_use = remove_neutralized(ven_use, "invoice_ven")
+
 
 
     # ====== SCENARIO 1 & 2: MERGE MULTIPLE AND CREDIT NOTES ======
