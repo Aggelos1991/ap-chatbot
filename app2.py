@@ -213,7 +213,7 @@ def match_invoices(erp_df, ven_df):
 
     # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
     # Add missing cleaner so we can compute e_code / v_code
-     def clean_invoice_code(v):
+    def clean_invoice_code(v):
         """
         Normalize invoice strings for comparison:
         - handles cases like #F123, F123, F-123, F 123
