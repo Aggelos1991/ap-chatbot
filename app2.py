@@ -151,7 +151,7 @@ def match_invoices(erp_df, ven_df):
             "πληρωμή", "μεταφορά", "τράπεζα", "τραπεζικό έμβασμα"
         ]
         credit_words = [
-            "credit", "nota", "abono", "cn", "πιστωτικό", "πίστωση","ακυρωτικό","ακυρωτικό παραστατικό"
+            "credit", "nota", "abono", "cn", "πιστωτικό", "πίστωση","ακυρωτικό","ακυρωτικό παραστατικό","CANCELLATION - Invoice - Corrective entry"
         ]
         invoice_words = [
             "factura", "invoice", "inv", "τιμολόγιο", "παραστατικό"
