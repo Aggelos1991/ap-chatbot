@@ -119,6 +119,9 @@ def match_invoices(erp_df, ven_df):
             r"(?i)^f[-\s]?\d{4,8}",
             r"(?i)cancellation\s*-\s*invoice\s*-\s*corrective\s*entry"  # ✅ NEW pattern,
         ]
+        if "cancellation - invoice - corrective entry" in reason:
+            return "CN"  # ✅ treat as credit note, cancels invoice
+
         if any(re.search(p, reason) for p in payment_patterns):
             return "IGNORE"
 
@@ -158,6 +161,8 @@ def match_invoices(erp_df, ven_df):
         invoice_words = [
             "factura", "invoice", "inv", "τιμολόγιο", "παραστατικό"
         ]
+        if "cancellation - invoice - corrective entry" in reason:
+            return "CN"
 
         if any(k in reason for k in payment_words):
             return "IGNORE"
