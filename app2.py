@@ -281,7 +281,7 @@ def match_invoices(erp_df, ven_df):
             # --- ΝΕΟΣ κανόνας αποδοχής ---
             if same_type and same_full:
                 take_it = True
-            elif same_type and (same_clean or suffix_ok) and amt_close:
+            elif same_type and (same_clean or suffix_ok):
                 take_it = True
             else:
                 take_it = False
