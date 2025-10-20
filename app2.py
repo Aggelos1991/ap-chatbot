@@ -474,3 +474,37 @@ if uploaded_erp and uploaded_vendor:
         st.markdown(f"**Difference Between ERP and Vendor Payments:** {diff_total:,.2f} EUR")
     else:
         st.info("No matching payments found.")
+
+from io import BytesIO
+
+# ====== EXPORT TO EXCEL ======
+def build_excel_bytes(matched, erp_missing, ven_missing, erp_pay, ven_pay, matched_pay):
+    """Create multi-sheet Excel export."""
+    buf = BytesIO()
+    with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
+        (matched if not matched.empty else pd.DataFrame(columns=["ERP Invoice","Vendor Invoice","ERP Amount","Vendor Amount","Difference","Status"])
+        ).to_excel(writer, index=False, sheet_name="Matched_Differences")
+        (erp_missing if not erp_missing.empty else pd.DataFrame(columns=["Invoice","Amount"])
+        ).to_excel(writer, index=False, sheet_name="Missing_in_ERP")
+        (ven_missing if not ven_missing.empty else pd.DataFrame(columns=["Invoice","Amount"])
+        ).to_excel(writer, index=False, sheet_name="Missing_in_Vendor")
+        (erp_pay if not erp_pay.empty else pd.DataFrame(columns=["reason_erp","debit_erp","credit_erp","Amount"])
+        ).to_excel(writer, index=False, sheet_name="ERP_Payments")
+        (ven_pay if not ven_pay.empty else pd.DataFrame(columns=["reason_ven","debit_ven","credit_ven","Amount"])
+        ).to_excel(writer, index=False, sheet_name="Vendor_Payments")
+        (matched_pay if not matched_pay.empty else pd.DataFrame(columns=["ERP Reason","Vendor Reason","ERP Amount","Vendor Amount","Difference"])
+        ).to_excel(writer, index=False, sheet_name="Matched_Payments")
+    buf.seek(0)
+    return buf
+
+
+# ====== DOWNLOAD BUTTON ======
+st.markdown("### 📥 Download Excel Report")
+excel_data = build_excel_bytes(matched, erp_missing, ven_missing, erp_pay, ven_pay, matched_pay)
+st.download_button(
+    label="⬇️ Download Reconciliation Report (Excel)",
+    data=excel_data,
+    file_name="reconciliation_results.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+)
+
