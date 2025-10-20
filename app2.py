@@ -431,3 +431,50 @@ if uploaded_erp and uploaded_vendor:
         st.markdown(f"**Difference Between ERP and Vendor Payments:** {diff_total:,.2f} EUR")
     else:
         st.info("No matching payments found.")
+
+from io import BytesIO
+from openpyxl import Workbook
+from openpyxl.utils.dataframe import dataframe_to_rows
+from openpyxl.styles import PatternFill, Font
+import pandas as pd
+
+def export_reconciliation_excel(matched, erp_missing, ven_missing):
+    wb = Workbook()
+    ws1 = wb.active
+    ws1.title = "Matched"
+
+    # --- Helper: simple header style ---
+    def style_header(ws, color):
+        for cell in ws[1]:
+            cell.fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
+            cell.font = Font(color="FFFFFF", bold=True)
+
+    # ===== Sheet 1: Matched =====
+    for r in dataframe_to_rows(matched, index=False, header=True):
+        ws1.append(r)
+    style_header(ws1, "1e88e5")
+
+    # ===== Sheet 2: Combined Missing =====
+    ws2 = wb.create_sheet("Missing (ERP & Vendor)")
+    if not erp_missing.empty:
+        erp_missing["Source"] = "Vendor file (not in ERP)"
+    if not ven_missing.empty:
+        ven_missing["Source"] = "ERP file (not in Vendor)"
+    combined = pd.concat([erp_missing, ven_missing], ignore_index=True)
+    for r in dataframe_to_rows(combined, index=False, header=True):
+        ws2.append(r)
+    style_header(ws2, "6a1b9a")
+
+    buffer = BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    return buffer
+
+st.markdown("### 📥 Download Reconciliation Excel Report")
+excel_output = export_reconciliation_excel(matched, erp_missing, ven_missing)
+st.download_button(
+    "💾 Download Excel File",
+    data=excel_output,
+    file_name="ReconRaptor_Reconciliation.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+)
