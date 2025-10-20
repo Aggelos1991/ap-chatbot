@@ -213,25 +213,25 @@ def match_invoices(erp_df, ven_df):
 
     # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
     # Add missing cleaner so we can compute e_code / v_code
- def clean_invoice_code(v):
-    """
-    Normalize invoice strings for comparison:
-    - handles cases like #F123, F123, F-123, F 123
-    - removes prefixes, non-alphanumerics, and leading zeros
-    """
-    if not v:
-        return ""
-    s = str(v).strip().lower()
-    # normalize #F123, F-123, F 123 → f123
-    s = re.sub(r"(?i)#?\s*f[-\s]?", "f", s)
-    # remove known prefixes and year patterns
-    s = re.sub(r"^(αρ|τιμ|pf|ab|inv|tim|cn|ar|pa|πφ|πα|apo|ref|doc|num|no|fa|sf|ba|vn)\W*", "", s)
-    s = re.sub(r"20\d{2}", "", s)
-    # remove any remaining non-alphanumeric characters
-    s = re.sub(r"[^a-z0-9]", "", s)
-    # drop leading zeros (f00123 → f123)
-    s = re.sub(r"^0+", "", s)
-    return s
+     def clean_invoice_code(v):
+        """
+        Normalize invoice strings for comparison:
+        - handles cases like #F123, F123, F-123, F 123
+        - removes prefixes, non-alphanumerics, and leading zeros
+        """
+        if not v:
+            return ""
+        s = str(v).strip().lower()
+        # normalize #F123, F-123, F 123 → f123
+        s = re.sub(r"(?i)#?\s*f[-\s]?", "f", s)
+        # remove known prefixes and year patterns
+        s = re.sub(r"^(αρ|τιμ|pf|ab|inv|tim|cn|ar|pa|πφ|πα|apo|ref|doc|num|no|fa|sf|ba|vn)\W*", "", s)
+        s = re.sub(r"20\d{2}", "", s)
+        # remove any remaining non-alphanumeric characters
+        s = re.sub(r"[^a-z0-9]", "", s)
+        # drop leading zeros (f00123 → f123)
+        s = re.sub(r"^0+", "", s)
+        return s
 
     # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
