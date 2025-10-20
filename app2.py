@@ -106,28 +106,29 @@ def match_invoices(erp_df, ven_df):
         charge = normalize_number(row.get("debit_erp"))
         credit = normalize_number(row.get("credit_erp"))
 
-        # Unified multilingual keywords/patterns
-        payment_patterns = [
-            r"^πληρωμ",             # Greek "Πληρωμή"
-            r"^απόδειξη\s*πληρωμ",  # Greek "Απόδειξη πληρωμής"
-            r"^payment",            # English: "Payment"
-            r"^bank\s*transfer",    # "Bank Transfer"
-            r"^trf",                # "TRF ..."
-            r"^remesa",             # Spanish
-            r"^pago",               # Spanish
-            r"^transferencia",      # Spanish
-        ]
-        if any(re.search(p, reason) for p in payment_patterns):
-            return "IGNORE"
+        # ✅ FIXED — no more F123 being ignored
+    payment_patterns = [
+        r"^πληρωμ",             # Greek "Πληρωμή"
+        r"^απόδειξη\s*πληρωμ",  # Greek "Απόδειξη πληρωμής"
+        r"^payment",            # English "Payment"
+        r"^bank\s*transfer",    # "Bank Transfer"
+        r"^trf",                # "TRF ..."
+        r"^remesa",             # Spanish
+        r"^pago",               # Spanish
+        r"^transferencia"       # Spanish
+    ]
 
-        credit_words = ["credit", "nota", "abono", "cn", "πιστωτικό", "πίστωση","ακυρωτικό","ακυρωτικό παραστατικό"]
-        invoice_words = ["factura", "invoice", "inv", "τιμολόγιο", "παραστατικό"]
+    if any(re.search(p, reason, re.IGNORECASE) for p in payment_patterns):
+        return "IGNORE"
 
-        if any(k in reason for k in credit_words):
-            return "CN"
-        elif any(k in reason for k in invoice_words) or credit > 0:
-            return "INV"
-        return "UNKNOWN"
+    credit_words = ["credit", "nota", "abono", "cn", "πιστωτικό", "πίστωση","ακυρωτικό","ακυρωτικό παραστατικό"]
+    invoice_words = ["factura", "invoice", "inv", "τιμολόγιο", "παραστατικό"]
+
+    if any(k in reason for k in credit_words):
+        return "CN"
+    elif any(k in reason for k in invoice_words) or credit > 0:
+        return "INV"
+    return "UNKNOWN"
 
     def calc_erp_amount(row):
         doc = row.get("__doctype", "")
