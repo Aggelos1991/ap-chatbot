@@ -304,21 +304,31 @@ def match_invoices(erp_df, ven_df):
             diff = round(e_amt - v_amt, 2)
             amt_close = abs(diff) < 0.05
 
-            # --- Υποψήφιοι έλεγχοι ομοιότητας ---
+                        # --- Υποψήφιοι έλεγχοι ομοιότητας ---
             same_full  = (e_inv == v_inv)
             same_clean = (e_code == v_code)
+            same_type  = (e["__doctype"] == v["__doctype"])
+            amt_close  = abs(diff) < 0.05
 
-            len_diff = abs(len(e_code) - len(v_code))
-            suffix_ok = (
-                len(e_code) > 2 and len(v_code) > 2 and
-                len_diff <= 2 and (
-                    e_code.endswith(v_code) or
-                    v_code.endswith(e_code) or
-                    e_code in v_code or
-                    v_code in e_code  # ✅ Fixes 106↔4106 and 12219↔2219
-                )
-            )
-            same_type = (e["__doctype"] == v["__doctype"])
+            # ✅ Strict & clean matching — no substring or suffix logic
+            take_it = False
+
+            # Match only when type aligns and invoice identifiers are equal
+            if same_type and (same_full or same_clean):
+                take_it = True
+
+            # Record match
+            if take_it:
+                matched.append({
+                    "ERP Invoice": e_inv,
+                    "Vendor Invoice": v_inv,
+                    "ERP Amount": e_amt,
+                    "Vendor Amount": v_amt,
+                    "Difference": diff,
+                    "Status": "Match" if amt_close else "Difference"
+                })
+                used_vendor_rows.add(v_idx)
+                break
 
             # --- ΝΕΟΣ κανόνας αποδοχής ---
             if same_type and same_full:
