@@ -231,7 +231,7 @@ def match_invoices(erp_df, ven_df):
                 take_it = True
             elif same_type and same_clean and amt_close:
                 take_it = True
-            elif same_type and e_num == v_num and amt_close:
+            elif same_type and e_num == v_num and (amt_close or abs(diff) < 0.1):
                 take_it = True
             else:
                 take_it = False
