@@ -117,9 +117,9 @@ def match_invoices(erp_df, ven_df):
     used_vendor_rows = set()
 
     def detect_erp_doc_type(row):
-    reason = normalize_greek(row.get("reason_erp", ""))
-    charge = normalize_number(row.get("debit_erp"))
-    credit = normalize_number(row.get("credit_erp"))
+        reason = normalize_greek(row.get("reason_erp", ""))
+        charge = normalize_number(row.get("debit_erp"))
+        credit = normalize_number(row.get("credit_erp"))
 
     # 🔥 Universal payment keywords (normalized Greek + Latin)
     payment_keywords = [
