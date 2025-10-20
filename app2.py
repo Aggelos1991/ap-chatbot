@@ -211,19 +211,19 @@ def match_invoices(erp_df, ven_df):
 
     # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
     # Add missing cleaner so we can compute e_code / v_code
-    def clean_invoice_code(v):
-        """
-        Normalize invoice strings for comparison:
-        - drop common prefixes
-        - remove year snippets (20xx)
-        - strip non-alphanumerics
-        - keep only digits and trim leading zeros
-        """
-        if not v:
-            return ""
-        s = str(v).strip().lower()
-            # 🧩 Handle structured invoice patterns like 2025-FV-00001-001248-01
-        parts = re.split(r"[-_]", s)
+	  def clean_invoice_code(v):
+	    """
+	    Normalize invoice strings for comparison:
+	    - drop common prefixes
+	    - remove year snippets (20xx)
+	    - strip non-alphanumerics
+	    - keep only digits and trim leading zeros
+	    """
+	    if not v:
+	        return ""
+	    s = str(v).strip().lower()
+	        # 🧩 Handle structured invoice patterns like 2025-FV-00001-001248-01
+	    parts = re.split(r"[-_]", s)
         for p in reversed(parts):
             # numeric block with ≥4 digits, skip if it's a year (2020–2039)
             if re.fullmatch(r"\d{4,}", p) and not re.fullmatch(r"20[0-3]\d", p):
