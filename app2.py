@@ -109,6 +109,7 @@ def match_invoices(erp_df, ven_df):
         # Unified multilingual keywords/patterns
         payment_patterns = [
             r"^πληρωμ",             # Greek "Πληρωμή"
+            r"(?i)έ?μβασμα\s*από\s*πελάτη\s*χειρ\.?"
             r"^απόδειξη\s*πληρωμ",  # Greek "Απόδειξη πληρωμής"
             r"^payment",            # English: "Payment"
             r"^bank\s*transfer",    # "Bank Transfer"
@@ -148,7 +149,7 @@ def match_invoices(erp_df, ven_df):
         # Unified multilingual keywords
         payment_words = [
             "pago", "payment", "transfer", "bank", "saldo", "trf",
-            "πληρωμή", "μεταφορά", "τράπεζα", "τραπεζικό έμβασμα"
+            "πληρωμή", "μεταφορά", "τράπεζα", "τραπεζικό έμβασμα","Έμβασμα από πελάτη χειρ."
         ]
         credit_words = [
             "credit", "nota", "abono", "cn", "πιστωτικό", "πίστωση","ακυρωτικό","ακυρωτικό παραστατικό"
