@@ -642,8 +642,7 @@ def export_reconciliation_excel(matched, erp_missing, ven_missing):
     return output
 
 
-# ====== DOWNLOAD BUTTON ======
-st.markdown("### 📥 Download Reconciliation Excel Report")
+
 
 
 # ====== DOWNLOAD BUTTON ======
