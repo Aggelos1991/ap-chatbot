@@ -440,28 +440,44 @@ from openpyxl.styles import PatternFill, Font
 def export_reconciliation_excel(matched, erp_missing, ven_missing):
     wb = Workbook()
 
-    def add_sheet(df, name, color):
-        ws = wb.create_sheet(name)
-        for r in dataframe_to_rows(df, index=False, header=True):
-            ws.append(r)
-        for c in ws[1]:
-            c.fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
-            c.font = Font(color="FFFFFF", bold=True)
+    def style_header(ws, color):
+        for cell in ws[1]:
+            cell.fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
+            cell.font = Font(color="FFFFFF", bold=True)
 
-    # Matched
-    add_sheet(matched, "Matched", "1e88e5")
+    # ===== Sheet 1: Matched =====
+    ws1 = wb.active
+    ws1.title = "Matched"
+    for r in dataframe_to_rows(matched, index=False, header=True):
+        ws1.append(r)
+    style_header(ws1, "1e88e5")
 
-    # Missing in ERP
+    # ===== Sheet 2: Missing =====
+    ws2 = wb.create_sheet("Missing")
+    fill1, fill2 = PatternFill(start_color="6a1b9a", end_color="6a1b9a", fill_type="solid"), PatternFill(start_color="9c27b0", end_color="9c27b0", fill_type="solid")
+
+    # --- ERP missing ---
     if not erp_missing.empty:
-        add_sheet(erp_missing, "Missing in ERP", "6a1b9a")
+        ws2.append(["Missing in ERP"])
+        for cell in ws2[ws2.max_row]:
+            cell.font = Font(bold=True)
+            cell.fill = fill1
+        for r in dataframe_to_rows(erp_missing, index=False, header=True):
+            ws2.append(r)
 
-    # Missing in Vendor
+    ws2.append([])  # blank line
+
+    # --- Vendor missing ---
     if not ven_missing.empty:
-        add_sheet(ven_missing, "Missing in Vendor", "9c27b0")
+        ws2.append(["Missing in Vendor"])
+        for cell in ws2[ws2.max_row]:
+            cell.font = Font(bold=True)
+            cell.fill = fill2
+        for r in dataframe_to_rows(ven_missing, index=False, header=True):
+            ws2.append(r)
 
-    # Save to memory buffer
+    # ===== Save =====
     buffer = BytesIO()
-    wb.remove(wb["Sheet"])  # remove default empty sheet
     wb.save(buffer)
     buffer.seek(0)
     return buffer
