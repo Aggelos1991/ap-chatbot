@@ -214,27 +214,37 @@ def match_invoices(erp_df, ven_df):
 
     # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
     # Add missing cleaner so we can compute e_code / v_code
-def clean_invoice_code(v):
-    """
-    Normalize invoice strings like #F123, F-123, F 123 → f123
-    """
-    if not v:
-        return ""
-    s = str(v).strip().lower()
-    # Normalize patterns like #F123 / F-123 / F 123
-    s = re.sub(r"(?i)[#\s]*f[-\s]*", "f", s)
-    # Remove any year and known prefixes
-    s = re.sub(r"20\d{2}", "", s)
-    s = re.sub(r"^(αρ|τιμ|pf|ab|inv|tim|cn|ar|pa|πφ|πα|apo|ref|doc|num|no|fa|sf|ba|vn)", "", s)
-    # Keep only alphanumeric characters
-    s = re.sub(r"[^a-z0-9]", "", s)
-    # Remove leading zeros after f
-    s = re.sub(r"f0+", "f", s)
-    return s
-
+    def clean_invoice_code(v):
+        """
+        Normalize invoice strings for comparison:
+        - drop common prefixes
+        - remove year snippets (20xx)
+        - strip non-alphanumerics
+        - keep only digits and trim leading zeros
+        """
+        if not v:
+            return ""
+        s = str(v).strip().lower()
+            # 🧩 Handle structured invoice patterns like 2025-FV-00001-001248-01
+        parts = re.split(r"[-_]", s)
+        for p in reversed(parts):
+            # numeric block with ≥4 digits, skip if it's a year (2020–2039)
+            if re.fullmatch(r"\d{4,}", p) and not re.fullmatch(r"20[0-3]\d", p):
+                s = p.lstrip("0")  # trim leading zeros (001248 → 1248)
+                break
+        s = re.sub(r"^(αρ|τιμ|pf|ab|inv|tim|cn|ar|pa|πφ|πα|apo|ref|doc|num|no)\W*", "", s)
+        s = re.sub(r"20\d{2}", "", s)
+        s = re.sub(r"[^a-z0-9]", "", s)
+        s = re.sub(r"^0+", "", s)
+        # keep only digits for the final compare (like earlier logic)
+        s = re.sub(r"[^\d]", "", s)
+        s = re.sub(
+    r"^(αρ|τιμ|pf|ab|inv|tim|cn|ar|pa|πφ|πα|apo|ref|doc|num|no|fa|sf|ba|vn)\W*", 
+    "", 
+    s
+)            
+        return s
     # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
-    print("ERP cleaned:", clean_invoice_code("F250241"))
-    print("Vendor cleaned:", clean_invoice_code("#F250241"))
 
     for e_idx, e in erp_use.iterrows():
         e_inv = str(e.get("invoice_erp", "")).strip()
@@ -370,6 +380,100 @@ def extract_payments(erp_df: pd.DataFrame, ven_df: pd.DataFrame):
                 break
 
     return erp_pay, ven_pay, pd.DataFrame(matched_payments)
+
+# ======================================
+# STREAMLIT UI
+# ======================================
+uploaded_erp = st.file_uploader("📂 Upload ERP Export (Excel)", type=["xlsx"])
+uploaded_vendor = st.file_uploader("📂 Upload Vendor Statement (Excel)", type=["xlsx"])
+
+if uploaded_erp and uploaded_vendor:
+    erp_raw = pd.read_excel(uploaded_erp, dtype=str)
+    ven_raw = pd.read_excel(uploaded_vendor, dtype=str)
+
+    erp_df = normalize_columns(erp_raw, "erp")
+    ven_df = normalize_columns(ven_raw, "ven")
+
+    with st.spinner("Reconciling invoices..."):
+        matched, erp_missing, ven_missing = match_invoices(erp_df, ven_df)
+        erp_pay, ven_pay, matched_pay = extract_payments(erp_df, ven_df)
+
+    st.success("✅ Reconciliation complete")
+
+    # ====== HIGHLIGHTING ======
+    def highlight_row(row):
+        if row["Status"] == "Match":
+            return ['background-color: #2e7d32; color: white'] * len(row)
+        elif row["Status"] == "Difference":
+            return ['background-color: #f9a825; color: black'] * len(row)
+        return [''] * len(row)
+
+    # ====== MATCHED ======
+    st.subheader("📊 Matched / Differences")
+    if not matched.empty:
+        st.dataframe(matched.style.apply(highlight_row, axis=1), use_container_width=True)
+    else:
+        st.info("No matches found.")
+
+    # ====== MISSING ======
+    st.subheader("❌ Missing in ERP (found in vendor but not in ERP)")
+    if not erp_missing.empty:
+        st.dataframe(
+            erp_missing.style.applymap(lambda _: "background-color: #c62828; color: white"),
+            use_container_width=True
+        )
+    else:
+        st.success("✅ No missing invoices in ERP.")
+
+    st.subheader("❌ Missing in Vendor (found in ERP but not in vendor)")
+    if not ven_missing.empty:
+        st.dataframe(
+            ven_missing.style.applymap(lambda _: "background-color: #c62828; color: white"),
+            use_container_width=True
+        )
+    else:
+        st.success("✅ No missing invoices in Vendor.")
+
+    # ====== PAYMENTS ======
+    st.subheader("🏦 Payment Transactions (Identified in both sides)")
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("**💼 ERP Payments**")
+        if not erp_pay.empty:
+            st.dataframe(
+                erp_pay.style.applymap(lambda _: "background-color: #004d40; color: white"),
+                use_container_width=True
+            )
+            st.markdown(f"**Total ERP Payments:** {erp_pay['Amount'].sum():,.2f} EUR")
+        else:
+            st.info("No ERP payments found.")
+
+    with col2:
+        st.markdown("**🧾 Vendor Payments**")
+        if not ven_pay.empty:
+            st.dataframe(
+                ven_pay.style.applymap(lambda _: "background-color: #1565c0; color: white"),
+                use_container_width=True
+            )
+            st.markdown(f"**Total Vendor Payments:** {ven_pay['Amount'].sum():,.2f} EUR")
+        else:
+            st.info("No Vendor payments found.")
+
+    st.markdown("### ✅ Matched Payments")
+    if not matched_pay.empty:
+        st.dataframe(
+            matched_pay.style.applymap(lambda _: "background-color: #2e7d32; color: white"),
+            use_container_width=True
+        )
+        total_erp = matched_pay["ERP Amount"].sum()
+        total_vendor = matched_pay["Vendor Amount"].sum()
+        diff_total = abs(total_erp - total_vendor)
+        st.markdown(f"**Total Matched ERP Payments:** {total_erp:,.2f} EUR")
+        st.markdown(f"**Total Matched Vendor Payments:** {total_vendor:,.2f} EUR")
+        st.markdown(f"**Difference Between ERP and Vendor Payments:** {diff_total:,.2f} EUR")
+    else:
+        st.info("No matching payments found.")
 
 # ======================================
 # STREAMLIT UI
