@@ -102,7 +102,7 @@ def match_invoices(erp_df, ven_df):
     used_vendor_rows = set()
 
     def detect_erp_doc_type(row):
-        reason = str(row.get("reason_erp", "")).lower()
+        reason = normalize_greek(row.get("reason_erp", ""))
         charge = normalize_number(row.get("debit_erp"))
         credit = normalize_number(row.get("credit_erp"))
 
@@ -146,7 +146,7 @@ def match_invoices(erp_df, ven_df):
         return 0.0
 
     def detect_vendor_doc_type(row):
-        reason = str(row.get("reason_ven", "")).lower()
+        reason = normalize_greek(row.get("reason_ven", ""))
         debit = normalize_number(row.get("debit_ven"))
         credit = normalize_number(row.get("credit_ven"))
 
