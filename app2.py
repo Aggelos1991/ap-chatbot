@@ -509,7 +509,14 @@ if uploaded_erp and uploaded_vendor:
 
     with col2:
         st.markdown("**🧾 Vendor Payments**")
-        
+        if not ven_pay.empty:
+            st.dataframe(
+                ven_pay.style.applymap(lambda _: "background-color: #1565c0; color: white"),
+                use_container_width=True
+            )
+            st.markdown(f"**Total Vendor Payments:** {ven_pay['Amount'].sum():,.2f} EUR")
+        else:
+            st.info("No Vendor payments found.")
 if not matched_pay.empty:
     st.dataframe(
         matched_pay.style.applymap(lambda _: "background-color: #2e7d32; color: white"),
