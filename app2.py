@@ -334,14 +334,16 @@ if uploaded_erp and uploaded_vendor:
             tier2_matches, still_unmatched = tier2_match(erp_missing, ven_missing)
 
         if not tier2_matches.empty:
-            # remove tier-2 matches from missing lists
+          
+            # 🧹 Remove Tier-2 matched invoices from missing lists
             matched_vendor_invoices = tier2_matches["Vendor Invoice"].unique().tolist()
             matched_erp_invoices = tier2_matches["ERP Invoice"].unique().tolist()
             ven_missing = ven_missing[~ven_missing["Invoice"].isin(matched_vendor_invoices)]
             erp_missing = erp_missing[~erp_missing["Invoice"].isin(matched_erp_invoices)]
-
+        
             st.success(f"✅ Tier-2 matched {len(tier2_matches)} additional pairs.")
             st.dataframe(tier2_matches,use_container_width=True)
+
         else:
             st.info("No Tier-2 matches found.")
     else:
