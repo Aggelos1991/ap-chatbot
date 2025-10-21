@@ -295,7 +295,7 @@ def fuzzy_ratio(a, b):
     return SequenceMatcher(None, str(a), str(b)).ratio()
 
 def tier2_match(erp_missing, ven_missing):
-    """Perform Tier-2 matching on unmatched invoices using fuzzy matching, date, and identical amounts."""
+    """Perform Tier-2 matching on unmatched invoices with identical amounts and date match as a trial."""
     if erp_missing.empty or ven_missing.empty:
         return pd.DataFrame(), erp_missing.copy(), ven_missing.copy()
     e_df = erp_missing.rename(columns={"Invoice": "invoice_erp", "Amount": "__amt", "Date": "date_erp"}).copy()
@@ -319,17 +319,18 @@ def tier2_match(erp_missing, ven_missing):
             v_code = clean_invoice_code(v_inv)
             diff = abs(e_amt - v_amt)
             sim = fuzzy_ratio(e_code, v_code)
-            # Match if amounts are identical, fuzzy score is high, date check is optional
-            if diff == 0.0 and sim >= 0.7:
-                matches.append({
-                    "ERP Invoice": e_inv, "Vendor Invoice": v_inv,
-                    "ERP Amount": e_amt, "Vendor Amount": v_amt,
-                    "Difference": diff, "Fuzzy Score": round(sim, 2),
-                    "Date": e_date or v_date or "N/A", "Match Type": "Tier-2"
-                })
-                used_e.add(e_idx)
-                used_v.add(v_idx)
-                break
+            # Trial: Add date match before amount and fuzzy score
+            if e_date == v_date and e_date != "" and v_date != "":
+                if diff == 0.0 and sim >= 0.7:
+                    matches.append({
+                        "ERP Invoice": e_inv, "Vendor Invoice": v_inv,
+                        "ERP Amount": e_amt, "Vendor Amount": v_amt,
+                        "Difference": diff, "Fuzzy Score": round(sim, 2),
+                        "Date": e_date, "Match Type": "Tier-2"
+                    })
+                    used_e.add(e_idx)
+                    used_v.add(v_idx)
+                    break
     tier2_matches = pd.DataFrame(matches)
     erp_columns = ["invoice_erp", "__amt"] + (["date_erp"] if "date_erp" in e_df.columns else [])
     ven_columns = ["invoice_ven", "__amt"] + (["date_ven"] if "date_ven" in v_df.columns else [])
