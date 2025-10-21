@@ -365,4 +365,10 @@ if uploaded_erp and uploaded_vendor:
         return output
 
     st.markdown("### 📥 Download Reconciliation Excel Report")
-    excel_output = export_reconciliation_excel(matched, erp_missing,
+    excel_output = export_reconciliation_excel(matched, erp_missing, ven_missing, tier2_matches)
+    st.download_button(
+        "⬇️ Download Excel Report",
+        data=excel_output,
+        file_name="Reconciliation_Report.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
