@@ -38,10 +38,24 @@ def normalize_number(v):
         return 0.0
 
 def normalize_date(v):
-    """Normalize date strings to YYYY-MM-DD format, handling various formats."""
+    """Normalize date strings to YYYY-MM-DD format, handling European, American, and ISO formats."""
     if pd.isna(v) or str(v).strip() == "":
         return ""
     s = str(v).strip().replace(".", "/").replace("-", "/").replace(",", "/")
+    # Try multiple date formats explicitly
+    formats = [
+        "%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y",  # European: DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY
+        "%m/%d/%Y", "%m-%d-%Y",  # American: MM/DD/YYYY, MM-DD-YYYY
+        "%Y/%m/%d", "%Y-%m-%d"   # ISO: YYYY/MM/DD, YYYY-MM-DD
+    ]
+    for fmt in formats:
+        try:
+            d = pd.to_datetime(s, format=fmt, errors="coerce")
+            if not pd.isna(d):
+                return d.strftime("%Y-%m-%d")
+        except:
+            continue
+    # Fallback to general parsing
     try:
         d = pd.to_datetime(s, errors="coerce", dayfirst=True)
         if pd.isna(d):
@@ -52,13 +66,31 @@ def normalize_date(v):
     except:
         return ""
 
+def clean_invoice_code(v):
+    """Clean invoice code to extract numerical components for fuzzy matching."""
+    if not v:
+        return ""
+    s = str(v).strip().lower()
+    parts = re.split(r"[-_]", s)
+    for p in reversed(parts):
+        if re.fullmatch(r"\d{4,}", p) and not re.fullmatch(r"20[0-3]\d", p):
+            s = p.lstrip("0")
+            break
+    s = re.sub(r"^(αρ|τιμ|pf|ab|inv|tim|cn|ar|pa|πφ|πα|apo|ref|doc|num|no|apd|vs)\W*", "", s)
+    s = re.sub(r"20\d{2}", "", s)
+    s = re.sub(r"[^a-z0-9]", "", s)
+    s = re.sub(r"^0+", "", s)
+    s = re.sub(r"[^\d]", "", s)
+    return s
+
 def normalize_columns(df, tag):
     """Map multilingual headers to unified names."""
     mapping = {
         "invoice": [
             "invoice", "factura", "fact", "nº", "num", "numero", "número",
             "document", "doc", "ref", "referencia", "nº factura", "num factura", "alternative document",
-            "αρ.", "αριθμός", "νουμερο", "νούμερο", "no", "παραστατικό", "αρ. τιμολογίου", "αρ. εγγράφου"
+            "αρ.", "αριθμός", "νουμερο", "νούμερο", "no", "παραστατικό", "αρ. τιμολογίου", "αρ. εγγράφου",
+            "document number"
         ],
         "credit": [
             "credit", "haber", "credito", "crédito", "nota de crédito", "nota crédito",
@@ -75,7 +107,8 @@ def normalize_columns(df, tag):
             "reason", "motivo", "concepto", "descripcion", "descripción",
             "detalle", "detalles", "razon", "razón",
             "observaciones", "comentario", "comentarios", "explicacion",
-            "αιτιολογία", "περιγραφή", "παρατηρήσεις", "σχόλια", "αναφορά", "αναλυτική περιγραφή"
+            "αιτιολογία", "περιγραφή", "παρατηρήσεις", "σχόλια", "αναφορά", "αναλυτική περιγραφή",
+            "description"
         ],
         "cif": [
             "cif", "nif", "vat", "iva", "tax", "id fiscal", "número fiscal", "num fiscal", "code",
@@ -207,47 +240,23 @@ def match_invoices(erp_df, ven_df):
     ven_use["__amt"] = ven_use["__amt"].astype(float)
     erp_use = erp_use.groupby(["invoice_erp", "__doctype"], as_index=False)["__amt"].sum()
     ven_use = ven_use.groupby(["invoice_ven", "__doctype"], as_index=False)["__amt"].sum()
-    def extract_digits(v):
-        return re.sub(r"\D", "", str(v or "")).lstrip("0")
-    def clean_invoice_code(v):
-        if not v:
-            return ""
-        s = str(v).strip().lower()
-        parts = re.split(r"[-_]", s)
-        for p in reversed(parts):
-            if re.fullmatch(r"\d{4,}", p) and not re.fullmatch(r"20[0-3]\d", p):
-                s = p.lstrip("0")
-                break
-        s = re.sub(r"^(αρ|τιμ|pf|ab|inv|tim|cn|ar|pa|πφ|πα|apo|ref|doc|num|no)\W*", "", s)
-        s = re.sub(r"20\d{2}", "", s)
-        s = re.sub(r"[^a-z0-9]", "", s)
-        s = re.sub(r"^0+", "", s)
-        s = re.sub(r"[^\d]", "", s)
-        return s
     for e_idx, e in erp_use.iterrows():
         e_inv = str(e.get("invoice_erp", "")).strip()
         e_amt = round(float(e["__amt"]), 2)
-        e_code = clean_invoice_code(e_inv)
         for v_idx, v in ven_use.iterrows():
             if v_idx in used_vendor_rows:
                 continue
             v_inv = str(v.get("invoice_ven", "")).strip()
             v_amt = round(float(v["__amt"]), 2)
-            v_code = clean_invoice_code(v_inv)
             diff = round(e_amt - v_amt, 2)
             amt_close = abs(diff) < 0.05
             same_full = (e_inv == v_inv)
-            same_clean = (e_code == v_code)
             same_type = (e["__doctype"] == v["__doctype"])
             e_num = re.sub(r".*?(\d{2,})$", r"\1", str(e_inv))
             v_num = re.sub(r".*?(\d{2,})$", r"\1", str(v_inv))
-            if same_type and same_full:
-                take_it = True
-            elif same_type and same_clean and amt_close:
+            if same_type and same_full and amt_close:
                 take_it = True
             elif same_type and e_num == v_num and amt_close:
-                take_it = True
-            elif same_type and e_num == v_num and (amt_close or abs(diff) < 0.1):
                 take_it = True
             else:
                 take_it = False
@@ -298,16 +307,18 @@ def tier2_match(erp_missing, ven_missing):
         e_inv = str(e.get("invoice_erp", "")).strip()
         e_amt = round(float(e.get("__amt", 0)), 2)
         e_date = e.get("date_norm", "")
+        e_code = clean_invoice_code(e_inv)
         for v_idx, v in v_df.iterrows():
             if v_idx in used_v:
                 continue
             v_inv = str(v.get("invoice_ven", "")).strip()
             v_amt = round(float(v.get("__amt", 0)), 2)
             v_date = v.get("date_norm", "")
+            v_code = clean_invoice_code(v_inv)
             diff = abs(e_amt - v_amt)
-            sim = fuzzy_ratio(e_inv, v_inv)
+            sim = fuzzy_ratio(e_code, v_code)
             # Match if amounts are close, fuzzy score is high, and dates match
-            if diff < 0.05 and sim >= 0.8 and e_date == v_date and e_date != "" and v_date != "":
+            if diff <= 10.0 and sim >= 0.8 and e_date == v_date and e_date != "" and v_date != "":
                 matches.append({
                     "ERP Invoice": e_inv,
                     "Vendor Invoice": v_inv,
@@ -342,7 +353,6 @@ def extract_payments(erp_df: pd.DataFrame, ven_df: pd.DataFrame):
         "εξοφληση", "pagado", "paid"
     ]
     exclude_keywords = [
-        "τιμολόγιο", "invoice", "παραστατικό", "έξοδα", "expenses", "expense",
         "invoice of expenses", "expense invoice", "τιμολόγιο εξόδων",
         "διόρθωση", "διορθώσεις", "correction", "reclass", "adjustment",
         "μεταφορά υπολοίπου", "balance transfer"
