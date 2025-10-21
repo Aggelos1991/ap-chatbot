@@ -83,7 +83,8 @@ def normalize_columns(df, tag):
         ],
         "date": [
             "date", "fecha", "fech", "data", "fecha factura", "fecha doc", "fecha documento",
-            "ημερομηνία", "ημ/νία", "ημερομηνία έκδοσης", "ημερομηνία παραστατικού"
+            "ημερομηνία", "ημ/νία", "ημερομηνία έκδοσης", "ημερομηνία παραστατικού",
+            "issue date", "transaction date", "emission date", "posting date"
         ],
     }
     rename_map = {}
@@ -261,9 +262,12 @@ def match_invoices(erp_df, ven_df):
     matched_df = pd.DataFrame(matched)
     matched_erp = {m["ERP Invoice"] for _, m in matched_df.iterrows()}
     matched_ven = {m["Vendor Invoice"] for _, m in matched_df.iterrows()}
-    missing_in_erp = ven_use[~ven_use["invoice_ven"].isin(matched_ven)][["invoice_ven", "__amt", "date_ven"]] \
+    # Conditionally include date columns if they exist
+    erp_columns = ["invoice_erp", "__amt"] + (["date_erp"] if "date_erp" in erp_use.columns else [])
+    ven_columns = ["invoice_ven", "__amt"] + (["date_ven"] if "date_ven" in ven_use.columns else [])
+    missing_in_erp = ven_use[~ven_use["invoice_ven"].isin(matched_ven)][ven_columns] \
         if "invoice_ven" in ven_use else pd.DataFrame()
-    missing_in_vendor = erp_use[~erp_use["invoice_erp"].isin(matched_erp)][["invoice_erp", "__amt", "date_erp"]] \
+    missing_in_vendor = erp_use[~erp_use["invoice_erp"].isin(matched_erp)][erp_columns] \
         if "invoice_erp" in erp_use else pd.DataFrame()
     missing_in_erp = missing_in_erp.rename(columns={"invoice_ven": "Invoice", "__amt": "Amount", "date_ven": "Date"})
     missing_in_vendor = missing_in_vendor.rename(columns={"invoice_erp": "Invoice", "__amt": "Amount", "date_erp": "Date"})
@@ -297,21 +301,27 @@ def tier2_match(erp_missing, ven_missing):
             v_date = v.get("date_norm", "")
             diff = abs(e_amt - v_amt)
             sim = fuzzy_ratio(e_inv, v_inv)
-            if diff < 0.05 and (e_date == v_date or (sim >= 0.8 and e_date != "" and v_date != "")):
-                matches.append({
-                    "ERP Invoice": e_inv,
-                    "Vendor Invoice": v_inv,
-                    "ERP Amount": e_amt,
-                    "Vendor Amount": v_amt,
-                    "Difference": diff,
-                    "Fuzzy Score": round(sim, 2),
-                    "Date": e_date or v_date,
-                    "Match Type": "Tier-2"
-                })
-                used_v.add(v_idx)
-                break
+            # Match if amounts are close and either dates match or fuzzy score is high with valid dates
+            if diff < 0.05:
+                if (e_date == v_date and e_date != "" and v_date != "") or \
+                   (sim >= 0.8 and e_date != "" and v_date != "") or \
+                   (sim >= 0.9 and (e_date == "" or v_date == "")):
+                    matches.append({
+                        "ERP Invoice": e_inv,
+                        "Vendor Invoice": v_inv,
+                        "ERP Amount": e_amt,
+                        "Vendor Amount": v_amt,
+                        "Difference": diff,
+                        "Fuzzy Score": round(sim, 2),
+                        "Date": e_date or v_date,
+                        "Match Type": "Tier-2"
+                    })
+                    used_v.add(v_idx)
+                    break
     tier2_matches = pd.DataFrame(matches)
-    remaining_ven_missing = v_df[~v_df.index.isin(used_v)][["invoice_ven", "__amt", "date_ven"]].rename(
+    # Conditionally include date_ven in remaining_ven_missing
+    ven_columns = ["invoice_ven", "__amt"] + (["date_ven"] if "date_ven" in v_df.columns else [])
+    remaining_ven_missing = v_df[~v_df.index.isin(used_v)][ven_columns].rename(
         columns={"invoice_ven": "Invoice", "__amt": "Amount", "date_ven": "Date"}
     )
     return tier2_matches, remaining_ven_missing
@@ -459,8 +469,14 @@ uploaded_vendor = st.file_uploader("📂 Upload Vendor Statement (Excel)", type=
 if uploaded_erp and uploaded_vendor:
     erp_raw = pd.read_excel(uploaded_erp, dtype=str)
     ven_raw = pd.read_excel(uploaded_vendor, dtype=str)
+    # Debugging: Display available columns
+    st.markdown("**Debug Info: Available Columns**")
+    st.write(f"ERP Columns: {list(erp_raw.columns)}")
+    st.write(f"Vendor Columns: {list(ven_raw.columns)}")
     erp_df = normalize_columns(erp_raw, "erp")
     ven_df = normalize_columns(ven_raw, "ven")
+    st.write(f"Normalized ERP Columns: {list(erp_df.columns)}")
+    st.write(f"Normalized Vendor Columns: {list(ven_df.columns)}")
     with st.spinner("Reconciling invoices..."):
         matched, erp_missing, ven_missing = match_invoices(erp_df, ven_df)
         erp_pay, ven_pay, matched_pay = extract_payments(erp_df, ven_df)
