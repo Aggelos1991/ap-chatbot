@@ -489,10 +489,12 @@ if uploaded_erp and uploaded_vendor:
     with st.spinner("Reconciling invoices..."):
         matched, erp_missing, ven_missing = match_invoices(erp_df, ven_df)
         erp_pay, ven_pay, matched_pay = extract_payments(erp_df, ven_df)
-        tier2_matches, used_erp_indices, used_ven_indices, remaining_erp_missing, remaining_ven_missing = tier2_match(erp_missing, ven_missing)
-        # Hide Tier-2 matched invoices from Missing tables by filtering original missing DataFrames
-        erp_missing = erp_missing[~erp_missing.index.isin(used_erp_indices)] if not used_erp_indices else erp_missing
-        ven_missing = ven_missing[~ven_missing.index.isin(used_ven_indices)] if not used_ven_indices else ven_missing
+        tier2_matches, used_erp_indices, used_ven_indices, _, _ = tier2_match(erp_missing, ven_missing)
+        # Inject lines to hide Tier-2 matched invoices from Missing tables
+        if used_erp_indices:
+            erp_missing = erp_missing[~erp_missing.index.isin(used_erp_indices)]
+        if used_ven_indices:
+            ven_missing = ven_missing[~ven_missing.index.isin(used_ven_indices)]
     st.success("✅ Reconciliation complete")
     # ====== HIGHLIGHTING ======
     def highlight_row(row):
@@ -603,7 +605,7 @@ if uploaded_erp and uploaded_vendor:
             st.markdown(f"**Total Unmatched Vendor Payments:** {unmatched_ven_pay['Amount'].sum():,.2f} EUR")
         else:
             st.info("No unmatched vendor payments found.")
-    
+   
     # ====== DOWNLOAD EXCEL ======
     st.markdown("### 📥 Download Reconciliation Excel Report")
     excel_output = export_reconciliation_excel(matched, erp_missing, ven_missing, matched_pay, tier2_matches)
