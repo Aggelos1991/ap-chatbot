@@ -13,6 +13,7 @@ st.title("🦖 ReconRaptor — Vendor Invoice Reconciliation")
 # HELPERS
 # ======================================
 def normalize_number(v):
+    """Convert numeric strings like '1.234,56' or '1,234.56' safely to float."""
     if v is None or str(v).strip() == "":
         return 0.0
     s = str(v).strip()
@@ -33,6 +34,7 @@ def normalize_number(v):
 
 
 def normalize_columns(df, tag):
+    """Map multilingual headers to unified names."""
     mapping = {
         "invoice": [
             "invoice", "factura", "fact", "nº", "num", "numero", "número",
@@ -68,21 +70,23 @@ def normalize_columns(df, tag):
 
     rename_map = {}
     cols_lower = {c: str(c).strip().lower() for c in df.columns}
+
     for key, aliases in mapping.items():
         for col, low in cols_lower.items():
             if any(a in low for a in aliases):
                 rename_map[col] = f"{key}_{tag}"
 
     out = df.rename(columns=rename_map)
+
     for required in ["debit", "credit"]:
         cname = f"{required}_{tag}"
         if cname not in out.columns:
             out[cname] = 0.0
+
     return out
 
-
 # ======================================
-# MATCHING FUNCTIONS
+# CORE MATCHING
 # ======================================
 def match_invoices(erp_df, ven_df):
     matched = []
@@ -92,10 +96,12 @@ def match_invoices(erp_df, ven_df):
         reason = str(row.get("reason_erp", "")).lower()
         charge = normalize_number(row.get("debit_erp"))
         credit = normalize_number(row.get("credit_erp"))
-        payment_patterns = [r"πληρωμ", r"payment", r"transfer", r"trf", r"pago"]
+        payment_patterns = [
+            r"πληρωμ", r"payment", r"transfer", r"trf", r"pago"
+        ]
         if any(re.search(p, reason) for p in payment_patterns):
             return "IGNORE"
-        if any(k in reason for k in ["credit", "nota", "abono", "cn", "πιστωτικό", "πίστωση"]):
+        if any(k in reason for k in ["credit", "nota", "abono", "cn", "πιστωτικό", "πίστωση", "ακυρωτικό"]):
             return "CN"
         elif credit > 0:
             return "INV"
@@ -115,9 +121,9 @@ def match_invoices(erp_df, ven_df):
         reason = str(row.get("reason_ven", "")).lower()
         debit = normalize_number(row.get("debit_ven"))
         credit = normalize_number(row.get("credit_ven"))
-        if any(k in reason for k in ["pago","payment","transfer","bank","saldo","trf","πληρωμή","μεταφορά","τραπεζικό έμβασμα"]):
+        if any(k in reason for k in ["pago","payment","transfer","bank","saldo","trf","πληρωμή","μεταφορά","τράπεζα","τραπεζικό έμβασμα"]):
             return "IGNORE"
-        if any(k in reason for k in ["credit","nota","abono","cn","πιστωτικό","πίστωση"]):
+        if any(k in reason for k in ["credit","nota","abono","cn","πιστωτικό","πίστωση","ακυρωτικό"]):
             return "CN"
         elif debit > 0:
             return "INV"
@@ -142,8 +148,6 @@ def match_invoices(erp_df, ven_df):
     ven_use = ven_df[ven_df["__doctype"].isin(["INV", "CN"])].copy()
 
     def clean_invoice_code(v):
-        if not v:
-            return ""
         return re.sub(r"[^a-z0-9]", "", str(v).strip().lower())
 
     for e_idx, e in erp_use.iterrows():
@@ -176,7 +180,6 @@ def match_invoices(erp_df, ven_df):
     missing_in_vendor.rename(columns={"invoice_erp": "Invoice", "__amt": "Amount"}, inplace=True)
     return matched_df, missing_in_erp, missing_in_vendor
 
-
 # ======================================
 # TIER-2 MATCHING
 # ======================================
@@ -200,12 +203,12 @@ def tier2_match(erp_missing, ven_missing):
                 matches.append({
                     "ERP Invoice": e_inv, "Vendor Invoice": v_inv,
                     "ERP Amount": e_amt, "Vendor Amount": v_amt,
-                    "Difference": diff, "Fuzzy Score": round(sim, 2), "Match Type": "Tier-2"
+                    "Difference": diff, "Fuzzy Score": round(sim, 2),
+                    "Match Type": "Tier-2"
                 })
                 used_v.add(v_idx)
                 break
     return pd.DataFrame(matches), v_df[~v_df.index.isin(used_v)].copy()
-
 
 # ======================================
 # STREAMLIT UI
@@ -220,7 +223,7 @@ if uploaded_erp and uploaded_vendor:
     with st.spinner("Reconciling invoices..."):
         matched, erp_missing, ven_missing = match_invoices(erp_df, ven_df)
 
-    # Tier-2 cleanup
+    # 🧩 Tier-2 Matching
     tier2_matches, _ = tier2_match(erp_missing, ven_missing)
     if not tier2_matches.empty:
         matched_vendor_invoices = tier2_matches["Vendor Invoice"].unique().tolist()
@@ -230,18 +233,19 @@ if uploaded_erp and uploaded_vendor:
 
     st.success("✅ Reconciliation complete")
 
-    # Matched table
+    def highlight_row(row):
+        if row["Status"] == "Match":
+            return ['background-color:#2e7d32;color:white'] * len(row)
+        elif row["Status"] == "Difference":
+            return ['background-color:#f9a825;color:black'] * len(row)
+        return [''] * len(row)
+
     st.subheader("📊 Matched / Differences")
     if not matched.empty:
-        def highlight_row(row):
-            if row["Status"] == "Match": return ['background-color:#2e7d32;color:white'] * len(row)
-            elif row["Status"] == "Difference": return ['background-color:#f9a825;color:black'] * len(row)
-            return [''] * len(row)
         st.dataframe(matched.style.apply(highlight_row, axis=1), use_container_width=True)
     else:
         st.info("No matches found.")
 
-    # Missing tables
     st.subheader("❌ Missing in ERP (found in vendor but not in ERP)")
     if not erp_missing.empty:
         st.dataframe(erp_missing.style.applymap(lambda _: "background-color:#c62828;color:white"), use_container_width=True)
@@ -254,13 +258,17 @@ if uploaded_erp and uploaded_vendor:
     else:
         st.success("✅ No missing invoices in Vendor.")
 
-    # Tier-2 section
-    st.markdown("### 🧩 Tier-2 Matching (same value, fuzzy invoice)")
+    # Tier-2 table with green color
+    st.markdown("### 🧩 Tier-2 Matching (same date, same value, fuzzy invoice)")
     if not tier2_matches.empty:
         st.success(f"✅ Tier-2 matched {len(tier2_matches)} additional pairs.")
-        st.dataframe(tier2_matches.style.applymap(lambda _: "background-color:#1b5e20;color:white"), use_container_width=True)
+        st.dataframe(
+            tier2_matches.style.applymap(lambda _: "background-color:#1b5e20;color:white"),
+            use_container_width=True
+        )
     else:
         st.info("No Tier-2 matches found.")
+
 
     # Export
     def export_reconciliation_excel(matched, erp_missing, ven_missing, tier2_matches):
