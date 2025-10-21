@@ -38,15 +38,17 @@ def normalize_number(v):
         return 0.0
 
 def normalize_date(v):
-    """Normalize date strings to YYYY-MM-DD format, handling European, American, and ISO formats."""
+    """Normalize date strings to YYYY-MM-DD format, handling various formats."""
     if pd.isna(v) or str(v).strip() == "":
         return ""
     s = str(v).strip().replace(".", "/").replace("-", "/").replace(",", "/")
-    # Try multiple date formats explicitly
     formats = [
         "%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y",  # European: DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY
         "%m/%d/%Y", "%m-%d-%Y",  # American: MM/DD/YYYY, MM-DD-YYYY
-        "%Y/%m/%d", "%Y-%m-%d"   # ISO: YYYY/MM/DD, YYYY-MM-DD
+        "%Y/%m/%d", "%Y-%m-%d",  # ISO: YYYY/MM/DD, YYYY-MM-DD
+        "%d/%m/%y", "%d-%m-%y", "%d.%m.%y",  # European short: DD/MM/YY, DD-MM-YY, DD.MM.YY
+        "%m/%d/%y", "%m-%d-%y",  # American short: MM/DD/YY, MM-DD-YY
+        "%Y.%m.%d"  # ISO with dots: YYYY.MM.DD
     ]
     for fmt in formats:
         try:
@@ -55,7 +57,6 @@ def normalize_date(v):
                 return d.strftime("%Y-%m-%d")
         except:
             continue
-    # Fallback to general parsing
     try:
         d = pd.to_datetime(s, errors="coerce", dayfirst=True)
         if pd.isna(d):
@@ -88,27 +89,30 @@ def normalize_columns(df, tag):
     mapping = {
         "invoice": [
             "invoice", "factura", "fact", "nº", "num", "numero", "número",
-            "document", "doc", "ref", "referencia", "nº factura", "num factura", "alternative document",
+            "document", "doc", "ref", "referencia", "nº factura", "num factura", "alternative document", "document number",
             "αρ.", "αριθμός", "νουμερο", "νούμερο", "no", "παραστατικό", "αρ. τιμολογίου", "αρ. εγγράφου",
-            "document number"
+            "αριθμός τιμολογίου", "αριθμός παραστατικού", "κωδικός τιμολογίου", "τιμολόγιο", "αρ. παραστατικού",
+            "παραστατικό τιμολογίου", "κωδικός παραστατικού"
         ],
         "credit": [
             "credit", "haber", "credito", "crédito", "nota de crédito", "nota crédito",
             "abono", "abonos", "importe haber", "valor haber",
-            "πίστωση", "πιστωτικό", "πιστωτικό τιμολόγιο", "πίστωση ποσού"
+            "πίστωση", "πιστωτικό", "πιστωτικό τιμολόγιο", "πίστωση ποσού",
+            "ποσό πίστωσης", "πιστωτικό ποσό"
         ],
         "debit": [
             "debit", "debe", "cargo", "importe", "importe total", "valor", "monto",
             "amount", "document value", "charge", "total", "totale", "totales", "totals",
             "base imponible", "importe factura", "importe neto",
-            "χρέωση", "αξία", "αξία τιμολογίου"
+            "χρέωση", "αξία", "αξία τιμολογίου",
+            "ποσό χρέωσης", "συνολική αξία", "καθαρή αξία", "ποσό", "ποσό τιμολογίου"
         ],
         "reason": [
             "reason", "motivo", "concepto", "descripcion", "descripción",
             "detalle", "detalles", "razon", "razón",
             "observaciones", "comentario", "comentarios", "explicacion",
             "αιτιολογία", "περιγραφή", "παρατηρήσεις", "σχόλια", "αναφορά", "αναλυτική περιγραφή",
-            "description"
+            "description", "περιγραφή τιμολογίου", "αιτιολογία παραστατικού", "λεπτομέρειες"
         ],
         "cif": [
             "cif", "nif", "vat", "iva", "tax", "id fiscal", "número fiscal", "num fiscal", "code",
@@ -117,7 +121,9 @@ def normalize_columns(df, tag):
         "date": [
             "date", "fecha", "fech", "data", "fecha factura", "fecha doc", "fecha documento",
             "ημερομηνία", "ημ/νία", "ημερομηνία έκδοσης", "ημερομηνία παραστατικού",
-            "issue date", "transaction date", "emission date", "posting date"
+            "issue date", "transaction date", "emission date", "posting date",
+            "ημερομηνία τιμολογίου", "ημερομηνία έκδοσης τιμολογίου", "ημερομηνία καταχώρισης",
+            "ημερ. έκδοσης", "ημερ. παραστατικού", "ημερομηνία έκδοσης παραστατικού"
         ],
     }
     rename_map = {}
