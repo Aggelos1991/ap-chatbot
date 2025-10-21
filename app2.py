@@ -118,9 +118,16 @@ def match_invoices(erp_df, ven_df):
         reason = str(row.get("reason_ven", "")).lower()
         debit = normalize_number(row.get("debit_ven"))
         credit = normalize_number(row.get("credit_ven"))
+        
+        # NEW: SPANISH COBRO PAYMENT DETECTION - IGNORE FROM INVOICES
+        cobro_keywords = ["cobro", "cobros", "recibido", "ingreso", "entrada", "pago recibido", "transferencia recibida"]
+        if any(k in reason for k in cobro_keywords):
+            return "PAYMENT"  # Mark as payment (will be filtered out)
+        
         payment_words = ["pago","payment","transfer","bank","saldo","trf","πληρωμή","μεταφορά","τράπεζα","τραπεζικό έμβασμα"]
         credit_words = ["credit","nota","abono","cn","πιστωτικό","πίστωση","ακυρωτικό"]
         invoice_words = ["factura","invoice","inv","τιμολόγιο","παραστατικό"]
+        
         if any(k in reason for k in payment_words):
             return "IGNORE"
         elif any(k in reason for k in credit_words) or credit > 0:
@@ -144,8 +151,9 @@ def match_invoices(erp_df, ven_df):
     ven_df["__doctype"] = ven_df.apply(detect_vendor_doc_type, axis=1)
     ven_df["__amt"] = ven_df.apply(calc_vendor_amount, axis=1)
 
+    # FILTER OUT PAYMENTS FROM INVOICE MATCHING
     erp_use = erp_df[erp_df["__doctype"].isin(["INV", "CN"])].copy()
-    ven_use = ven_df[ven_df["__doctype"].isin(["INV", "CN"])].copy()
+    ven_use = ven_df[ven_df["__doctype"].isin(["INV", "CN"])].copy()  # PAYMENTS EXCLUDED
 
     def clean_invoice_code(v):
         if not v:
@@ -228,10 +236,15 @@ def tier2_match(erp_missing, ven_missing):
     return pd.DataFrame(matches), v_df[~v_df.index.isin(used_v)].copy()
 
 # ======================================
-# PAYMENTS
+# PAYMENTS - UPDATED WITH SPANISH COBRO
 # ======================================
 def extract_payments(erp_df, ven_df):
-    payment_keywords = ["πληρωμή","payment","bank transfer","transferencia","transfer","trf","remesa","pago","deposit","μεταφορά","έμβασμα"]
+    # EXPANDED: Include SPANISH COBRO PAYMENTS
+    payment_keywords = [
+        "πληρωμή","payment","bank transfer","transferencia","transfer","trf","remesa","pago","deposit","μεταφορά","έμβασμα",
+        # SPANISH COBRO PAYMENTS
+        "cobro","cobros","recibido","ingreso","entrada","pago recibido","transferencia recibida"
+    ]
     exclude_keywords = ["τιμολόγιο","invoice","παραστατικό","έξοδα","expense","correction","adjustment"]
     
     def is_real_payment(r):
@@ -432,8 +445,11 @@ if uploaded_erp and uploaded_vendor:
     ven_df = normalize_columns(ven_raw, "ven")
     
     with st.spinner("Reconciling invoices..."):
-        matched, erp_missing, ven_missing = match_invoices(erp_df, ven_df)
+        # FIRST: Extract payments (catches COBROS)
         erp_pay, ven_pay, matched_pay = extract_payments(erp_df, ven_df)
+        
+        # THEN: Match invoices (COBROS already excluded)
+        matched, erp_missing, ven_missing = match_invoices(erp_df, ven_df)
         
         # 🧩 Tier-2 Matching
         tier2_matches, ven_missing_after_tier2 = tier2_match(erp_missing, ven_missing)
