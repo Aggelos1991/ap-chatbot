@@ -233,7 +233,6 @@ if uploaded_erp and uploaded_vendor:
             return ['background-color:#f9a825;color:black'] * len(row)
         return [''] * len(row)
 
-    # ✅ FIX: remove weird DeltaGenerator output
     st.subheader("📊 Matched / Differences")
     if not matched.empty:
         st.dataframe(matched.style.apply(highlight_row, axis=1), use_container_width=True)
@@ -252,7 +251,6 @@ if uploaded_erp and uploaded_vendor:
     else:
         st.success("✅ No missing invoices in Vendor.")
 
-    # ✅ Tier-2 table with green color
     st.markdown("### 🧩 Tier-2 Matching (same date, same value, fuzzy invoice)")
     if not tier2_matches.empty:
         st.success(f"✅ Tier-2 matched {len(tier2_matches)} additional pairs.")
@@ -263,11 +261,9 @@ if uploaded_erp and uploaded_vendor:
     else:
         st.info("No Tier-2 matches found.")
 
-    # ✅ Excel export with green Tier-2 tab
     def export_reconciliation_excel(matched, erp_missing, ven_missing, tier2_matches):
         import io
         from openpyxl.styles import Font, Alignment, PatternFill
-        from openpyxl.utils import get_column_letter
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
             matched.to_excel(writer, index=False, sheet_name="Matched & Differences")
@@ -279,16 +275,16 @@ if uploaded_erp and uploaded_vendor:
                 for cell in ws_t2[1]:
                     cell.fill = green_fill
                     cell.font = white_font
-                    cell.alignment = Alignment(horizontal="center", vertical="center")
-            ws_name = "Missing"
-            erp_missing.to_excel(writer, index=False, sheet_name=ws_name, startrow=4)
-            start_col = len(erp_missing.columns) + 4
-            ven_missing.to_excel(writer, index=False, sheet_name=ws_name, startcol=start_col, startrow=4)
+            erp_missing.to_excel(writer, index=False, sheet_name="Missing in ERP")
+            ven_missing.to_excel(writer, index=False, sheet_name="Missing in Vendor")
         output.seek(0)
         return output
 
     st.markdown("### 📥 Download Reconciliation Excel Report")
     excel_output = export_reconciliation_excel(matched, erp_missing, ven_missing, tier2_matches)
-    st.download_button("⬇️ Download Excel Report", data=excel_output,
-                       file_name="Reconciliation_Report.xlsx",
-                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    _ = st.download_button("⬇️ Download Excel Report", data=excel_output,
+                           file_name="Reconciliation_Report.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+    # ✅ Hides the weird Streamlit DeltaGenerator object output
+    st.empty()
