@@ -291,36 +291,55 @@ def extract_payments(erp_df, ven_df):
 # ======================================
 uploaded_erp=st.file_uploader("📂 Upload ERP Export (Excel)",type=["xlsx"])
 uploaded_vendor=st.file_uploader("📂 Upload Vendor Statement (Excel)",type=["xlsx"])
+
 if uploaded_erp and uploaded_vendor:
     erp_raw=pd.read_excel(uploaded_erp,dtype=str)
     ven_raw=pd.read_excel(uploaded_vendor,dtype=str)
     erp_df=normalize_columns(erp_raw,"erp")
     ven_df=normalize_columns(ven_raw,"ven")
+
     with st.spinner("Reconciling invoices..."):
         matched,erp_missing,ven_missing=match_invoices(erp_df,ven_df)
         erp_pay,ven_pay,matched_pay=extract_payments(erp_df,ven_df)
+
     st.success("✅ Reconciliation complete")
+
     def highlight_row(row):
         if row["Status"]=="Match": return ['background-color:#2e7d32;color:white']*len(row)
         elif row["Status"]=="Difference": return ['background-color:#f9a825;color:black']*len(row)
         return ['']*len(row)
+
     st.subheader("📊 Matched / Differences")
     if not matched.empty:
-        st.dataframe(matched.style.apply(highlight_row, axis=1), use_container_width=True)
+        st.dataframe(matched.style.apply(highlight_row,axis=1),use_container_width=True)
     else:
         st.info("No matches found.")
 
     st.subheader("❌ Missing in ERP (found in vendor but not in ERP)")
-    st.dataframe(erp_missing.style.applymap(lambda _: "background-color:#c62828;color:white"),use_container_width=True) if not erp_missing.empty else st.success("✅ No missing invoices in ERP.")
+    if not erp_missing.empty:
+        st.dataframe(erp_missing.style.applymap(lambda _: "background-color:#c62828;color:white"),use_container_width=True)
+    else:
+        st.success("✅ No missing invoices in ERP.")
+
     st.subheader("❌ Missing in Vendor (found in ERP but not in vendor)")
-    st.dataframe(ven_missing.style.applymap(lambda _: "background-color:#c62828;color:white"),use_container_width=True) if not ven_missing.empty else st.success("✅ No missing invoices in Vendor.")
+    if not ven_missing.empty:
+        st.dataframe(ven_missing.style.applymap(lambda _: "background-color:#c62828;color:white"),use_container_width=True)
+    else:
+        st.success("✅ No missing invoices in Vendor.")
 
     # 🧩 Tier-2 Matching Layer
     st.markdown("### 🧩 Tier-2 Matching (same date, same value, fuzzy invoice)")
     if not erp_missing.empty and not ven_missing.empty:
         with st.spinner("Running Tier-2 fuzzy matching..."):
             tier2_matches, still_unmatched = tier2_match(erp_missing, ven_missing)
+
         if not tier2_matches.empty:
+            # remove tier-2 matches from missing lists
+            matched_vendor_invoices = tier2_matches["Vendor Invoice"].unique().tolist()
+            matched_erp_invoices = tier2_matches["ERP Invoice"].unique().tolist()
+            ven_missing = ven_missing[~ven_missing["Invoice"].isin(matched_vendor_invoices)]
+            erp_missing = erp_missing[~erp_missing["Invoice"].isin(matched_erp_invoices)]
+
             st.success(f"✅ Tier-2 matched {len(tier2_matches)} additional pairs.")
             st.dataframe(tier2_matches,use_container_width=True)
         else:
@@ -335,13 +354,16 @@ if uploaded_erp and uploaded_vendor:
         if not erp_pay.empty:
             st.dataframe(erp_pay.style.applymap(lambda _: "background-color:#004d40;color:white"),use_container_width=True)
             st.markdown(f"**Total ERP Payments:** {erp_pay['Amount'].sum():,.2f} EUR")
-        else: st.info("No ERP payments found.")
+        else:
+            st.info("No ERP payments found.")
     with col2:
         st.markdown("**🧾 Vendor Payments**")
         if not ven_pay.empty:
             st.dataframe(ven_pay.style.applymap(lambda _: "background-color:#1565c0;color:white"),use_container_width=True)
             st.markdown(f"**Total Vendor Payments:** {ven_pay['Amount'].sum():,.2f} EUR")
-        else: st.info("No Vendor payments found.")
+        else:
+            st.info("No Vendor payments found.")
+
     st.markdown("### ✅ Payment Matches")
     if not matched_pay.empty:
         st.dataframe(matched_pay.style.applymap(lambda _: "background-color:#2e7d32;color:white"),use_container_width=True)
@@ -350,7 +372,8 @@ if uploaded_erp and uploaded_vendor:
         st.markdown(f"**ERP Payments Total:** {total_erp:,.2f} EUR")
         st.markdown(f"**Vendor Payments Total:** {total_vendor:,.2f} EUR")
         st.markdown(f"**Difference:** {diff_total:,.2f} EUR")
-    else: st.info("No payments found.")
+    else:
+        st.info("No payments found.")
 
     # Excel Export unchanged
     def export_reconciliation_excel(matched, erp_missing, ven_missing):
@@ -364,10 +387,13 @@ if uploaded_erp and uploaded_vendor:
             header_fill=PatternFill(start_color="4CAF50",end_color="4CAF50",fill_type="solid")
             header_font=Font(bold=True,color="FFFFFF")
             for cell in ws1[1]:
-                cell.fill=header_fill;cell.font=header_font;cell.alignment=Alignment(horizontal="center",vertical="center")
+                cell.fill=header_fill
+                cell.font=header_font
+                cell.alignment=Alignment(horizontal="center",vertical="center")
             for i,row in enumerate(ws1.iter_rows(min_row=2),start=2):
                 if i%2==0:
-                    for cell in row: cell.fill=PatternFill(start_color="E8F5E9",end_color="E8F5E9",fill_type="solid")
+                    for cell in row:
+                        cell.fill=PatternFill(start_color="E8F5E9",end_color="E8F5E9",fill_type="solid")
             for col in ws1.columns:
                 max_len=max(len(str(c.value)) if c.value else 0 for c in col)
                 ws1.column_dimensions[get_column_letter(col[0].column)].width=max_len+2
@@ -376,13 +402,16 @@ if uploaded_erp and uploaded_vendor:
             start_col=len(erp_missing.columns)+4
             ven_missing.to_excel(writer,index=False,sheet_name=ws_name,startcol=start_col,startrow=4)
             ws2=writer.sheets[ws_name]
-            ws2["A1"]="Missing in ERP";ws2["A1"].font=Font(bold=True,size=14,color="FFFFFF");ws2["A1"].fill=PatternFill(start_color="E53935",end_color="E53935",fill_type="solid")
+            ws2["A1"]="Missing in ERP"
+            ws2["A1"].font=Font(bold=True,size=14,color="FFFFFF")
+            ws2["A1"].fill=PatternFill(start_color="E53935",end_color="E53935",fill_type="solid")
             ws2.cell(row=1,column=start_col+1).value="Missing in Vendor"
             ws2.cell(row=1,column=start_col+1).font=Font(bold=True,size=14,color="FFFFFF")
             ws2.cell(row=1,column=start_col+1).fill=PatternFill(start_color="1E88E5",end_color="1E88E5",fill_type="solid")
             thin=Border(left=Side(style="thin"),right=Side(style="thin"),top=Side(style="thin"),bottom=Side(style="thin"))
             for row in ws2.iter_rows(min_row=4):
-                for c in row:c.border=thin
+                for c in row:
+                    c.border=thin
             for col in ws2.columns:
                 max_len=max(len(str(c.value)) if c.value else 0 for c in col)
                 ws2.column_dimensions[get_column_letter(col[0].column)].width=max_len+2
