@@ -13,7 +13,6 @@ st.title("🦖 ReconRaptor — Vendor Invoice Reconciliation")
 # HELPERS
 # ======================================
 def normalize_number(v):
-    """Convert numeric strings like '1.234,56' or '1,234.56' safely to float."""
     if v is None or str(v).strip() == "":
         return 0.0
     s = str(v).strip()
@@ -34,7 +33,6 @@ def normalize_number(v):
 
 
 def normalize_columns(df, tag):
-    """Map multilingual headers to unified names."""
     mapping = {
         "invoice": [
             "invoice", "factura", "fact", "nº", "num", "numero", "número",
@@ -70,19 +68,16 @@ def normalize_columns(df, tag):
 
     rename_map = {}
     cols_lower = {c: str(c).strip().lower() for c in df.columns}
-
     for key, aliases in mapping.items():
         for col, low in cols_lower.items():
             if any(a in low for a in aliases):
                 rename_map[col] = f"{key}_{tag}"
 
     out = df.rename(columns=rename_map)
-
     for required in ["debit", "credit"]:
         cname = f"{required}_{tag}"
         if cname not in out.columns:
             out[cname] = 0.0
-
     return out
 
 # ======================================
@@ -96,12 +91,10 @@ def match_invoices(erp_df, ven_df):
         reason = str(row.get("reason_erp", "")).lower()
         charge = normalize_number(row.get("debit_erp"))
         credit = normalize_number(row.get("credit_erp"))
-        payment_patterns = [
-            r"πληρωμ", r"payment", r"transfer", r"trf", r"pago"
-        ]
+        payment_patterns = [r"πληρωμ", r"payment", r"transfer", r"trf", r"pago"]
         if any(re.search(p, reason) for p in payment_patterns):
             return "IGNORE"
-        if any(k in reason for k in ["credit", "nota", "abono", "cn", "πιστωτικό", "πίστωση", "ακυρωτικό"]):
+        if any(k in reason for k in ["credit", "nota", "abono", "cn", "πιστωτικό", "πίστωση"]):
             return "CN"
         elif credit > 0:
             return "INV"
@@ -121,9 +114,9 @@ def match_invoices(erp_df, ven_df):
         reason = str(row.get("reason_ven", "")).lower()
         debit = normalize_number(row.get("debit_ven"))
         credit = normalize_number(row.get("credit_ven"))
-        if any(k in reason for k in ["pago","payment","transfer","bank","saldo","trf","πληρωμή","μεταφορά","τράπεζα","τραπεζικό έμβασμα"]):
+        if any(k in reason for k in ["pago","payment","transfer","bank","saldo","trf","πληρωμή","μεταφορά","τραπεζικό έμβασμα"]):
             return "IGNORE"
-        if any(k in reason for k in ["credit","nota","abono","cn","πιστωτικό","πίστωση","ακυρωτικό"]):
+        if any(k in reason for k in ["credit","nota","abono","cn","πιστωτικό","πίστωση"]):
             return "CN"
         elif debit > 0:
             return "INV"
@@ -240,6 +233,7 @@ if uploaded_erp and uploaded_vendor:
             return ['background-color:#f9a825;color:black'] * len(row)
         return [''] * len(row)
 
+    # ✅ FIX: remove weird DeltaGenerator output
     st.subheader("📊 Matched / Differences")
     if not matched.empty:
         st.dataframe(matched.style.apply(highlight_row, axis=1), use_container_width=True)
@@ -258,7 +252,7 @@ if uploaded_erp and uploaded_vendor:
     else:
         st.success("✅ No missing invoices in Vendor.")
 
-    # Tier-2 table with green color
+    # ✅ Tier-2 table with green color
     st.markdown("### 🧩 Tier-2 Matching (same date, same value, fuzzy invoice)")
     if not tier2_matches.empty:
         st.success(f"✅ Tier-2 matched {len(tier2_matches)} additional pairs.")
@@ -269,17 +263,23 @@ if uploaded_erp and uploaded_vendor:
     else:
         st.info("No Tier-2 matches found.")
 
-
-    # Export
+    # ✅ Excel export with green Tier-2 tab
     def export_reconciliation_excel(matched, erp_missing, ven_missing, tier2_matches):
         import io
-        from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+        from openpyxl.styles import Font, Alignment, PatternFill
         from openpyxl.utils import get_column_letter
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
             matched.to_excel(writer, index=False, sheet_name="Matched & Differences")
             if not tier2_matches.empty:
                 tier2_matches.to_excel(writer, index=False, sheet_name="Tier-2 Matches")
+                ws_t2 = writer.sheets["Tier-2 Matches"]
+                green_fill = PatternFill(start_color="1B5E20", end_color="1B5E20", fill_type="solid")
+                white_font = Font(color="FFFFFF", bold=True)
+                for cell in ws_t2[1]:
+                    cell.fill = green_fill
+                    cell.font = white_font
+                    cell.alignment = Alignment(horizontal="center", vertical="center")
             ws_name = "Missing"
             erp_missing.to_excel(writer, index=False, sheet_name=ws_name, startrow=4)
             start_col = len(erp_missing.columns) + 4
