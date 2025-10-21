@@ -119,9 +119,9 @@ def match_invoices(erp_df, ven_df):
         debit = normalize_number(row.get("debit_ven"))
         credit = normalize_number(row.get("credit_ven"))
         
-        # SPANISH COBRO PAYMENT DETECTION
-        cobro_keywords = ["cobro", "cobros", "recibido", "ingreso", "entrada", "pago recibido", "transferencia recibida"]
-        if any(k in reason for k in cobro_keywords):
+        # UPDATED: MORE SPANISH KEYWORDS FOR PAYMENTS
+        payment_keywords = ["cobro", "cobros", "cobrar", "cobrado", "recibido", "ingreso", "ingresado", "entrada", "pago recibido", "transferencia recibida", "recibo", "deposito"]
+        if any(k in reason for k in payment_keywords):
             return "PAYMENT"
         
         payment_words = ["pago","payment","transfer","bank","saldo","trf","πληρωμή","μεταφορά","τράπεζα","τραπεζικό έμβασμα"]
@@ -151,9 +151,8 @@ def match_invoices(erp_df, ven_df):
     ven_df["__doctype"] = ven_df.apply(detect_vendor_doc_type, axis=1)
     ven_df["__amt"] = ven_df.apply(calc_vendor_amount, axis=1)
 
-    # FIXED: INCLUDE PAYMENTS IN MISSING TABLES
     erp_use = erp_df[erp_df["__doctype"].isin(["INV", "CN"])].copy()
-    ven_use = ven_df[ven_df["__doctype"].isin(["INV", "CN", "PAYMENT"])].copy()
+    ven_use = ven_df[ven_df["__doctype"].isin(["INV", "CN"])].copy()  # EXCLUDE PAYMENT to remove from missing
 
     def clean_invoice_code(v):
         if not v:
@@ -236,31 +235,28 @@ def tier2_match(erp_missing, ven_missing):
     return pd.DataFrame(matches), v_df[~v_df.index.isin(used_v)].copy()
 
 # ======================================
-# FIXED PAYMENTS FUNCTION - ERROR RESOLVED
+# FIXED PAYMENTS FUNCTION WITH MORE KEYWORDS
 # ======================================
 def extract_payments(erp_df, ven_df):
+    # UPDATED: MORE SPANISH KEYWORDS
     payment_keywords = [
         "πληρωμή","payment","bank transfer","transferencia","transfer","trf","remesa","pago","deposit","μεταφορά","έμβασμα",
-        "cobro","cobros","recibido","ingreso","entrada","pago recibido","transferencia recibida"
+        "cobro","cobros","cobrar","cobrado","recibido","ingreso","ingresado","entrada","pago recibido","transferencia recibida","recibo","deposito"
     ]
     
-    # FIXED: Use apply with normalize_number
     def is_real_payment(r):
         t = str(r or "").lower()
         return any(k in t for k in payment_keywords)
     
-    # GET ALL PAYMENTS (including cobro)
-    erp_pay = erp_df[erp_df["reason_erp"].apply(is_real_payment)] if "reason_erp" in erp_df else pd.DataFrame()
-    ven_pay = ven_df[ven_df["reason_ven"].apply(is_real_payment)] if "reason_ven" in ven_df else pd.DataFrame()
+    erp_pay = erp_df[erp_df["reason_erp"].apply(is_real_payment) ] if "reason_erp" in erp_df else pd.DataFrame()
+    ven_pay = ven_df[ven_df["reason_ven"].apply(is_real_payment) ] if "reason_ven" in ven_df else pd.DataFrame()
     
-    # FIXED: CONVERT TO NUMERIC BEFORE SUBTRACTION
     for d, col in [(erp_pay,"erp"),(ven_pay,"ven")]:
         if not d.empty:
             d["debit_num"] = d[f"debit_{col}"].apply(normalize_number)
             d["credit_num"] = d[f"credit_{col}"].apply(normalize_number)
             d["Amount"] = abs(d["debit_num"] - d["credit_num"])
     
-    # SIMPLE MATCHING
     matched = []
     for _, e in erp_pay.iterrows():
         for _, v in ven_pay.iterrows():
@@ -276,7 +272,7 @@ def extract_payments(erp_df, ven_df):
     return erp_pay, ven_pay, pd.DataFrame(matched)
 
 # ======================================
-# EXCEL EXPORT
+# EXCEL EXPORT (SAME)
 # ======================================
 def style_header(ws, start_row, end_col, header_color, font_color="FFFFFF"):
     header_fill = PatternFill(start_color=f"FF{header_color[1:]}", end_color=f"FF{header_color[1:]}", fill_type="solid")
