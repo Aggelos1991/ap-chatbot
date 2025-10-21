@@ -13,8 +13,7 @@ st.title("🦖 ReconRaptor — Vendor Invoice Reconciliation")
 # ======================================
 # HELPERS
 # ======================================
-def normalize_number(v):
-   
+def normalize_number(v): 
     if v is None or str(v).strip() == "":
         return 0.0
     s = str(v).strip()
