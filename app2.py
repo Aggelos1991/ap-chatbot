@@ -118,7 +118,7 @@ def match_invoices(erp_df, ven_df):
         
         # UPDATED: MORE SPANISH KEYWORDS FOR PAYMENTS
         payment_keywords = ["cobro", "cobros", "cobrar", "cobrado", "recibido", "ingreso", "ingresado", "entrada", "pago recibido", "transferencia recibida", "recibo", "deposito"]
-        if any(k in reason for k in payment_keywords):
+        if any(k in reason for k in payment_keywords) or "έμβασμα από πελάτη χειρ." in reason:
             return "PAYMENT"
         
         payment_words = ["pago","payment","transfer","bank","saldo","trf","πληρωμή","μεταφορά","τράπεζα","τραπεζικό έμβασμα"]
@@ -177,8 +177,10 @@ def match_invoices(erp_df, ven_df):
     matched_df = pd.DataFrame(matched)
     matched_erp = {m["ERP Invoice"] for _, m in matched_df.iterrows()}
     matched_ven = {m["Vendor Invoice"] for _, m in matched_df.iterrows()}
-    missing_in_erp = ven_use[~ven_use["invoice_ven"].isin(matched_ven)][["invoice_ven", "__amt"]]
+    missing_in_erp = ven_use[~ven_use["invoice_ven"].isin(matched_ven)][["invoice_ven", "__amt", "reason_ven"]]
+    missing_in_erp = missing_in_erp[missing_in_erp["reason_ven"] != "έμβασμα από πελάτη χειρ."]
     missing_in_vendor = erp_use[~erp_use["invoice_erp"].isin(matched_erp)][["invoice_erp", "__amt"]]
+    missing_in_vendor = missing_in_vendor[missing_in_vendor["__amt"] != 0.0]
     missing_in_erp = missing_in_erp.rename(columns={"invoice_ven": "Invoice", "__amt": "Amount"})
     missing_in_vendor = missing_in_vendor.rename(columns={"invoice_erp": "Invoice", "__amt": "Amount"})
     return matched_df, missing_in_erp, missing_in_vendor
