@@ -135,6 +135,8 @@ def tier2_match(erp_df, ven_df):
     tier2_df = pd.DataFrame(matches)
     unmatched_vendor = ven_df[~ven_df.index.isin(used_vendor)].copy()
     return tier2_df, unmatched_vendor
+erp_df["date_erp"] = erp_df.get("date_erp", erp_df.columns[0]).apply(normalize_date)
+ven_df["date_ven"] = ven_df.get("date_ven", ven_df.columns[0]).apply(normalize_date)
 
 # ======================================
 # CORE MATCHING
@@ -442,6 +444,19 @@ if uploaded_erp and uploaded_vendor:
         )
     else:
         st.success("✅ No missing invoices in Vendor.")
+
+def normalize_date(v):
+    if pd.isna(v):
+        return ""
+    s = str(v).strip().replace(".", "/").replace("-", "/")
+    try:
+        d = pd.to_datetime(s, dayfirst=True, errors="coerce")
+        if pd.isna(d):
+            return ""
+        return d.strftime("%Y-%m-%d")   # unify to ISO for comparison
+    except Exception:
+        return ""
+
 
     # ======================================
 # 🧩 Tier-2 Matching Layer
