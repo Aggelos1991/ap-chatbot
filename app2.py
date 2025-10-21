@@ -454,6 +454,7 @@ if uploaded_erp and uploaded_vendor:
         if not ven_pay.empty:
             st.dataframe(ven_pay.style.applymap(lambda _: "background-color:#1565c0;color:white"), use_container_width=True)
             st.markdown(f"**Total:** {ven_pay['Amount'].sum():,.2f} EUR")
+            st.markdown(f"**Payment Difference:** {abs(erp_pay['Amount'].sum() - ven_pay['Amount'].sum()):,.2f} EUR {'🚨' if abs(erp_pay['Amount'].sum() - ven_pay['Amount'].sum()) > 0.05 else '✅'}")
         else:
             st.info("No Vendor payments found.")
     st.markdown("### 📥 Download Reconciliation Excel Report")
