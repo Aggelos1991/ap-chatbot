@@ -265,6 +265,160 @@ def extract_payments(erp_df, ven_df):
     return erp_pay,ven_pay,pd.DataFrame(matched)
 
 # ======================================
+# ELEGANT EXCEL EXPORT - FIXED COLORS
+# ======================================
+def style_header(ws, start_row, end_col, header_color, font_color="FFFFFF"):
+    """Style header row with color and bold font"""
+    header_fill = PatternFill(start_color=f"FF{header_color[1:]}", end_color=f"FF{header_color[1:]}", fill_type="solid")
+    header_font = Font(bold=True, color=f"{font_color}", size=11)
+    header_align = Alignment(horizontal="center", vertical="center")
+    
+    for col in range(1, end_col + 1):
+        cell = ws.cell(row=start_row, column=col)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = header_align
+        # Add thin border
+        thin_border = Border(
+            left=Side(style='thin'),
+            right=Side(style='thin'),
+            top=Side(style='thin'),
+            bottom=Side(style='thin')
+        )
+        cell.border = thin_border
+
+def style_data_row(ws, start_row, end_row, end_col, row_color):
+    """Style data rows with alternating colors"""
+    data_fill = PatternFill(start_color=f"FF{row_color[1:]}", end_color=f"FF{row_color[1:]}", fill_type="solid")
+    data_font = Font(size=10)
+    
+    for row in range(start_row, end_row + 1):
+        for col in range(1, end_col + 1):
+            cell = ws.cell(row=row, column=col)
+            cell.fill = data_fill
+            cell.font = data_font
+            # Add thin border
+            thin_border = Border(
+                left=Side(style='thin'),
+                right=Side(style='thin'),
+                top=Side(style='thin'),
+                bottom=Side(style='thin')
+            )
+            cell.border = thin_border
+
+def export_reconciliation_excel(matched, erp_missing, ven_missing, tier2_matches, erp_pay, ven_pay, matched_pay):
+    output = io.BytesIO()
+    
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        # 1. MATCHED & DIFFERENCES SHEET
+        if not matched.empty:
+            matched.to_excel(writer, index=False, sheet_name="Matched & Differences")
+            ws1 = writer.sheets["Matched & Differences"]
+            style_header(ws1, 1, len(matched.columns), "#2e7d32")  # Green header
+            
+            # Style Match rows (Light Green)
+            match_mask = matched["Status"] == "Match"
+            match_rows = matched[match_mask].index.tolist()
+            for row_idx in match_rows:
+                style_data_row(ws1, row_idx + 2, row_idx + 2, len(matched.columns), "#e8f5e8")
+            
+            # Style Difference rows (Light Orange)
+            diff_mask = matched["Status"] == "Difference"
+            diff_rows = matched[diff_mask].index.tolist()
+            for row_idx in diff_rows:
+                style_data_row(ws1, row_idx + 2, row_idx + 2, len(matched.columns), "#fff3e0")
+
+        # 2. TIER-2 MATCHES SHEET
+        if not tier2_matches.empty:
+            tier2_matches.to_excel(writer, index=False, sheet_name="Tier-2 Matches")
+            ws2 = writer.sheets["Tier-2 Matches"]
+            style_header(ws2, 1, len(tier2_matches.columns), "#2196f3")  # Blue header
+            style_data_row(ws2, 2, len(tier2_matches) + 1, len(tier2_matches.columns), "#e3f2fd")
+
+        # 3. MISSING INVOICES SHEET
+        ws3 = writer.book.create_sheet("Missing Invoices")
+        start_row = 1
+        
+        # ERP Missing Header
+        ws3.cell(row=start_row, column=1, value="MISSING IN ERP").font = Font(bold=True, size=14, color="FFC62828")
+        start_row += 2
+        if not erp_missing.empty:
+            erp_missing.to_excel(writer, index=False, sheet_name="Missing Invoices", 
+                               startrow=start_row-1, startcol=1)
+            style_header(ws3, start_row, len(erp_missing.columns), "#c62828")  # Red header
+            style_data_row(ws3, start_row+1, start_row + len(erp_missing), len(erp_missing.columns), "#ffebee")
+            start_row += len(erp_missing) + 3
+        else:
+            start_row += 2
+
+        # Vendor Missing Header
+        ws3.cell(row=start_row, column=1, value="MISSING IN VENDOR").font = Font(bold=True, size=14, color="FFC62828")
+        start_row += 2
+        if not ven_missing.empty:
+            ven_missing.to_excel(writer, index=False, sheet_name="Missing Invoices", 
+                               startrow=start_row-1, startcol=1)
+            style_header(ws3, start_row, len(ven_missing.columns), "#c62828")  # Red header
+            style_data_row(ws3, start_row+1, start_row + len(ven_missing), len(ven_missing.columns), "#ffebee")
+
+        # 4. PAYMENTS SHEET
+        ws4 = writer.book.create_sheet("Payments")
+        start_row = 1
+        
+        # ERP Payments
+        ws4.cell(row=start_row, column=1, value="ERP PAYMENTS").font = Font(bold=True, size=14, color="FF004D40")
+        start_row += 2
+        if not erp_pay.empty:
+            erp_pay.to_excel(writer, index=False, sheet_name="Payments", startrow=start_row-1, startcol=1)
+            style_header(ws4, start_row, len(erp_pay.columns), "#004d40")  # Teal header
+            style_data_row(ws4, start_row+1, start_row + len(erp_pay), len(erp_pay.columns), "#e0f2f1")
+            start_row += len(erp_pay) + 3
+        
+        # Vendor Payments
+        ws4.cell(row=start_row, column=1, value="VENDOR PAYMENTS").font = Font(bold=True, size=14, color="FF1565C0")
+        start_row += 2
+        if not ven_pay.empty:
+            ven_pay.to_excel(writer, index=False, sheet_name="Payments", startrow=start_row-1, startcol=1)
+            style_header(ws4, start_row, len(ven_pay.columns), "#1565c0")  # Blue header
+            style_data_row(ws4, start_row+1, start_row + len(ven_pay), len(ven_pay.columns), "#e3f2fd")
+            start_row += len(ven_pay) + 3
+        
+        # Payment Matches
+        ws4.cell(row=start_row, column=1, value="PAYMENT MATCHES").font = Font(bold=True, size=14, color="FF2E7D32")
+        start_row += 2
+        if not matched_pay.empty:
+            matched_pay.to_excel(writer, index=False, sheet_name="Payments", startrow=start_row-1, startcol=1)
+            style_header(ws4, start_row, len(matched_pay.columns), "#2e7d32")  # Green header
+            style_data_row(ws4, start_row+1, start_row + len(matched_pay), len(matched_pay.columns), "#e8f5e8")
+
+        # 5. SUMMARY SHEET
+        summary_data = {
+            "Metric": [
+                "Total Matched Invoices", "Tier-2 Matches", "Missing in ERP", "Missing in Vendor",
+                "Total ERP Payments", "Total Vendor Payments", "Payment Difference"
+            ],
+            "Value": [
+                len(matched), len(tier2_matches), len(erp_missing), len(ven_missing),
+                erp_pay["Amount"].sum() if not erp_pay.empty else 0,
+                ven_pay["Amount"].sum() if not ven_pay.empty else 0,
+                abs(erp_pay["Amount"].sum() - ven_pay["Amount"].sum()) if not erp_pay.empty and not ven_pay.empty else 0
+            ]
+        }
+        summary_df = pd.DataFrame(summary_data)
+        summary_df.to_excel(writer, index=False, sheet_name="Summary")
+        ws5 = writer.sheets["Summary"]
+        
+        # Summary styling
+        style_header(ws5, 1, 2, "#424242")  # Dark gray header
+        style_data_row(ws5, 2, len(summary_df) + 1, 2, "#f5f5f5")
+        
+        # Format currency columns
+        for row in range(2, len(summary_df) + 2):
+            ws5.cell(row=row, column=2).number_format = '#,##0.00 "EUR"'
+    
+    output.seek(0)
+    return output
+
+# ======================================
 # STREAMLIT UI
 # ======================================
 uploaded_erp = st.file_uploader("📂 Upload ERP Export (Excel)", type=["xlsx"])
@@ -364,22 +518,11 @@ if uploaded_erp and uploaded_vendor:
     else:
         st.info("No payments found.")
 
-    # Excel Export
+    # Excel Export - NOW 100% FIXED!
     st.markdown("### 📥 Download Reconciliation Excel Report")
-    def export_reconciliation_excel(matched, erp_missing, ven_missing, tier2_matches):
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            matched.to_excel(writer, index=False, sheet_name="Matched & Differences")
-            if not tier2_matches.empty:
-                tier2_matches.to_excel(writer, index=False, sheet_name="Tier-2 Matches")
-            ws_name = "Missing"
-            erp_missing.to_excel(writer, index=False, sheet_name=ws_name, startrow=4)
-            start_col = len(erp_missing.columns) + 4
-            ven_missing.to_excel(writer, index=False, sheet_name=ws_name, startcol=start_col, startrow=4)
-        output.seek(0)
-        return output
-
-    excel_output = export_reconciliation_excel(matched, erp_missing, ven_missing, tier2_matches)
+    excel_output = export_reconciliation_excel(
+        matched, erp_missing, ven_missing, tier2_matches, erp_pay, ven_pay, matched_pay
+    )
     st.download_button(
         "⬇️ Download Excel Report",
         data=excel_output,
