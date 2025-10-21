@@ -472,14 +472,8 @@ uploaded_vendor = st.file_uploader("📂 Upload Vendor Statement (Excel)", type=
 if uploaded_erp and uploaded_vendor:
     erp_raw = pd.read_excel(uploaded_erp, dtype=str)
     ven_raw = pd.read_excel(uploaded_vendor, dtype=str)
-    # Debugging: Display available columns
-    st.markdown("**Debug Info: Available Columns**")
-    st.write(f"ERP Columns: {list(erp_raw.columns)}")
-    st.write(f"Vendor Columns: {list(ven_raw.columns)}")
     erp_df = normalize_columns(erp_raw, "erp")
     ven_df = normalize_columns(ven_raw, "ven")
-    st.write(f"Normalized ERP Columns: {list(erp_df.columns)}")
-    st.write(f"Normalized Vendor Columns: {list(ven_df.columns)}")
     with st.spinner("Reconciling invoices..."):
         matched, erp_missing, ven_missing = match_invoices(erp_df, ven_df)
         erp_pay, ven_pay, matched_pay = extract_payments(erp_df, ven_df)
