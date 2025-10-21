@@ -236,7 +236,7 @@ def tier2_match(erp_missing, ven_missing):
     return pd.DataFrame(matches), v_df[~v_df.index.isin(used_v)].copy()
 
 # ======================================
-# FIXED PAYMENTS FUNCTION
+# FIXED PAYMENTS FUNCTION - ERROR RESOLVED
 # ======================================
 def extract_payments(erp_df, ven_df):
     payment_keywords = [
@@ -244,18 +244,21 @@ def extract_payments(erp_df, ven_df):
         "cobro","cobros","recibido","ingreso","entrada","pago recibido","transferencia recibida"
     ]
     
+    # FIXED: Use apply with normalize_number
     def is_real_payment(r):
         t = str(r or "").lower()
         return any(k in t for k in payment_keywords)
     
     # GET ALL PAYMENTS (including cobro)
-    erp_pay = erp_df[erp_df["reason_erp"].str.contains('|'.join(payment_keywords), case=False, na=False)] if "reason_erp" in erp_df else pd.DataFrame()
-    ven_pay = ven_df[ven_df["reason_ven"].str.contains('|'.join(payment_keywords), case=False, na=False)] if "reason_ven" in ven_df else pd.DataFrame()
+    erp_pay = erp_df[erp_df["reason_erp"].apply(is_real_payment)] if "reason_erp" in erp_df else pd.DataFrame()
+    ven_pay = ven_df[ven_df["reason_ven"].apply(is_real_payment)] if "reason_ven" in ven_df else pd.DataFrame()
     
-    # CALCULATE AMOUNTS
+    # FIXED: CONVERT TO NUMERIC BEFORE SUBTRACTION
     for d, col in [(erp_pay,"erp"),(ven_pay,"ven")]:
         if not d.empty:
-            d["Amount"] = abs(d[f"debit_{col}"] - d[f"credit_{col}"])
+            d["debit_num"] = d[f"debit_{col}"].apply(normalize_number)
+            d["credit_num"] = d[f"credit_{col}"].apply(normalize_number)
+            d["Amount"] = abs(d["debit_num"] - d["credit_num"])
     
     # SIMPLE MATCHING
     matched = []
