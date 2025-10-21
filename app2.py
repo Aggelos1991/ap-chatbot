@@ -305,7 +305,11 @@ if uploaded_erp and uploaded_vendor:
         elif row["Status"]=="Difference": return ['background-color:#f9a825;color:black']*len(row)
         return ['']*len(row)
     st.subheader("📊 Matched / Differences")
-    st.dataframe(matched.style.apply(highlight_row,axis=1),use_container_width=True) if not matched.empty else st.info("No matches found.")
+    if not matched.empty:
+        st.dataframe(matched.style.apply(highlight_row, axis=1), use_container_width=True)
+    else:
+        st.info("No matches found.")
+
     st.subheader("❌ Missing in ERP (found in vendor but not in ERP)")
     st.dataframe(erp_missing.style.applymap(lambda _: "background-color:#c62828;color:white"),use_container_width=True) if not erp_missing.empty else st.success("✅ No missing invoices in ERP.")
     st.subheader("❌ Missing in Vendor (found in ERP but not in vendor)")
