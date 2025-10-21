@@ -124,7 +124,7 @@ def match_invoices(erp_df, ven_df):
         if any(k in reason for k in cobro_keywords):
             return "PAYMENT"  # Mark as payment (will be filtered out)
         
-        payment_words = ["pago","payment","transfer","bank","saldo","trf","πληρωμή","μεταφορά","τράπεζα","τραπεζικό έμβασμα"]
+        payment_words = ["pago","payment","transfer","bank","saldo","trf","πληρωμή","μεταφορά","τράπεζα","τραπεζικό έμβασμα","cobro","cobros"]
         credit_words = ["credit","nota","abono","cn","πιστωτικό","πίστωση","ακυρωτικό"]
         invoice_words = ["factura","invoice","inv","τιμολόγιο","παραστατικό"]
         
