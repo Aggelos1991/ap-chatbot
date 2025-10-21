@@ -409,57 +409,69 @@ if uploaded_erp and uploaded_vendor:
         st.info("No matching payments found.")
 
 # ======================================
-def export_reconciliation_excel(matched, erp_missing, ven_missing):
+from io import BytesIO
+from openpyxl import Workbook
+from openpyxl.utils.dataframe import dataframe_to_rows
+from openpyxl.utils import get_column_letter
+from openpyxl.styles import PatternFill, Font, Alignment
+
+def export_reconciliation_excel(matched, erp_missing, ven_missing, matched_pay):
     wb = Workbook()
-    def style_header(ws, color, row):
+    
+    # Helper function to style headers only
+    def style_header(ws, row, color):
         for cell in ws[row]:
             cell.fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
             cell.font = Font(color="FFFFFF", bold=True, size=12)
             cell.alignment = Alignment(horizontal="center", vertical="center")
-    # ===== Sheet 1: Matched =====
+    
+    # ===== Sheet 1: Matches =====
     ws1 = wb.active
-    ws1.title = "Matched"
-    for r in dataframe_to_rows(matched, index=False, header=True):
-        ws1.append(r)
-    style_header(ws1, "1e88e5", 1)
+    ws1.title = "Matches"
+    if not matched.empty:
+        for r in dataframe_to_rows(matched, index=False, header=True):
+            ws1.append(r)
+        style_header(ws1, 1, "1E88E5")  # Blue header for Matches
+    
     # ===== Sheet 2: Missing =====
     ws2 = wb.create_sheet("Missing")
     current_row = 1
-    # --- Section 1: Missing in ERP ---
+    
+    # --- Missing in ERP ---
     if not erp_missing.empty:
         ws2.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=erp_missing.shape[1])
-        ws2.cell(row=current_row, column=1, value="❌ Missing in ERP (found in vendor but not in ERP)").font = Font(bold=True, size=14, color="FF0000")
+        ws2.cell(row=current_row, column=1, value="Missing in ERP (found in vendor but not in ERP)").font = Font(bold=True, size=14, color="000000")
         current_row += 2
         for r in dataframe_to_rows(erp_missing, index=False, header=True):
             ws2.append(r)
-        style_header(ws2, "c62828", current_row)
+        style_header(ws2, current_row, "C62828")  # Red header for Missing in ERP
         current_row = ws2.max_row + 3
-    # --- Section 2: Missing in Vendor ---
+    
+    # --- Missing in Vendor ---
     if not ven_missing.empty:
         ws2.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=ven_missing.shape[1])
-        ws2.cell(row=current_row, column=1, value="❌ Missing in Vendor (found in ERP but not in vendor)").font = Font(bold=True, size=14, color="FF0000")
+        ws2.cell(row=current_row, column=1, value="Missing in Vendor (found in ERP but not in vendor)").font = Font(bold=True, size=14, color="000000")
         current_row += 2
         for r in dataframe_to_rows(ven_missing, index=False, header=True):
             ws2.append(r)
-        style_header(ws2, "ad1457", current_row)
-    # ===== Auto-fit columns =====
-    for ws in [ws1, ws2]:
+        style_header(ws2, current_row, "AD1457")  # Pink header for Missing in Vendor
+        current_row = ws2.max_row + 3
+    
+    # ===== Sheet 3: Payments =====
+    ws3 = wb.create_sheet("Payments")
+    if not matched_pay.empty:
+        for r in dataframe_to_rows(matched_pay, index=False, header=True):
+            ws3.append(r)
+        style_header(ws3, 1, "2E7D32")  # Green header for Payments
+    
+    # ===== Auto-fit columns for all sheets =====
+    for ws in [ws1, ws2, ws3]:
         for col in ws.columns:
             max_len = max(len(str(c.value)) if c.value else 0 for c in col)
             ws.column_dimensions[get_column_letter(col[0].column)].width = max_len + 3
-    # ===== Save =====
+    
+    # ===== Save to buffer =====
     buffer = BytesIO()
     wb.save(buffer)
     buffer.seek(0)
     return buffer
-
-# ======================================
-st.markdown("### 📥 Download Reconciliation Excel Report")
-matched, erp_missing, ven_missing = matched if 'matched' in locals() else pd.DataFrame(), erp_missing if 'erp_missing' in locals() else pd.DataFrame(), ven_missing if 'ven_missing' in locals() else pd.DataFrame()
-excel_output = export_reconciliation_excel(matched, erp_missing, ven_missing)
-st.download_button(
-    "💾 Download Excel File",
-    data=excel_output,
-    file_name="ReconRaptor_Reconciliation.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-)
