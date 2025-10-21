@@ -84,6 +84,57 @@ def normalize_columns(df, tag):
 
     return out
 
+from difflib import SequenceMatcher
+
+def fuzzy_ratio(a, b):
+    """Return fuzzy similarity ratio between two invoice strings."""
+    return SequenceMatcher(None, str(a), str(b)).ratio()
+
+def tier2_match(erp_df, ven_df):
+    """
+    Tier-2 reconciliation:
+    Match by same amount, same date, fuzzy invoice similarity.
+    """
+    matches = []
+    used_vendor = set()
+
+    # Ensure columns exist
+    if "invoice_erp" not in erp_df.columns or "invoice_ven" not in ven_df.columns:
+        return pd.DataFrame(), ven_df.copy()
+
+    for e_idx, e in erp_df.iterrows():
+        e_inv = str(e.get("invoice_erp", "")).strip()
+        e_amt = round(float(e.get("__amt", 0)), 2)
+        e_date = str(e.get("date_erp", "")).strip()[:10]
+
+        for v_idx, v in ven_df.iterrows():
+            if v_idx in used_vendor:
+                continue
+
+            v_inv = str(v.get("invoice_ven", "")).strip()
+            v_amt = round(float(v.get("__amt", 0)), 2)
+            v_date = str(v.get("date_ven", "")).strip()[:10]
+            diff = abs(e_amt - v_amt)
+            fuzzy_sim = fuzzy_ratio(e_inv, v_inv)
+
+            # Conditions: same value, same date OR strong fuzzy match
+            if diff < 0.05 and (e_date == v_date or fuzzy_sim >= 0.8):
+                matches.append({
+                    "ERP Invoice": e_inv,
+                    "Vendor Invoice": v_inv,
+                    "ERP Amount": e_amt,
+                    "Vendor Amount": v_amt,
+                    "Difference": diff,
+                    "Match Type": "Tier-2 (Date/Value/Fuzzy)",
+                    "Fuzzy Score": round(fuzzy_sim, 2),
+                    "Date": e_date or v_date
+                })
+                used_vendor.add(v_idx)
+                break
+
+    tier2_df = pd.DataFrame(matches)
+    unmatched_vendor = ven_df[~ven_df.index.isin(used_vendor)].copy()
+    return tier2_df, unmatched_vendor
 
 # ======================================
 # CORE MATCHING
@@ -391,7 +442,28 @@ if uploaded_erp and uploaded_vendor:
         )
     else:
         st.success("✅ No missing invoices in Vendor.")
-  
+
+    # ======================================
+# 🧩 Tier-2 Matching Layer
+# ======================================
+st.markdown("### 🧩 Tier-2 Matching (Value + Date + Fuzzy Invoice)")
+
+if not erp_missing.empty and not ven_missing.empty:
+    with st.spinner("Running Tier-2 fuzzy matching..."):
+        tier2_matches, still_unmatched = tier2_match(
+            ven_missing.rename(columns={"Invoice": "invoice_ven", "Amount": "__amt"}),
+            erp_missing.rename(columns={"Invoice": "invoice_erp", "Amount": "__amt"})
+        )
+
+    if not tier2_matches.empty:
+        st.success(f"✅ Tier-2 matched {len(tier2_matches)} additional pairs.")
+        st.dataframe(tier2_matches, use_container_width=True)
+    else:
+        st.info("No Tier-2 matches found.")
+else:
+    st.info("Tier-2 matching not applicable — one side has no missing items.")
+
+          
     # ====== PAYMENTS ======
     st.subheader("🏦 Payment Transactions (Identified in both sides)")
     col1, col2 = st.columns(2)
