@@ -82,7 +82,7 @@ def clean_invoice_code(v):
     s = re.sub(r"[^a-z0-9]", "", s)
     s = re.sub(r"^0+", "", s)
     s = re.sub(r"[^\d]", "", s)
-    return s or "0"  # Return "0" if cleaning results in empty string
+    return s or "0"
 
 def normalize_columns(df, tag):
     """Map multilingual headers to unified names."""
@@ -268,19 +268,15 @@ def match_invoices(erp_df, ven_df):
                 take_it = False
             if take_it:
                 matched.append({
-                    "ERP Invoice": e_inv,
-                    "Vendor Invoice": v_inv,
-                    "ERP Amount": e_amt,
-                    "Vendor Amount": v_amt,
-                    "Difference": diff,
-                    "Status": "Match" if amt_close else "Difference"
+                    "ERP Invoice": e_inv, "Vendor Invoice": v_inv,
+                    "ERP Amount": e_amt, "Vendor Amount": v_amt,
+                    "Difference": diff, "Status": "Match" if amt_close else "Difference"
                 })
                 used_vendor_rows.add(v_idx)
                 break
     matched_df = pd.DataFrame(matched)
     matched_erp = {m["ERP Invoice"] for _, m in matched_df.iterrows()}
     matched_ven = {m["Vendor Invoice"] for _, m in matched_df.iterrows()}
-    # Conditionally include date columns if they exist
     erp_columns = ["invoice_erp", "__amt"] + (["date_erp"] if "date_erp" in erp_use.columns else [])
     ven_columns = ["invoice_ven", "__amt"] + (["date_ven"] if "date_ven" in ven_use.columns else [])
     missing_in_erp = ven_use[~ven_use["invoice_ven"].isin(matched_ven)][ven_columns] \
@@ -299,7 +295,7 @@ def fuzzy_ratio(a, b):
     return SequenceMatcher(None, str(a), str(b)).ratio()
 
 def tier2_match(erp_missing, ven_missing):
-    """Perform Tier-2 matching on unmatched invoices using fuzzy matching, date, and amount."""
+    """Perform Tier-2 matching on unmatched invoices using fuzzy matching and amount."""
     if erp_missing.empty or ven_missing.empty:
         return pd.DataFrame(), erp_missing.copy(), ven_missing.copy()
     e_df = erp_missing.rename(columns={"Invoice": "invoice_erp", "Amount": "__amt", "Date": "date_erp"}).copy()
@@ -323,23 +319,18 @@ def tier2_match(erp_missing, ven_missing):
             v_code = clean_invoice_code(v_inv)
             diff = abs(e_amt - v_amt)
             sim = fuzzy_ratio(e_code, v_code)
-            # Match if amounts are close, fuzzy score is high, and dates match
-            if diff <= 10.0 and sim >= 0.7 and e_date == v_date and e_date != "" and v_date != "":
+            # Match if amounts are close and fuzzy score is high, date check is optional
+            if diff <= 10.0 and sim >= 0.7:
                 matches.append({
-                    "ERP Invoice": e_inv,
-                    "Vendor Invoice": v_inv,
-                    "ERP Amount": e_amt,
-                    "Vendor Amount": v_amt,
-                    "Difference": diff,
-                    "Fuzzy Score": round(sim, 2),
-                    "Date": e_date,
-                    "Match Type": "Tier-2"
+                    "ERP Invoice": e_inv, "Vendor Invoice": v_inv,
+                    "ERP Amount": e_amt, "Vendor Amount": v_amt,
+                    "Difference": diff, "Fuzzy Score": round(sim, 2),
+                    "Date": e_date or v_date or "N/A", "Match Type": "Tier-2"
                 })
                 used_e.add(e_idx)
                 used_v.add(v_idx)
                 break
     tier2_matches = pd.DataFrame(matches)
-    # Conditionally include date columns in remaining unmatched
     erp_columns = ["invoice_erp", "__amt"] + (["date_erp"] if "date_erp" in e_df.columns else [])
     ven_columns = ["invoice_ven", "__amt"] + (["date_ven"] if "date_ven" in v_df.columns else [])
     remaining_erp_missing = e_df[~e_df.index.isin(used_e)][erp_columns].rename(
