@@ -284,15 +284,17 @@ def fuzzy_ratio(a, b):
     return SequenceMatcher(None, str(a), str(b)).ratio()
 
 def tier2_match(erp_missing, ven_missing):
-    """Perform Tier-2 matching on unmatched invoices using fuzzy matching and date."""
+    """Perform Tier-2 matching on unmatched invoices using fuzzy matching, date, and amount."""
     if erp_missing.empty or ven_missing.empty:
-        return pd.DataFrame(), ven_missing.copy()
+        return pd.DataFrame(), erp_missing.copy(), ven_missing.copy()
     e_df = erp_missing.rename(columns={"Invoice": "invoice_erp", "Amount": "__amt", "Date": "date_erp"}).copy()
     v_df = ven_missing.rename(columns={"Invoice": "invoice_ven", "Amount": "__amt", "Date": "date_ven"}).copy()
     e_df["date_norm"] = e_df["date_erp"].apply(normalize_date) if "date_erp" in e_df.columns else ""
     v_df["date_norm"] = v_df["date_ven"].apply(normalize_date) if "date_ven" in v_df.columns else ""
-    matches, used_v = [], set()
+    matches, used_e, used_v = [], set(), set()
     for e_idx, e in e_df.iterrows():
+        if e_idx in used_e:
+            continue
         e_inv = str(e.get("invoice_erp", "")).strip()
         e_amt = round(float(e.get("__amt", 0)), 2)
         e_date = e.get("date_norm", "")
@@ -304,34 +306,36 @@ def tier2_match(erp_missing, ven_missing):
             v_date = v.get("date_norm", "")
             diff = abs(e_amt - v_amt)
             sim = fuzzy_ratio(e_inv, v_inv)
-            # Match if amounts are close and either dates match or fuzzy score is high with valid dates
-            if diff < 0.05:
-                if (e_date == v_date and e_date != "" and v_date != "") or \
-                   (sim >= 0.8 and e_date != "" and v_date != "") or \
-                   (sim >= 0.9 and (e_date == "" or v_date == "")):
-                    matches.append({
-                        "ERP Invoice": e_inv,
-                        "Vendor Invoice": v_inv,
-                        "ERP Amount": e_amt,
-                        "Vendor Amount": v_amt,
-                        "Difference": diff,
-                        "Fuzzy Score": round(sim, 2),
-                        "Date": e_date or v_date,
-                        "Match Type": "Tier-2"
-                    })
-                    used_v.add(v_idx)
-                    break
+            # Match if amounts are close, fuzzy score is high, and dates match
+            if diff < 0.05 and sim >= 0.8 and e_date == v_date and e_date != "" and v_date != "":
+                matches.append({
+                    "ERP Invoice": e_inv,
+                    "Vendor Invoice": v_inv,
+                    "ERP Amount": e_amt,
+                    "Vendor Amount": v_amt,
+                    "Difference": diff,
+                    "Fuzzy Score": round(sim, 2),
+                    "Date": e_date,
+                    "Match Type": "Tier-2"
+                })
+                used_e.add(e_idx)
+                used_v.add(v_idx)
+                break
     tier2_matches = pd.DataFrame(matches)
-    # Conditionally include date_ven in remaining_ven_missing
+    # Conditionally include date columns in remaining unmatched
+    erp_columns = ["invoice_erp", "__amt"] + (["date_erp"] if "date_erp" in e_df.columns else [])
     ven_columns = ["invoice_ven", "__amt"] + (["date_ven"] if "date_ven" in v_df.columns else [])
+    remaining_erp_missing = e_df[~e_df.index.isin(used_e)][erp_columns].rename(
+        columns={"invoice_erp": "Invoice", "__amt": "Amount", "date_erp": "Date"}
+    )
     remaining_ven_missing = v_df[~v_df.index.isin(used_v)][ven_columns].rename(
         columns={"invoice_ven": "Invoice", "__amt": "Amount", "date_ven": "Date"}
     )
-    return tier2_matches, remaining_ven_missing
+    return tier2_matches, remaining_erp_missing, remaining_ven_missing
 
 # ======================================
 def extract_payments(erp_df: pd.DataFrame, ven_df: pd.DataFrame):
-    # --- Payment and exclusion keywords ---
+    """Extract and match payment transactions."""
     payment_keywords = [
         "πληρωμή", "payment", "bank transfer", "transferencia bancaria",
         "transfer", "trf", "remesa", "pago", "deposit", "μεταφορά", "έμβασμα",
@@ -397,6 +401,7 @@ def extract_payments(erp_df: pd.DataFrame, ven_df: pd.DataFrame):
 
 # ======================================
 def export_reconciliation_excel(matched, erp_missing, ven_missing, matched_pay, tier2_matches):
+    """Export reconciliation results to Excel with four tabs."""
     wb = Workbook()
     
     # Helper function to style headers only
@@ -477,7 +482,7 @@ if uploaded_erp and uploaded_vendor:
     with st.spinner("Reconciling invoices..."):
         matched, erp_missing, ven_missing = match_invoices(erp_df, ven_df)
         erp_pay, ven_pay, matched_pay = extract_payments(erp_df, ven_df)
-        tier2_matches, remaining_ven_missing = tier2_match(erp_missing, ven_missing)
+        tier2_matches, remaining_erp_missing, remaining_ven_missing = tier2_match(erp_missing, ven_missing)
     st.success("✅ Reconciliation complete")
     # ====== HIGHLIGHTING ======
     def highlight_row(row):
