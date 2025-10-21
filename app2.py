@@ -468,15 +468,13 @@ if uploaded_erp and uploaded_vendor:
         st.markdown(f"**Difference Between ERP and Vendor Payments:** {diff_total:,.2f} EUR")
     else:
         st.info("No matching payments found.")
-
-# ======================================
-# DOWNLOAD EXCEL
-# ======================================
-st.markdown("### 📥 Download Reconciliation Excel Report")
-excel_output = export_reconciliation_excel(matched, erp_missing, ven_missing, matched_pay)
-st.download_button(
-    "💾 Download Excel File",
-    data=excel_output,
-    file_name="ReconRaptor_Reconciliation.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-)
+    
+    # ====== DOWNLOAD EXCEL ======
+    st.markdown("### 📥 Download Reconciliation Excel Report")
+    excel_output = export_reconciliation_excel(matched, erp_missing, ven_missing, matched_pay)
+    st.download_button(
+        "💾 Download Excel File",
+        data=excel_output,
+        file_name="ReconRaptor_Reconciliation.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
