@@ -297,7 +297,7 @@ def fuzzy_ratio(a, b):
 def tier2_match(erp_missing, ven_missing):
     """Perform Tier-2 matching on unmatched invoices using fuzzy matching, date, and identical amounts."""
     if erp_missing.empty or ven_missing.empty:
-        return pd.DataFrame(), erp_missing.copy(), ven_missing.copy()
+        return pd.DataFrame(), set(), set(), erp_missing.copy(), ven_missing.copy()
     e_df = erp_missing.rename(columns={"Invoice": "invoice_erp", "Amount": "__amt", "Date": "date_erp"}).copy()
     v_df = ven_missing.rename(columns={"Invoice": "invoice_ven", "Amount": "__amt", "Date": "date_ven"}).copy()
     e_df["date_norm"] = e_df["date_erp"].apply(normalize_date) if "date_erp" in e_df.columns else ""
@@ -339,7 +339,7 @@ def tier2_match(erp_missing, ven_missing):
     remaining_ven_missing = v_df[~v_df.index.isin(used_v)][ven_columns].rename(
         columns={"invoice_ven": "Invoice", "__amt": "Amount", "date_ven": "Date"}
     )
-    return tier2_matches, remaining_erp_missing, remaining_ven_missing
+    return tier2_matches, used_e, used_v, remaining_erp_missing, remaining_ven_missing
 
 # ======================================
 def extract_payments(erp_df: pd.DataFrame, ven_df: pd.DataFrame):
@@ -489,7 +489,10 @@ if uploaded_erp and uploaded_vendor:
     with st.spinner("Reconciling invoices..."):
         matched, erp_missing, ven_missing = match_invoices(erp_df, ven_df)
         erp_pay, ven_pay, matched_pay = extract_payments(erp_df, ven_df)
-        tier2_matches, remaining_erp_missing, remaining_ven_missing = tier2_match(erp_missing, ven_missing)
+        tier2_matches, used_erp_indices, used_ven_indices, remaining_erp_missing, remaining_ven_missing = tier2_match(erp_missing, ven_missing)
+        # Hide Tier-2 matched invoices from Missing tables by filtering original missing DataFrames
+        erp_missing = erp_missing[~erp_missing.index.isin(used_erp_indices)] if not used_erp_indices else erp_missing
+        ven_missing = ven_missing[~ven_missing.index.isin(used_ven_indices)] if not used_ven_indices else ven_missing
     st.success("✅ Reconciliation complete")
     # ====== HIGHLIGHTING ======
     def highlight_row(row):
