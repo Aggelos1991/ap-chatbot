@@ -454,7 +454,8 @@ if uploaded_erp and uploaded_vendor:
             st.markdown(f"**Total Vendor Payments:** {ven_pay['Amount'].sum():,.2f} EUR")
         else:
             st.info("No Vendor payments found.")
-    st.markdown("### ✅ Matched Payments")
+    # ====== MATCHED PAYMENTS ======
+    st.subheader("✅ Matched Payments")
     if not matched_pay.empty:
         st.dataframe(
             matched_pay.style.applymap(lambda _: "background-color: #2e7d32; color: white"),
@@ -468,6 +469,33 @@ if uploaded_erp and uploaded_vendor:
         st.markdown(f"**Difference Between ERP and Vendor Payments:** {diff_total:,.2f} EUR")
     else:
         st.info("No matching payments found.")
+    # ====== UNMATCHED PAYMENTS (Tier 2 Table) ======
+    st.subheader("⚠️ Unmatched Payments")
+    col3, col4 = st.columns(2)
+    with col3:
+        st.markdown("**💼 Unmatched ERP Payments**")
+        unmatched_erp_pay = erp_pay[~erp_pay["reason_erp"].isin(matched_pay["ERP Reason"])] \
+            if not erp_pay.empty and not matched_pay.empty else erp_pay
+        if not unmatched_erp_pay.empty:
+            st.dataframe(
+                unmatched_erp_pay.style.applymap(lambda _: "background-color: #f57c00; color: white"),
+                use_container_width=True
+            )
+            st.markdown(f"**Total Unmatched ERP Payments:** {unmatched_erp_pay['Amount'].sum():,.2f} EUR")
+        else:
+            st.info("No unmatched ERP payments found.")
+    with col4:
+        st.markdown("**🧾 Unmatched Vendor Payments**")
+        unmatched_ven_pay = ven_pay[~ven_pay["reason_ven"].isin(matched_pay["Vendor Reason"])] \
+            if not ven_pay.empty and not matched_pay.empty else ven_pay
+        if not unmatched_ven_pay.empty:
+            st.dataframe(
+                unmatched_ven_pay.style.applymap(lambda _: "background-color: #6a1b9a; color: white"),
+                use_container_width=True
+            )
+            st.markdown(f"**Total Unmatched Vendor Payments:** {unmatched_ven_pay['Amount'].sum():,.2f} EUR")
+        else:
+            st.info("No unmatched vendor payments found.")
     
     # ====== DOWNLOAD EXCEL ======
     st.markdown("### 📥 Download Reconciliation Excel Report")
