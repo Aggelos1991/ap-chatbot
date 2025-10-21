@@ -320,7 +320,7 @@ def tier2_match(erp_missing, ven_missing):
             diff = abs(e_amt - v_amt)
             sim = fuzzy_ratio(e_code, v_code)
             # Match if amounts are identical, fuzzy score is high, date check is optional
-            if diff == 0.0 and sim >= 0.7:
+            if diff == 0.0 and sim >= 0.8:
                 matches.append({
                     "ERP Invoice": e_inv, "Vendor Invoice": v_inv,
                     "ERP Amount": e_amt, "Vendor Amount": v_amt,
