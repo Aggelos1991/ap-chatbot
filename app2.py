@@ -218,8 +218,9 @@ def tier2_match(erp_missing, ven_missing):
         return pd.DataFrame(), ven_missing.copy()
     e_df = erp_missing.rename(columns={"Invoice": "invoice_erp", "Amount": "__amt"}).copy()
     v_df = ven_missing.rename(columns={"Invoice": "invoice_ven", "Amount": "__amt"}).copy()
-    e_df["date_norm"] = e_df.get("Date", "").apply(normalize_date)
-    v_df["date_norm"] = v_df.get("Date", "").apply(normalize_date)
+    e_df["date_norm"] = e_df["Date"].apply(normalize_date) if "Date" in e_df.columns else ""
+    v_df["date_norm"] = v_df["Date"].apply(normalize_date) if "Date" in v_df.columns else ""
+
     matches, used_v = [], set()
     for e_idx, e in e_df.iterrows():
         e_inv, e_amt, e_date = str(e.get("invoice_erp", "")), round(float(e.get("__amt", 0)), 2), e.get("date_norm", "")
