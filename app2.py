@@ -427,21 +427,23 @@ def export_reconciliation_excel(matched, erp_missing, ven_missing, matched_pay, 
     current_row = 1
     
     # --- Missing in ERP ---
-    if not erp_missing.empty:
-        ws2.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=erp_missing.shape[1])
+    filtered_erp_missing = erp_missing.drop(index=list(used_erp_indices)) if used_erp_indices else erp_missing
+    if not filtered_erp_missing.empty:
+        ws2.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=filtered_erp_missing.shape[1])
         ws2.cell(row=current_row, column=1, value="Missing in ERP (found in vendor but not in ERP)").font = Font(bold=True, size=14, color="000000")
         current_row += 2
-        for r in dataframe_to_rows(erp_missing, index=False, header=True):
+        for r in dataframe_to_rows(filtered_erp_missing, index=False, header=True):
             ws2.append(r)
         style_header(ws2, current_row, "C62828")  # Red header for Missing in ERP
         current_row = ws2.max_row + 3
     
     # --- Missing in Vendor ---
-    if not ven_missing.empty:
-        ws2.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=ven_missing.shape[1])
+    filtered_ven_missing = ven_missing.drop(index=list(used_ven_indices)) if used_ven_indices else ven_missing
+    if not filtered_ven_missing.empty:
+        ws2.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=filtered_ven_missing.shape[1])
         ws2.cell(row=current_row, column=1, value="Missing in Vendor (found in ERP but not in vendor)").font = Font(bold=True, size=14, color="000000")
         current_row += 2
-        for r in dataframe_to_rows(ven_missing, index=False, header=True):
+        for r in dataframe_to_rows(filtered_ven_missing, index=False, header=True):
             ws2.append(r)
         style_header(ws2, current_row, "AD1457")  # Pink header for Missing in Vendor
         current_row = ws2.max_row + 3
@@ -485,10 +487,10 @@ if uploaded_erp and uploaded_vendor:
     with st.spinner("Reconciling invoices..."):
         matched, erp_missing, ven_missing = match_invoices(erp_df, ven_df)
         erp_pay, ven_pay, matched_pay = extract_payments(erp_df, ven_df)
-        tier2_matches, used_erp_indices, used_ven_indices, remaining_erp_missing, remaining_ven_missing = tier2_match(erp_missing, ven_missing)
-        # Filter out Tier-2 matched invoices from original missing DataFrames
-        erp_missing = erp_missing.drop(index=list(used_erp_indices)) if not used_erp_indices else erp_missing
-        ven_missing = ven_missing.drop(index=list(used_ven_indices)) if not used_ven_indices else ven_missing
+        tier2_matches, used_erp_indices, used_ven_indices, _, _ = tier2_match(erp_missing, ven_missing)
+        # Create filtered views for Missing tables without modifying original DataFrames
+        filtered_erp_missing = erp_missing.drop(index=list(used_erp_indices)) if used_erp_indices else erp_missing
+        filtered_ven_missing = ven_missing.drop(index=list(used_ven_indices)) if used_ven_indices else ven_missing
     st.success("✅ Reconciliation complete")
     # ====== HIGHLIGHTING ======
     def highlight_row(row):
@@ -513,17 +515,17 @@ if uploaded_erp and uploaded_vendor:
         st.info("No Tier-2 matches found.")
     # ====== MISSING ======
     st.subheader("❌ Missing in ERP (found in vendor but not in ERP)")
-    if not erp_missing.empty:
+    if not filtered_erp_missing.empty:
         st.dataframe(
-            erp_missing.style.applymap(lambda _: "background-color: #c62828; color: white"),
+            filtered_erp_missing.style.applymap(lambda _: "background-color: #c62828; color: white"),
             use_container_width=True
         )
     else:
         st.success("✅ No missing invoices in ERP.")
     st.subheader("❌ Missing in Vendor (found in ERP but not in vendor)")
-    if not ven_missing.empty:
+    if not filtered_ven_missing.empty:
         st.dataframe(
-            ven_missing.style.applymap(lambda _: "background-color: #c62828; color: white"),
+            filtered_ven_missing.style.applymap(lambda _: "background-color: #c62828; color: white"),
             use_container_width=True
         )
     else:
@@ -602,7 +604,7 @@ if uploaded_erp and uploaded_vendor:
     
     # ====== DOWNLOAD EXCEL ======
     st.markdown("### 📥 Download Reconciliation Excel Report")
-    excel_output = export_reconciliation_excel(matched, erp_missing, ven_missing, matched_pay, tier2_matches)
+    excel_output = export_reconciliation_excel(matched, filtered_erp_missing, filtered_ven_missing, matched_pay, tier2_matches)
     st.download_button(
         "💾 Download Excel File",
         data=excel_output,
