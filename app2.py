@@ -295,7 +295,7 @@ def fuzzy_ratio(a, b):
     return SequenceMatcher(None, str(a), str(b)).ratio()
 
 def tier2_match(erp_missing, ven_missing):
-    """Perform Tier-2 matching on unmatched invoices using fuzzy matching and amount."""
+    """Perform Tier-2 matching on unmatched invoices using fuzzy matching, date, and identical amounts."""
     if erp_missing.empty or ven_missing.empty:
         return pd.DataFrame(), erp_missing.copy(), ven_missing.copy()
     e_df = erp_missing.rename(columns={"Invoice": "invoice_erp", "Amount": "__amt", "Date": "date_erp"}).copy()
@@ -319,8 +319,8 @@ def tier2_match(erp_missing, ven_missing):
             v_code = clean_invoice_code(v_inv)
             diff = abs(e_amt - v_amt)
             sim = fuzzy_ratio(e_code, v_code)
-            # Match if amounts are close and fuzzy score is high, date check is optional
-            if diff <= 10.0 and sim >= 0.7:
+            # Match if amounts are identical, fuzzy score is high, date check is optional
+            if diff == 0.0 and sim >= 0.7:
                 matches.append({
                     "ERP Invoice": e_inv, "Vendor Invoice": v_inv,
                     "ERP Amount": e_amt, "Vendor Amount": v_amt,
