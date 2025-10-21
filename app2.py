@@ -119,12 +119,12 @@ def match_invoices(erp_df, ven_df):
         debit = normalize_number(row.get("debit_ven"))
         credit = normalize_number(row.get("credit_ven"))
         
-        # NEW: SPANISH COBRO PAYMENT DETECTION - IGNORE FROM INVOICES
+        # SPANISH COBRO PAYMENT DETECTION
         cobro_keywords = ["cobro", "cobros", "recibido", "ingreso", "entrada", "pago recibido", "transferencia recibida"]
         if any(k in reason for k in cobro_keywords):
-            return "PAYMENT"  # Mark as payment (will be filtered out)
+            return "PAYMENT"
         
-        payment_words = ["pago","payment","transfer","bank","saldo","trf","πληρωμή","μεταφορά","τράπεζα","τραπεζικό έμβασμα","cobro","cobros"]
+        payment_words = ["pago","payment","transfer","bank","saldo","trf","πληρωμή","μεταφορά","τράπεζα","τραπεζικό έμβασμα"]
         credit_words = ["credit","nota","abono","cn","πιστωτικό","πίστωση","ακυρωτικό"]
         invoice_words = ["factura","invoice","inv","τιμολόγιο","παραστατικό"]
         
@@ -151,9 +151,9 @@ def match_invoices(erp_df, ven_df):
     ven_df["__doctype"] = ven_df.apply(detect_vendor_doc_type, axis=1)
     ven_df["__amt"] = ven_df.apply(calc_vendor_amount, axis=1)
 
-    # FILTER OUT PAYMENTS FROM INVOICE MATCHING
+    # FIXED: INCLUDE PAYMENTS IN MISSING TABLES
     erp_use = erp_df[erp_df["__doctype"].isin(["INV", "CN"])].copy()
-    ven_use = ven_df[ven_df["__doctype"].isin(["INV", "CN"])].copy()  # PAYMENTS EXCLUDED
+    ven_use = ven_df[ven_df["__doctype"].isin(["INV", "CN", "PAYMENT"])].copy()
 
     def clean_invoice_code(v):
         if not v:
@@ -194,7 +194,7 @@ def match_invoices(erp_df, ven_df):
     return matched_df, missing_in_erp, missing_in_vendor
 
 # ======================================
-# 🔹 TIER-2 MATCHING
+# TIER-2 MATCHING
 # ======================================
 def normalize_date(v):
     if pd.isna(v) or str(v).strip() == "":
@@ -236,52 +236,46 @@ def tier2_match(erp_missing, ven_missing):
     return pd.DataFrame(matches), v_df[~v_df.index.isin(used_v)].copy()
 
 # ======================================
-# PAYMENTS - UPDATED WITH SPANISH COBRO
+# FIXED PAYMENTS FUNCTION
 # ======================================
 def extract_payments(erp_df, ven_df):
-    # EXPANDED: Include SPANISH COBRO PAYMENTS
     payment_keywords = [
         "πληρωμή","payment","bank transfer","transferencia","transfer","trf","remesa","pago","deposit","μεταφορά","έμβασμα",
-        # SPANISH COBRO PAYMENTS
         "cobro","cobros","recibido","ingreso","entrada","pago recibido","transferencia recibida"
     ]
-    exclude_keywords = ["τιμολόγιο","invoice","παραστατικό","έξοδα","expense","correction","adjustment"]
     
     def is_real_payment(r):
         t = str(r or "").lower()
-        return any(k in t for k in payment_keywords) and not any(b in t for b in exclude_keywords)
+        return any(k in t for k in payment_keywords)
     
-    erp_pay = erp_df[erp_df.get("reason_erp","").apply(is_real_payment)] if "reason_erp" in erp_df else pd.DataFrame()
-    ven_pay = ven_df[ven_df.get("reason_ven","").apply(is_real_payment)] if "reason_ven" in ven_df else pd.DataFrame()
+    # GET ALL PAYMENTS (including cobro)
+    erp_pay = erp_df[erp_df["reason_erp"].str.contains('|'.join(payment_keywords), case=False, na=False)] if "reason_erp" in erp_df else pd.DataFrame()
+    ven_pay = ven_df[ven_df["reason_ven"].str.contains('|'.join(payment_keywords), case=False, na=False)] if "reason_ven" in ven_df else pd.DataFrame()
     
+    # CALCULATE AMOUNTS
     for d, col in [(erp_pay,"erp"),(ven_pay,"ven")]:
         if not d.empty:
-            d["Amount"]=d.apply(lambda r:abs(normalize_number(r.get(f"debit_{col}"))-normalize_number(r.get(f"credit_{col}"))),axis=1)
+            d["Amount"] = abs(d[f"debit_{col}"] - d[f"credit_{col}"])
     
-    matched=[]
-    used=set()
-    for _,e in erp_pay.iterrows():
-        for vi,v in ven_pay.iterrows():
-            if vi in used:
-                continue
-            diff=abs(e["Amount"]-v["Amount"])
-            if diff<0.05:
+    # SIMPLE MATCHING
+    matched = []
+    for _, e in erp_pay.iterrows():
+        for _, v in ven_pay.iterrows():
+            if abs(e["Amount"] - v["Amount"]) < 0.05:
                 matched.append({
-                    "ERP Reason":e.get("reason_erp",""),
-                    "Vendor Reason":v.get("reason_ven",""),
-                    "ERP Amount":e["Amount"],
-                    "Vendor Amount":v["Amount"],
-                    "Difference":diff
+                    "ERP Reason": e.get("reason_erp", ""),
+                    "Vendor Reason": v.get("reason_ven", ""),
+                    "ERP Amount": e["Amount"],
+                    "Vendor Amount": v["Amount"],
+                    "Difference": abs(e["Amount"] - v["Amount"])
                 })
-                used.add(vi)
                 break
-    return erp_pay,ven_pay,pd.DataFrame(matched)
+    return erp_pay, ven_pay, pd.DataFrame(matched)
 
 # ======================================
-# ELEGANT EXCEL EXPORT - FIXED COLORS
+# EXCEL EXPORT
 # ======================================
 def style_header(ws, start_row, end_col, header_color, font_color="FFFFFF"):
-    """Style header row with color and bold font"""
     header_fill = PatternFill(start_color=f"FF{header_color[1:]}", end_color=f"FF{header_color[1:]}", fill_type="solid")
     header_font = Font(bold=True, color=f"{font_color}", size=11)
     header_align = Alignment(horizontal="center", vertical="center")
@@ -291,7 +285,6 @@ def style_header(ws, start_row, end_col, header_color, font_color="FFFFFF"):
         cell.fill = header_fill
         cell.font = header_font
         cell.alignment = header_align
-        # Add thin border
         thin_border = Border(
             left=Side(style='thin'),
             right=Side(style='thin'),
@@ -301,7 +294,6 @@ def style_header(ws, start_row, end_col, header_color, font_color="FFFFFF"):
         cell.border = thin_border
 
 def style_data_row(ws, start_row, end_row, end_col, row_color):
-    """Style data rows with alternating colors"""
     data_fill = PatternFill(start_color=f"FF{row_color[1:]}", end_color=f"FF{row_color[1:]}", fill_type="solid")
     data_font = Font(size=10)
     
@@ -310,7 +302,6 @@ def style_data_row(ws, start_row, end_row, end_col, row_color):
             cell = ws.cell(row=row, column=col)
             cell.fill = data_fill
             cell.font = data_font
-            # Add thin border
             thin_border = Border(
                 left=Side(style='thin'),
                 right=Side(style='thin'),
@@ -323,87 +314,65 @@ def export_reconciliation_excel(matched, erp_missing, ven_missing, tier2_matches
     output = io.BytesIO()
     
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        # 1. MATCHED & DIFFERENCES SHEET
         if not matched.empty:
             matched.to_excel(writer, index=False, sheet_name="Matched & Differences")
             ws1 = writer.sheets["Matched & Differences"]
-            style_header(ws1, 1, len(matched.columns), "#2e7d32")  # Green header
+            style_header(ws1, 1, len(matched.columns), "#2e7d32")
             
-            # Style Match rows (Light Green)
             match_mask = matched["Status"] == "Match"
             match_rows = matched[match_mask].index.tolist()
             for row_idx in match_rows:
                 style_data_row(ws1, row_idx + 2, row_idx + 2, len(matched.columns), "#e8f5e8")
             
-            # Style Difference rows (Light Orange)
             diff_mask = matched["Status"] == "Difference"
             diff_rows = matched[diff_mask].index.tolist()
             for row_idx in diff_rows:
                 style_data_row(ws1, row_idx + 2, row_idx + 2, len(matched.columns), "#fff3e0")
 
-        # 2. TIER-2 MATCHES SHEET
         if not tier2_matches.empty:
             tier2_matches.to_excel(writer, index=False, sheet_name="Tier-2 Matches")
             ws2 = writer.sheets["Tier-2 Matches"]
-            style_header(ws2, 1, len(tier2_matches.columns), "#2196f3")  # Blue header
+            style_header(ws2, 1, len(tier2_matches.columns), "#2196f3")
             style_data_row(ws2, 2, len(tier2_matches) + 1, len(tier2_matches.columns), "#e3f2fd")
 
-        # 3. MISSING INVOICES SHEET
         ws3 = writer.book.create_sheet("Missing Invoices")
         start_row = 1
         
-        # ERP Missing Header
         ws3.cell(row=start_row, column=1, value="MISSING IN ERP").font = Font(bold=True, size=14, color="FFC62828")
         start_row += 2
         if not erp_missing.empty:
             erp_missing.to_excel(writer, index=False, sheet_name="Missing Invoices", 
                                startrow=start_row-1, startcol=1)
-            style_header(ws3, start_row, len(erp_missing.columns), "#c62828")  # Red header
+            style_header(ws3, start_row, len(erp_missing.columns), "#c62828")
             style_data_row(ws3, start_row+1, start_row + len(erp_missing), len(erp_missing.columns), "#ffebee")
             start_row += len(erp_missing) + 3
-        else:
-            start_row += 2
 
-        # Vendor Missing Header
         ws3.cell(row=start_row, column=1, value="MISSING IN VENDOR").font = Font(bold=True, size=14, color="FFC62828")
         start_row += 2
         if not ven_missing.empty:
             ven_missing.to_excel(writer, index=False, sheet_name="Missing Invoices", 
                                startrow=start_row-1, startcol=1)
-            style_header(ws3, start_row, len(ven_missing.columns), "#c62828")  # Red header
+            style_header(ws3, start_row, len(ven_missing.columns), "#c62828")
             style_data_row(ws3, start_row+1, start_row + len(ven_missing), len(ven_missing.columns), "#ffebee")
 
-        # 4. PAYMENTS SHEET
         ws4 = writer.book.create_sheet("Payments")
         start_row = 1
         
-        # ERP Payments
         ws4.cell(row=start_row, column=1, value="ERP PAYMENTS").font = Font(bold=True, size=14, color="FF004D40")
         start_row += 2
         if not erp_pay.empty:
             erp_pay.to_excel(writer, index=False, sheet_name="Payments", startrow=start_row-1, startcol=1)
-            style_header(ws4, start_row, len(erp_pay.columns), "#004d40")  # Teal header
+            style_header(ws4, start_row, len(erp_pay.columns), "#004d40")
             style_data_row(ws4, start_row+1, start_row + len(erp_pay), len(erp_pay.columns), "#e0f2f1")
             start_row += len(erp_pay) + 3
         
-        # Vendor Payments
         ws4.cell(row=start_row, column=1, value="VENDOR PAYMENTS").font = Font(bold=True, size=14, color="FF1565C0")
         start_row += 2
         if not ven_pay.empty:
             ven_pay.to_excel(writer, index=False, sheet_name="Payments", startrow=start_row-1, startcol=1)
-            style_header(ws4, start_row, len(ven_pay.columns), "#1565c0")  # Blue header
+            style_header(ws4, start_row, len(ven_pay.columns), "#1565c0")
             style_data_row(ws4, start_row+1, start_row + len(ven_pay), len(ven_pay.columns), "#e3f2fd")
-            start_row += len(ven_pay) + 3
-        
-        # Payment Matches
-        ws4.cell(row=start_row, column=1, value="PAYMENT MATCHES").font = Font(bold=True, size=14, color="FF2E7D32")
-        start_row += 2
-        if not matched_pay.empty:
-            matched_pay.to_excel(writer, index=False, sheet_name="Payments", startrow=start_row-1, startcol=1)
-            style_header(ws4, start_row, len(matched_pay.columns), "#2e7d32")  # Green header
-            style_data_row(ws4, start_row+1, start_row + len(matched_pay), len(matched_pay.columns), "#e8f5e8")
 
-        # 5. SUMMARY SHEET
         summary_data = {
             "Metric": [
                 "Total Matched Invoices", "Tier-2 Matches", "Missing in ERP", "Missing in Vendor",
@@ -419,12 +388,9 @@ def export_reconciliation_excel(matched, erp_missing, ven_missing, tier2_matches
         summary_df = pd.DataFrame(summary_data)
         summary_df.to_excel(writer, index=False, sheet_name="Summary")
         ws5 = writer.sheets["Summary"]
-        
-        # Summary styling
-        style_header(ws5, 1, 2, "#424242")  # Dark gray header
+        style_header(ws5, 1, 2, "#424242")
         style_data_row(ws5, 2, len(summary_df) + 1, 2, "#f5f5f5")
         
-        # Format currency columns
         for row in range(2, len(summary_df) + 2):
             ws5.cell(row=row, column=2).number_format = '#,##0.00 "EUR"'
     
@@ -445,16 +411,10 @@ if uploaded_erp and uploaded_vendor:
     ven_df = normalize_columns(ven_raw, "ven")
     
     with st.spinner("Reconciling invoices..."):
-        # FIRST: Extract payments (catches COBROS)
         erp_pay, ven_pay, matched_pay = extract_payments(erp_df, ven_df)
-        
-        # THEN: Match invoices (COBROS already excluded)
         matched, erp_missing, ven_missing = match_invoices(erp_df, ven_df)
-        
-        # 🧩 Tier-2 Matching
         tier2_matches, ven_missing_after_tier2 = tier2_match(erp_missing, ven_missing)
         
-        # Remove Tier-2 matched items from missing tables
         if not tier2_matches.empty:
             matched_vendor_invoices = tier2_matches["Vendor Invoice"].unique().tolist()
             matched_erp_invoices = tier2_matches["ERP Invoice"].unique().tolist()
@@ -463,7 +423,6 @@ if uploaded_erp and uploaded_vendor:
         
         st.success("✅ Reconciliation complete")
 
-    # Highlight function for matched table
     def highlight_row(row):
         if row["Status"] == "Match":
             return ['background-color:#2e7d32;color:white'] * len(row)
@@ -471,28 +430,24 @@ if uploaded_erp and uploaded_vendor:
             return ['background-color:#f9a825;color:black'] * len(row)
         return [''] * len(row)
 
-    # Display Matched Invoices
     st.subheader("📊 Matched / Differences")
     if not matched.empty:
         st.dataframe(matched.style.apply(highlight_row, axis=1), use_container_width=True)
     else:
         st.info("No matches found.")
 
-    # Display Missing in ERP
     st.subheader("❌ Missing in ERP (found in vendor but not in ERP)")
     if not erp_missing.empty:
         st.dataframe(erp_missing.style.applymap(lambda _: "background-color:#c62828;color:white"), use_container_width=True)
     else:
         st.success("✅ No missing invoices in ERP.")
 
-    # Display Missing in Vendor
     st.subheader("❌ Missing in Vendor (found in ERP but not in vendor)")
     if not ven_missing.empty:
         st.dataframe(ven_missing.style.applymap(lambda _: "background-color:#c62828;color:white"), use_container_width=True)
     else:
         st.success("✅ No missing invoices in Vendor.")
 
-    # Display Tier-2 section with coloring
     st.markdown("### 🧩 Tier-2 Matching (same date, same value, fuzzy invoice)")
     def highlight_tier2(row):
         return ['background-color:#2196f3;color:white'] * len(row)
@@ -503,38 +458,25 @@ if uploaded_erp and uploaded_vendor:
     else:
         st.info("No Tier-2 matches found.")
 
-    # Payments Section
-    st.subheader("🏦 Payment Transactions (Identified in both sides)")
+    st.subheader("🏦 Payment Transactions")
     col1, col2 = st.columns(2)
     
     with col1:
         st.markdown("**💼 ERP Payments**")
         if not erp_pay.empty:
             st.dataframe(erp_pay.style.applymap(lambda _: "background-color:#004d40;color:white"), use_container_width=True)
-            st.markdown(f"**Total ERP Payments:** {erp_pay['Amount'].sum():,.2f} EUR")
+            st.markdown(f"**Total:** {erp_pay['Amount'].sum():,.2f} EUR")
         else:
             st.info("No ERP payments found.")
     
     with col2:
-        st.markdown("**🧾 Vendor Payments**")
+        st.markdown("**🧾 Vendor Payments (COBROS INCLUDED)**")
         if not ven_pay.empty:
             st.dataframe(ven_pay.style.applymap(lambda _: "background-color:#1565c0;color:white"), use_container_width=True)
-            st.markdown(f"**Total Vendor Payments:** {ven_pay['Amount'].sum():,.2f} EUR")
+            st.markdown(f"**Total:** {ven_pay['Amount'].sum():,.2f} EUR")
         else:
             st.info("No Vendor payments found.")
 
-    st.markdown("### ✅ Payment Matches")
-    if not matched_pay.empty:
-        st.dataframe(matched_pay.style.applymap(lambda _: "background-color:#2e7d32;color:white"), use_container_width=True)
-        total_erp, total_vendor = erp_pay["Amount"].sum(), ven_pay["Amount"].sum()
-        diff_total = round(abs(total_erp - total_vendor), 2)
-        st.markdown(f"**ERP Payments Total:** {total_erp:,.2f} EUR")
-        st.markdown(f"**Vendor Payments Total:** {total_vendor:,.2f} EUR")
-        st.markdown(f"**Difference:** {diff_total:,.2f} EUR")
-    else:
-        st.info("No payments found.")
-
-    # Excel Export - NOW 100% FIXED!
     st.markdown("### 📥 Download Reconciliation Excel Report")
     excel_output = export_reconciliation_excel(
         matched, erp_missing, ven_missing, tier2_matches, erp_pay, ven_pay, matched_pay
