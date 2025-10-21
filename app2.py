@@ -74,7 +74,7 @@ def clean_invoice_code(v):
     s = str(v).strip().lower()
     parts = re.split(r"[-_]", s)
     for p in reversed(parts):
-        if re.fullmatch(r"\d{4,}", p) and not re.fullmatch(r"20[0-3]\d", p):
+        if re.fullmatch(r"\d{1,}", p) and not re.fullmatch(r"20[0-3]\d", p):
             s = p.lstrip("0")
             break
     s = re.sub(r"^(αρ|τιμ|pf|ab|inv|tim|cn|ar|pa|πφ|πα|apo|ref|doc|num|no|apd|vs)\W*", "", s)
@@ -82,7 +82,7 @@ def clean_invoice_code(v):
     s = re.sub(r"[^a-z0-9]", "", s)
     s = re.sub(r"^0+", "", s)
     s = re.sub(r"[^\d]", "", s)
-    return s
+    return s or "0"  # Return "0" if cleaning results in empty string
 
 def normalize_columns(df, tag):
     """Map multilingual headers to unified names."""
@@ -324,7 +324,7 @@ def tier2_match(erp_missing, ven_missing):
             diff = abs(e_amt - v_amt)
             sim = fuzzy_ratio(e_code, v_code)
             # Match if amounts are close, fuzzy score is high, and dates match
-            if diff <= 10.0 and sim >= 0.8 and e_date == v_date and e_date != "" and v_date != "":
+            if diff <= 10.0 and sim >= 0.7 and e_date == v_date and e_date != "" and v_date != "":
                 matches.append({
                     "ERP Invoice": e_inv,
                     "Vendor Invoice": v_inv,
