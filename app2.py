@@ -578,29 +578,29 @@ if uploaded_erp and uploaded_vendor:
         else:
             st.info("No Tier-2 matches found.")
      
-        # MISSING WITH COLORS
+       # MISSING WITH COLORS
         col1, col2 = st.columns(2)
         with col1:
-            st.markdown("### ❌ Missing in ERP 🔴")
+            st.markdown("### ❌ Not Found in ERP Export 🔴")
             if not erp_missing.empty:
                 st.dataframe(
                     style_missing(erp_missing),
                     use_container_width=True
                 )
-                st.error(f"**{len(erp_missing)} invoices** missing in ERP")
+                st.error(f"**{len(erp_missing)} invoices** not found in ERP export")
             else:
-                st.success("✅ No missing invoices in ERP")
-      
+                st.success("✅ All vendor invoices found in ERP")
+        
         with col2:
-            st.markdown("### ❌ Missing in Vendor 🔴")
+            st.markdown("### ❌ Not Found in Vendor Export 🔴")
             if not ven_missing.empty:
                 st.dataframe(
                     style_missing(ven_missing),
                     use_container_width=True
                 )
-                st.error(f"**{len(ven_missing)} invoices** missing in Vendor")
+                st.error(f"**{len(ven_missing)} invoices** not found in vendor export")
             else:
-                st.success("✅ No missing invoices in Vendor")
+                st.success("✅ All ERP invoices found in vendor")
      
         # PAYMENTS WITH COLORS
         st.subheader("🏦 Payment Transactions")
