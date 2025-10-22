@@ -8,7 +8,7 @@ from openai import OpenAI
 # ==========================================================
 # CONFIGURATION
 # ==========================================================
-st.set_page_config(page_title="🦅 DataFalcon Pro — Hybrid GPT Extractor", layout="wide")
+st.set_page_config(page_title="🦅 DataFalcon Pro — Clean Numbers", layout="wide")
 st.title("🦅 DataFalcon Pro")
 try:
     from dotenv import load_dotenv
@@ -23,8 +23,32 @@ client = OpenAI(api_key=api_key)
 MODEL = "gpt-4o-mini"
 
 # ==========================================================
-# HELPERS
+# 🔥 GIBBERISH REMOVER - KEEP ONLY FINAL NUMBER
 # ==========================================================
+def clean_invoice_number(alt_doc):
+    """Remove ALL gibberish - keep ONLY final number"""
+    if not alt_doc:
+        return ""
+    
+    s = str(alt_doc).strip()
+    
+    # Pattern 1: ANYTHING + dashes + FINAL NUMBER (7+ digits)
+    match = re.search(r'[-–—/]\s*(\d{7,})$', s)
+    if match:
+        return match.group(1)
+    
+    # Pattern 2: Gibberish + ANY 6+ digits at END
+    match = re.search(r'.*?(\d{6,})$', s)
+    if match:
+        return match.group(1)
+    
+    # Pattern 3: Pure number extraction
+    match = re.search(r'(\d{6,})', s)
+    if match:
+        return match.group(1)
+    
+    return ""
+
 def normalize_number(value):
     """Normalize decimals like 1.234,56 → 1234.56"""
     if not value:
@@ -57,10 +81,10 @@ def extract_raw_lines(uploaded_pdf):
     return all_lines
 
 # ==========================================================
-# GPT EXTRACTOR — GREEK INVOICES + DEBE & HABER
+# GPT EXTRACTOR — WITH GIBBERISH CLEANER
 # ==========================================================
 def extract_with_gpt(lines):
-    """Use GPT to detect Debit (DEBE) and Credit (HABER) + Greek invoices."""
+    """Use GPT + CLEAN numbers from gibberish."""
     BATCH_SIZE = 150
     all_records = []
     for i in range(0, len(lines), BATCH_SIZE):
@@ -70,39 +94,32 @@ def extract_with_gpt(lines):
 You are an expert accountant fluent in Spanish and Greek.
 You are reading extracted lines from a vendor statement.
 Each line may include columns labeled as:
-- DEBE → Debit (Invoice) / ΧΡΕΩΣΗ → Χρέωση (Τιμολόγιο)
-- HABER → Credit (Payment) / ΠΙΣΤΩΣΗ → Πίστωση (Πληρωμή)
-- SALDO → Running Balance / ΥΠΟΛΟΙΠΟ
-- CONCEPTO → Description / ΠΕΡΙΓΡΑΦΗ
-
-**GREEK INVOICES** - Look for:
-✅ "Τιμολόγιο" = Invoice
-✅ "Δελτίο Αποστολής" = Delivery Note (Invoice)  
-✅ "Ενδείξη" OR "Εν" = Document reference
-✅ "Αρ." OR "Αριθμός" = Document number
+- DEBE → Debit (Invoice)
+- HABER → Credit (Payment)
+- SALDO → Running Balance
+- CONCEPTO → Description such as "Fra. emitida", "Cobro Efecto", etc.
 
 Your task:
 For each valid transaction line, output:
-- "Alternative Document": document number (Nº, Num, ΤΙΜ, ΑΡ, ΕνδIοNκVο, etc.)
+- "Alternative Document": document number (under Nº, Num, Documento, Factura, ΕνδIοNκVο, etc.)
 - "Date": date if visible (dd/mm/yy or dd/mm/yyyy)
 - "Reason": classify as "Invoice", "Payment", or "Credit Note"
-- "Debit": numeric value under DEBE/ΧΡΕΩΣΗ column
-- "Credit": numeric value under HABER/ΠΙΣΤΩΣΗ column
+- "Debit": numeric value under DEBE column (if exists)
+- "Credit": numeric value under HABER column (if exists)
 
 Rules:
-1. If DEBE/ΧΡΕΩΣΗ > 0 → Reason = "Invoice"
-2. If HABER/ΠΙΣΤΩΣΗ > 0 → Reason = "Payment"  
-3. If "Abono", "Nota de Credito", "NC", "πιστω", "Ακυρωτικό" → "Credit Note" (Credit column)
-4. **GREEK**: "Τιμολόγιο", "Δελτίο Αποστολής", "Ενδείξη" → "Invoice"
-5. Ignore: "Saldo", "Apertura", "Total General", "IVA", "Υπολοιπό", "Σύνολο"
-6. Exclude lines with "concil" in document number
-7. Ensure output is valid JSON array.
+1. If DEBE > 0 → Reason = "Invoice"
+2. If HABER > 0 → Reason = "Payment"
+3. If the line includes "Abono", "Nota de Credito", "NC", "πιστω", "Ακυρωτικό" → Reason = "Credit Note"
+4. Ignore summary lines: "Saldo", "Apertura", "Total General", "IVA", "Base", "Impuestos".
+5. Exclude any line where document contains "concil"
+6. Ensure output is valid JSON array.
 
 Lines:
 \"\"\"{text_block}\"\"\"
 """
         try:
-            response = client.chat.completions.create(  # ✅ FIXED API call
+            response = client.chat.completions.create(  # ✅ FIXED API
                 model=MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.1,
@@ -118,31 +135,33 @@ Lines:
             continue
         
         for row in data:
-            alt_doc = str(row.get("Alternative Document", "")).strip()
+            alt_doc_raw = str(row.get("Alternative Document", "")).strip()
             
-            # 🚫 Exclude reconciliation
-            if re.search(r"concil", alt_doc, re.IGNORECASE):
+            # 🔥 GIBBERISH REMOVER - MAGIC HAPPENS HERE
+            alt_doc_clean = clean_invoice_number(alt_doc_raw)
+            
+            # Skip if no clean number
+            if not alt_doc_clean:
+                continue
+            
+            # Exclude concil
+            if re.search(r"concil", alt_doc_raw, re.IGNORECASE):
                 continue
             
             debit_val = normalize_number(row.get("Debit"))
             credit_val = normalize_number(row.get("Credit"))
             
-            # Greek invoice keywords → Force Invoice classification
-            reason_text = str(row.get("Reason", "")).lower()
-            if any(greek_inv in alt_doc.lower() or greek_inv in reason_text for greek_inv in 
-                   ["τιμολόγιο", "δελτίο αποστολής", "ενδείξη", "ενδ", "αρ", "αριθμός"]):
-                reason_text = "invoice"
-            
-            # Move Cobro/Efecto/Πληρωμή to Credit
-            concept = alt_doc.lower()
-            if any(word in concept for word in ["cobro", "efecto", "πληρωμή", "πληρωθ"]):
+            # Move Cobro/Efecto to Credit
+            concept = alt_doc_raw.lower()
+            if "cobro" in concept or "efecto" in concept:
                 credit_val = credit_val or debit_val
                 debit_val = ""
             
             all_records.append({
-                "Alternative Document": alt_doc,
+                "Alternative Document": alt_doc_clean,  # ✅ CLEAN NUMBER ONLY
+                "Raw Document": alt_doc_raw[:30] + "..." if len(alt_doc_raw) > 30 else alt_doc_raw,  # Debug
                 "Date": str(row.get("Date", "")).strip(),
-                "Reason": row.get("Reason", "Invoice").strip(),  # Default Invoice
+                "Reason": row.get("Reason", "").strip(),
                 "Debit": debit_val,
                 "Credit": credit_val
             })
@@ -170,14 +189,25 @@ if uploaded_pdf:
     else:
         st.text_area("📄 Preview (first 25 lines):", "\n".join(lines[:25]), height=250)
         if st.button("🤖 Run Hybrid Extraction"):
-            with st.spinner("🔍 Analyzing Greek/Spanish invoices with GPT-4o-mini..."):
+            with st.spinner("🔍 Cleaning gibberish → Pure numbers..."):
                 data = extract_with_gpt(lines)
             if not data:
                 st.warning("⚠️ No structured data detected.")
             else:
                 df = pd.DataFrame(data)
                 st.success(f"✅ Extraction complete — {len(df)} valid records found.")
-                st.dataframe(df, use_container_width=True)
+                
+                # Show Raw vs Clean
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.subheader("✅ CLEAN Numbers")
+                    clean_df = df[['Alternative Document', 'Date', 'Reason', 'Debit', 'Credit']]
+                    st.dataframe(clean_df, use_container_width=True)
+                with col2:
+                    st.subheader("🔍 Raw vs Clean")
+                    debug_df = df[['Raw Document', 'Alternative Document']]
+                    st.dataframe(debug_df, use_container_width=True)
+                
                 # Totals
                 try:
                     total_debit = df["Debit"].apply(pd.to_numeric, errors="coerce").sum()
@@ -187,10 +217,10 @@ if uploaded_pdf:
                 except:
                     pass
                 st.download_button(
-                    "⬇️ Download Excel",
+                    "⬇️ Download CLEAN Excel",
                     data=to_excel_bytes(data),
-                    file_name="vendor_statement_debe_haber.xlsx",
+                    file_name="vendor_statement_clean.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
 else:
-    st.info("Please upload a vendor statement PDF to begin.")
+    st.info("👆 Upload PDF → Get CLEAN numbers from ΕνδIοNκVο-ιEνοUτ-ι0κ0ό00000001!")
