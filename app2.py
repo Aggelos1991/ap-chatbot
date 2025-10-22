@@ -142,7 +142,7 @@ def normalize_columns(df, tag):
     return out
 
 # ======================================
-# CORE MATCHING (FIXED)
+# CORE MATCHING (FULLY FIXED)
 # ======================================
 def match_invoices(erp_df, ven_df):
     matched = []
@@ -168,13 +168,14 @@ def match_invoices(erp_df, ven_df):
         return "UNKNOWN"
 
     def calc_erp_amount(row):
+        """ERP Logic: CREDIT column = POSITIVE invoices, DEBIT column = NEGATIVE credit notes"""
         doc = row.get("__doctype", "")
         charge = normalize_number(row.get("debit_erp"))
         credit = normalize_number(row.get("credit_erp"))
         if doc == "INV":
-            return abs(credit)  # ERP invoices are in credit column -> POSITIVE
+            return abs(credit)  # POSITIVE - invoices from CREDIT column (Πίστωση)
         elif doc == "CN":
-            return -abs(charge if charge > 0 else credit)
+            return -abs(charge)  # NEGATIVE - credit notes from DEBIT column (Χρέωση)
         return 0.0
 
     def detect_vendor_doc_type(row):
@@ -197,13 +198,14 @@ def match_invoices(erp_df, ven_df):
         return "UNKNOWN"
 
     def calc_vendor_amount(row):
+        """Vendor Logic: DEBIT column = POSITIVE invoices, CREDIT column = NEGATIVE credit notes"""
         debit = normalize_number(row.get("debit_ven"))
         credit = normalize_number(row.get("credit_ven"))
         doc = row.get("__doctype", "")
         if doc == "INV":
-            return abs(debit)  # Vendor invoices in DEBIT column -> POSITIVE
+            return abs(debit)  # POSITIVE - invoices from DEBIT column (Χρέωση)
         elif doc == "CN":
-            return -abs(credit)  # Vendor credit notes in CREDIT column -> NEGATIVE
+            return -abs(credit)  # NEGATIVE - credit notes from CREDIT column (Πίστωση)
         return 0.0
 
     erp_df["__doctype"] = erp_df.apply(detect_erp_doc_type, axis=1)
@@ -215,8 +217,6 @@ def match_invoices(erp_df, ven_df):
     ven_use = ven_df[ven_df["__doctype"].isin(["INV", "CN"])].copy()
 
     # FIX 1: Swap ERP and Vendor logic for missing tables
-    # erp_use now contains VENDOR data (what's missing in ERP)
-    # ven_use now contains ERP data (what's missing in vendor)
     merged_rows = []
     for inv, group in erp_use.groupby("invoice_erp", dropna=False):
         if group.empty:
