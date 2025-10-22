@@ -63,7 +63,7 @@ def normalize_date(v):
         "%m/%d/%Y", "%m-%d-%Y",
         "%Y/%m/%d", "%Y-%m-%d",
         "%d/%m/%y", "%d-%m-%y", "%d.%m.%y",
-        "%m/%d/%y", "%m-%d-%y",
+        "%m/%d/%y", "%m-%d/%y",
         "%Y.%m.%d"
     ]
     for fmt in formats:
@@ -189,7 +189,7 @@ def style_missing(df):
     )
 
 # ======================================
-# CORE MATCHING
+# CORE MATCHING (FIXED FOR SIGN DIFFERENCE)
 # ======================================
 def match_invoices(erp_df, ven_df):
     matched = []
@@ -215,13 +215,14 @@ def match_invoices(erp_df, ven_df):
         return "UNKNOWN"
 
     def calc_erp_amount(row):
+        """ERP: Invoices are negative credits, CNs are negative debits"""
         doc = row.get("__doctype", "")
         charge = normalize_number(row.get("debit_erp"))
         credit = normalize_number(row.get("credit_erp"))
         if doc == "INV":
-            return abs(credit)
+            return credit  # Keep negative for invoices
         elif doc == "CN":
-            return -abs(charge)
+            return -abs(charge)  # Negative for credit notes
         return 0.0
 
     def detect_vendor_doc_type(row):
@@ -244,15 +245,17 @@ def match_invoices(erp_df, ven_df):
         return "UNKNOWN"
 
     def calc_vendor_amount(row):
+        """Vendor: Make invoices negative to match ERP convention"""
         debit = normalize_number(row.get("debit_ven"))
         credit = normalize_number(row.get("credit_ven"))
         doc = row.get("__doctype", "")
         if doc == "INV":
-            return abs(debit)
+            return -abs(debit)  # Make vendor invoices negative to match ERP
         elif doc == "CN":
-            return -abs(credit)
+            return abs(credit)  # Credit notes positive (reduces liability)
         return 0.0
 
+    # Apply document type and amount calculation
     erp_df["__doctype"] = erp_df.apply(detect_erp_doc_type, axis=1)
     erp_df["__amt"] = erp_df.apply(calc_erp_amount, axis=1)
     ven_df["__doctype"] = ven_df.apply(detect_vendor_doc_type, axis=1)
@@ -261,7 +264,7 @@ def match_invoices(erp_df, ven_df):
     erp_use = erp_df[erp_df["__doctype"].isin(["INV", "CN"])].copy()
     ven_use = ven_df[ven_df["__doctype"].isin(["INV", "CN"])].copy()
 
-    # Merge INV+CN for same invoice number
+    # Merge INV+CN for same invoice number (both sides)
     merged_rows = []
     for inv, group in erp_use.groupby("invoice_erp", dropna=False):
         if group.empty: continue
@@ -301,7 +304,7 @@ def match_invoices(erp_df, ven_df):
     erp_use = erp_use.groupby(["invoice_erp", "__doctype"], as_index=False)["__amt"].sum()
     ven_use = ven_use.groupby(["invoice_ven", "__doctype"], as_index=False)["__amt"].sum()
 
-    # Tier-1 matching with difference detection
+    # Tier-1 matching with sign adjustment
     for e_idx, e in erp_use.iterrows():
         e_inv = str(e.get("invoice_erp", "")).strip()
         e_amt = round(float(e["__amt"]), 2)
@@ -349,7 +352,7 @@ def match_invoices(erp_df, ven_df):
     return matched_df, missing_in_erp, missing_in_vendor
 
 # ======================================
-# TIER-2 MATCHING
+# TIER-2 MATCHING (ALSO FIXED FOR SIGNS)
 # ======================================
 def fuzzy_ratio(a, b):
     return SequenceMatcher(None, str(a), str(b)).ratio()
