@@ -201,18 +201,15 @@ def match_invoices(erp_df, ven_df):
             return "INV"
         return "UNKNOWN"
     def calc_erp_amount(row):
-        """ERP: Use absolute values for matching - FIXED"""
-        doc = row.get("__doctype", "")
+        """ERP: Use absolute values for matching - FIXED FOR NEGATIVE CREDIT NOTES"""
         charge = normalize_number(row.get("debit_erp"))
         credit = normalize_number(row.get("credit_erp"))
-        if doc == "INV":
-            return abs(credit)  # Invoice = credit side
-        elif doc == "CN":
-            return abs(charge)  # Credit note = debit side  
-        elif credit > charge:  # FIXED: Detect credit notes by actual values
-            return abs(credit)
-        elif charge > credit:  # FIXED: Detect invoices by actual values  
+        
+        # FIXED: Take the NON-ZERO absolute value (handles negatives!)
+        if abs(charge) > 0:
             return abs(charge)
+        elif abs(credit) > 0:
+            return abs(credit)
         return 0.0
     def detect_vendor_doc_type(row):
         reason = str(row.get("reason_ven", "")).lower()
@@ -233,17 +230,14 @@ def match_invoices(erp_df, ven_df):
             return "INV"
         return "UNKNOWN"
     def calc_vendor_amount(row):
-        """Vendor: Use absolute values for matching - FIXED"""
+        """Vendor: Use absolute values for matching - FIXED FOR NEGATIVE CREDIT NOTES"""
         debit = normalize_number(row.get("debit_ven"))
         credit = normalize_number(row.get("credit_ven"))
-        doc = row.get("__doctype", "")
-        if doc == "INV":
-            return abs(debit)   # Invoice = debit side
-        elif doc == "CN":
-            return abs(credit)  # Credit note = credit side
-        elif debit > credit:    # FIXED: Detect by actual values
+        
+        # FIXED: Take the NON-ZERO absolute value (handles negatives!)
+        if abs(debit) > 0:
             return abs(debit)
-        elif credit > debit:
+        elif abs(credit) > 0:
             return abs(credit)
         return 0.0
     # Apply document type and amount calculation
@@ -530,7 +524,7 @@ if uploaded_erp and uploaded_vendor:
             st.markdown('<div class="metric-container perfect-match">', unsafe_allow_html=True)
             st.metric("🎯 Perfect Matches", perfect_count, delta=None)
             st.markdown('</div>', unsafe_allow_html=True)
-        with col2:
+                with col2:
             st.markdown('<div class="metric-container difference-match">', unsafe_allow_html=True)
             st.metric("⚠️ Differences", diff_count, delta=None)
             st.markdown('</div>', unsafe_allow_html=True)
