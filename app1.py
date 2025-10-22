@@ -2,16 +2,14 @@ import os, re, json
 import pdfplumber
 import pandas as pd
 import streamlit as st
-from io, BytesIO
+from io import BytesIO
 from openai import OpenAI
-import time
 
 # ==========================================================
 # CONFIGURATION
 # ==========================================================
-st.set_page_config(page_title="🦅 DataFalcon Pro DEBUG", layout="wide")
-st.title("🦅 DataFalcon Pro - DEBUG MODE")
-st.markdown("**Finding why no invoices detected...**")
+st.set_page_config(page_title="🦅 DataFalcon Pro — Hybrid GPT Extractor", layout="wide")
+st.title("🦅 DataFalcon Pro")
 
 try:
     from dotenv import load_dotenv
@@ -21,195 +19,175 @@ except:
 
 api_key = os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY")
 if not api_key:
-    st.error("❌ No OpenAI API key found.")
+    st.error("❌ No OpenAI API key found. Add it to .env or Streamlit Secrets.")
     st.stop()
 
 client = OpenAI(api_key=api_key)
 MODEL = "gpt-4o-mini"
 
 # ==========================================================
-# DEBUG HELPERS - LESS STRICT
+# HELPERS
 # ==========================================================
-def extract_invoice_number(line):
-    """🚀 Extract ANY number - super lenient"""
-    # Pattern 1: ANY 4+ digits
-    num = re.search(r'\b(\d{4,})\b', line)
-    if num:
-        return num.group(1)
-    
-    # Pattern 2: With prefixes
-    patterns = [
-        r'(?:inv|fact|fra|n\d?|num|doc|ref|tim|par|αρ)\s*[:\-/]*\s*(\d{3,})',
-        r'(\d{3,})\s*(?:inv|fact|fra|tim|par)',
-    ]
-    
-    for pattern in patterns:
-        match = re.search(pattern, line, re.IGNORECASE)
-        if match:
-            return match.group(1)
-    
-    return ""
-
 def normalize_number(value):
+    """Normalize decimals like 1.234,56 → 1234.56"""
     if not value:
-        return 0.0
-    s = re.sub(r'[^\d,\.€$£ ]', '', str(value).strip())
-    s = s.replace(' ', '').replace('€', '')
-    if ',' in s and '.' in s:
-        if s.rfind(',') > s.rfind('.'):
-            s = s.replace('.', '').replace(',', '.')
+        return ""
+    s = str(value).strip().replace(" ", "")
+    if "," in s and "." in s:
+        if s.rfind(",") > s.rfind("."):
+            s = s.replace(".", "").replace(",", ".")
         else:
-            s = s.replace(',', '')
-    elif ',' in s:
-        s = s.replace(',', '.')
+            s = s.replace(",", "")
+    elif "," in s:
+        s = s.replace(",", ".")
+    s = re.sub(r"[^\d.\-]", "", s)
     try:
         return round(float(s), 2)
     except:
-        return 0.0
+        return ""
 
 def extract_raw_lines(uploaded_pdf):
-    """Extract ALL lines with ANY number"""
+    """Extract all text lines from every page of the PDF."""
     all_lines = []
     with pdfplumber.open(uploaded_pdf) as pdf:
         for page in pdf.pages:
             text = page.extract_text()
-            if text:
-                for line in text.split("\n"):
-                    line = line.strip()
-                    if re.search(r'\d', line) and len(line) > 5:
-                        all_lines.append(line)
-            
-            # Tables
-            tables = page.extract_tables()
-            for table in tables:
-                for row in table:
-                    if row:
-                        row_text = " | ".join(str(cell) for cell in row if cell)
-                        if re.search(r'\d', row_text):
-                            all_lines.append(row_text)
-    return all_lines[:500]  # Limit for speed
+            if not text:
+                continue
+            for line in text.split("\n"):
+                if re.search(r"\d{1,3}(?:[.,]\d{3})*[.,]\d{2}", line):
+                    all_lines.append(" ".join(line.split()))
+    return all_lines
 
 # ==========================================================
-# GPT - SIMPLIFIED FOR DEBUG
+# GPT EXTRACTOR — detect DEBE & HABER columns explicitly
 # ==========================================================
 def extract_with_gpt(lines):
-    BATCH_SIZE = 80
+    """Use GPT to detect Debit (DEBE) and Credit (HABER) from vendor statements."""
+    BATCH_SIZE = 150
     all_records = []
-    
-    st.info(f"🔍 Processing {len(lines)} lines in {len(lines)//BATCH_SIZE + 1} batches...")
-    
+
     for i in range(0, len(lines), BATCH_SIZE):
         batch = lines[i:i + BATCH_SIZE]
         text_block = "\n".join(batch)
-        
-        prompt = f"""Extract ALL lines with money amounts. Output JSON array.
 
-For EVERY line with numbers:
-{{
-  "raw_line": "exact line text",
-  "doc_num": "largest number found",
-  "amount1": "first money amount",
-  "amount2": "second money amount" 
-}}
+        prompt = f"""
+You are an expert accountant fluent in Spanish and Greek.
 
-TEXT:
-{text_block}"""
-        
+You are reading extracted lines from a vendor statement.
+Each line may include columns labeled as:
+- DEBE → Debit (Invoice)
+- HABER → Credit (Payment)
+- SALDO → Running Balance
+- CONCEPTO → Description such as "Fra. emitida", "Cobro Efecto", etc.
+
+Your task:
+For each valid transaction line, output:
+- "Alternative Document": document number (under Nº, Num, Documento, Factura, etc.)
+- "Date": date if visible (dd/mm/yy or dd/mm/yyyy)
+- "Reason": classify as "Invoice", "Payment", or "Credit Note"
+- "Debit": numeric value under DEBE column (if exists)
+- "Credit": numeric value under HABER column (if exists)
+
+Rules:
+1. If DEBE > 0 → Reason = "Invoice"
+2. If HABER > 0 → Reason = "Payment"
+3. If the line includes "Abono", "Nota de Credito", "NC", "πιστω", "Ακυρωτικό" → Reason = "Credit Note" and place value under Credit.
+4. Ignore summary lines: "Saldo", "Apertura", "Total General", "IVA", "Base", "Impuestos".
+5. Exclude any line where the document number contains “concil” (not case-sensitive).
+6. Ensure output is valid JSON array.
+
+Lines:
+\"\"\"{text_block}\"\"\"
+"""
+
         try:
-            response = client.chat.completions.create(
-                model=MODEL,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.1,
-                max_tokens=2000
-            )
-            content = response.choices[0].message.content.strip()
+            response = client.responses.create(model=MODEL, input=prompt)
+            content = response.output_text.strip()
             json_match = re.search(r"\[.*\]", content, re.DOTALL)
-            if json_match:
-                data = json.loads(json_match.group(0))
-                all_records.extend(data)
+            if not json_match:
+                continue
+            data = json.loads(json_match.group(0))
         except Exception as e:
-            st.warning(f"Batch {i//BATCH_SIZE + 1} error: {e}")
-        
-        if i % 200 < BATCH_SIZE:
-            st.write(f"Processed batch {i//BATCH_SIZE + 1}")
-    
+            st.warning(f"⚠️ GPT failed on batch {i//BATCH_SIZE + 1}: {e}")
+            continue
+
+        for row in data:
+            alt_doc = str(row.get("Alternative Document", "")).strip()
+            # 🚫 exclude concil. or conciliación or reconcil etc.
+            if re.search(r"concil", alt_doc, re.IGNORECASE):
+                continue
+
+            debit_val = normalize_number(row.get("Debit"))
+            credit_val = normalize_number(row.get("Credit"))
+
+            reason_text = row.get("Reason", "").lower()
+            concept = alt_doc.lower()
+
+            # Move Cobro/Efecto to Credit if missing
+            if "cobro" in concept or "efecto" in concept:
+                credit_val = credit_val or debit_val
+                debit_val = ""
+
+            all_records.append({
+                "Alternative Document": alt_doc,
+                "Date": str(row.get("Date", "")).strip(),
+                "Reason": row.get("Reason", "").strip(),
+                "Debit": debit_val,
+                "Credit": credit_val
+            })
+
     return all_records
 
 # ==========================================================
-# DEBUG VALIDATION - SHOW EVERYTHING
+# EXPORT
 # ==========================================================
-def analyze_records(records):
-    """Show exactly what's happening"""
+def to_excel_bytes(records):
     df = pd.DataFrame(records)
-    if df.empty:
-        return pd.DataFrame()
-    
-    # Extract numbers from raw lines
-    df['doc_num'] = df['raw_line'].apply(extract_invoice_number)
-    df['money_found'] = df['raw_line'].str.contains(r'\d+[.,]\d{2}', na=False)
-    df['has_doc'] = df['doc_num'].str.len() > 3
-    df['amount1_num'] = df['amount1'].apply(normalize_number)
-    df['amount2_num'] = df['amount2'].apply(normalize_number)
-    df['has_money'] = (df['amount1_num'] > 0) | (df['amount2_num'] > 0)
-    df['valid'] = df['has_doc'] & df['has_money']
-    
-    return df
+    buf = BytesIO()
+    df.to_excel(buf, index=False)
+    buf.seek(0)
+    return buf
 
 # ==========================================================
-# UI - FULL DEBUG
+# STREAMLIT UI
 # ==========================================================
-uploaded_pdf = st.file_uploader("📂 Upload PDF", type=["pdf"])
+uploaded_pdf = st.file_uploader("📂 Upload Vendor Statement (PDF)", type=["pdf"])
 
 if uploaded_pdf:
-    st.header("🔍 **DEBUG ANALYSIS**")
-    
-    with st.spinner("Extracting ALL lines..."):
+    with st.spinner("📄 Extracting text from all pages..."):
         lines = extract_raw_lines(uploaded_pdf)
-    
-    st.subheader("📄 Raw Lines Found")
-    st.text_area("Sample:", "\n".join(lines[:20]), height=200)
-    st.metric("Total Lines", len(lines))
-    
-    # Show invoice numbers found
-    invoice_lines = [l for l in lines if extract_invoice_number(l)]
-    st.metric("💼 Lines with Invoice #", len(invoice_lines))
-    
-    if st.button("🔬 FULL GPT DEBUG EXTRACTION", type="primary"):
-        with st.spinner("Running GPT on every line..."):
-            raw_data = extract_with_gpt(lines)
-            df = analyze_records(raw_data)
-        
-        st.header("📊 **EXTRACTION RESULTS**")
-        
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("📄 Processed", len(df))
-        with col2:
-            st.metric("💰 Money Found", len(df[df['money_found']]))
-        with col3:
-            st.metric("📱 Invoice # Found", len(df[df['has_doc']]))
-        with col4:
-            st.metric("✅ VALID", len(df[df['valid']]))
-        
-        st.subheader("🔍 DEBUG TABLE - See Everything")
-        st.dataframe(df[['raw_line', 'doc_num', 'amount1', 'amount2', 'has_doc', 'has_money', 'valid']], 
-                    use_container_width=True, height=400)
-        
-        # VALID RECORDS
-        valid_records = df[df['valid'] == True].copy()
-        if not valid_records.empty:
-            st.success(f"🎉 **{len(valid_records)} VALID INVOICES FOUND!**")
-            final_df = valid_records[['doc_num', 'raw_line']].rename(columns={'doc_num': 'Invoice', 'raw_line': 'Description'})
-            st.dataframe(final_df, use_container_width=True)
-            
-            # Download
-            buf = BytesIO()
-            final_df.to_excel(buf, index=False)
-            buf.seek(0)
-            st.download_button("💾 Download", buf.getvalue(), "debug_invoices.xlsx")
-        else:
-            st.error("❌ NO VALID INVOICES - Check DEBUG table above")
-            st.info("👆 Look at 'has_doc' and 'has_money' columns to see what's failing")
 
+    if not lines:
+        st.warning("⚠️ No readable text lines found. Check if the PDF is scanned.")
+    else:
+        st.text_area("📄 Preview (first 25 lines):", "\n".join(lines[:25]), height=250)
+
+        if st.button("🤖 Run Hybrid Extraction"):
+            with st.spinner("Analyzing data with GPT-4o-mini..."):
+                data = extract_with_gpt(lines)
+
+            if not data:
+                st.warning("⚠️ No structured data detected.")
+            else:
+                df = pd.DataFrame(data)
+                st.success(f"✅ Extraction complete — {len(df)} valid records found.")
+                st.dataframe(df, use_container_width=True)
+
+                # Totals
+                try:
+                    total_debit = df["Debit"].apply(pd.to_numeric, errors="coerce").sum()
+                    total_credit = df["Credit"].apply(pd.to_numeric, errors="coerce").sum()
+                    net = round(total_debit - total_credit, 2)
+                    st.markdown(f"**💰 Total Debit:** {total_debit:,.2f} | **Total Credit:** {total_credit:,.2f} | **Net:** {net:,.2f}")
+                except:
+                    pass
+
+                st.download_button(
+                    "⬇️ Download Excel",
+                    data=to_excel_bytes(data),
+                    file_name="vendor_statement_debe_haber.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
 else:
-    st.info("Upload PDF to see FULL DEBUG analysis")
+    st.info("Please upload a vendor statement PDF to begin.")
