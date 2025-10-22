@@ -177,7 +177,7 @@ def style_missing(df):
         axis=1
     )
 # ======================================
-# CORE MATCHING (FIXED WITH STRICT TIER-1)
+# CORE MATCHING (ULTRA-STRICT TIER-1 - EXACT INVOICES ONLY)
 # ======================================
 def match_invoices(erp_df, ven_df):
     matched = []
@@ -278,7 +278,7 @@ def match_invoices(erp_df, ven_df):
     erp_use["__amt"] = erp_use["__amt"].astype(float)
     ven_use["__amt"] = ven_use["__amt"].astype(float)
     
-    # *** FIXED TIER-1: STRICT MATCHING ***
+    # *** ULTRA-STRICT TIER-1: FULL EXACT INVOICE MATCH ONLY ***
     for e_idx, e in erp_use.iterrows():
         e_inv = str(e.get("invoice_erp", "")).strip()
         e_amt = round(float(e["__amt"]), 2)
@@ -292,46 +292,38 @@ def match_invoices(erp_df, ven_df):
             v_amt = round(float(v["__amt"]), 2)
             v_type = v["__doctype"]
             
-            # STRICT CONDITIONS FOR TIER-1
+            # ULTRA-STRICT CONDITIONS FOR TIER-1
             diff = abs(e_amt - v_amt)
             
-            # 1. SAME DOCUMENT TYPE
+            # 1. SAME DOCUMENT TYPE (INV↔INV, CN↔CN)
             if e_type != v_type:
                 continue
-                
-            # 2. EXACT INVOICE MATCH OR EXACT NUMERICAL ENDING
-            exact_match = (e_inv == v_inv)
-            numerical_match = False
             
-            # Extract last numerical part (strict: must be identical length and value)
-            e_nums = re.findall(r'(\d{4,})$', e_inv)
-            v_nums = re.findall(r'(\d{4,})$', v_inv)
-            
-            if e_nums and v_nums and len(e_nums[0]) == len(v_nums[0]):
-                numerical_match = (e_nums[0] == v_nums[0])
+            # 2. FULL EXACT INVOICE MATCH ONLY - NO NUMERICAL PARTIAL MATCHES
+            if e_inv != v_inv:  # ← THIS IS THE ONLY INVOICE MATCH ALLOWED
+                continue
             
             # 3. STRICT AMOUNT TOLERANCE
-            amt_tolerance = 0.01  # Much stricter: €0.01 max difference
+            amt_tolerance = 0.01  # €0.01 max for Perfect Match
             amt_close = diff <= amt_tolerance
             
-            if exact_match or numerical_match:
-                if amt_close:
-                    status = "Perfect Match"
-                elif diff < 1.0:  # Allow small differences for "Difference Match"
-                    status = "Difference Match"
-                else:
-                    continue  # Too big difference - reject
-                
-                matched.append({
-                    "ERP Invoice": e_inv,
-                    "Vendor Invoice": v_inv,
-                    "ERP Amount": e_amt,
-                    "Vendor Amount": v_amt,
-                    "Difference": diff,
-                    "Status": status
-                })
-                used_vendor_rows.add(v_idx)
-                break
+            if amt_close:
+                status = "Perfect Match"
+            elif diff < 1.0:  # €1.00 max for Difference Match
+                status = "Difference Match"
+            else:
+                continue  # Too big difference - reject
+            
+            matched.append({
+                "ERP Invoice": e_inv,
+                "Vendor Invoice": v_inv,
+                "ERP Amount": e_amt,
+                "Vendor Amount": v_amt,
+                "Difference": diff,
+                "Status": status
+            })
+            used_vendor_rows.add(v_idx)
+            break
     
     matched_df = pd.DataFrame(matched)
     
