@@ -582,18 +582,7 @@ if uploaded_erp and uploaded_vendor:
         col1, col2 = st.columns(2)
         with col1:
             st.markdown("### ❌ Not Found in ERP Export 🔴")
-            if not erp_missing.empty:
-                st.dataframe(
-                    style_missing(erp_missing),
-                    use_container_width=True
-                )
-                st.error(f"**{len(erp_missing)} ERP invoices** not found in vendor export")
-            else:
-                st.success("✅ All ERP invoices found in vendor")
-        
-        with col2:
-            st.markdown("### ❌ Not Found in Vendor Export 🔴")
-            if not ven_missing.empty:
+            if not ven_missing.empty:  # VENDOR invoices not in ERP
                 st.dataframe(
                     style_missing(ven_missing),
                     use_container_width=True
@@ -601,6 +590,17 @@ if uploaded_erp and uploaded_vendor:
                 st.error(f"**{len(ven_missing)} vendor invoices** not found in ERP export")
             else:
                 st.success("✅ All vendor invoices found in ERP")
+        
+        with col2:
+            st.markdown("### ❌ Not Found in Vendor Export 🔴")
+            if not erp_missing.empty:  # ERP invoices not in Vendor
+                st.dataframe(
+                    style_missing(erp_missing),
+                    use_container_width=True
+                )
+                st.error(f"**{len(erp_missing)} ERP invoices** not found in vendor export")
+            else:
+                st.success("✅ All ERP invoices found in vendor")
      
         # PAYMENTS WITH COLORS
         st.subheader("🏦 Payment Transactions")
