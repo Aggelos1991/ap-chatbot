@@ -524,7 +524,7 @@ if uploaded_erp and uploaded_vendor:
             st.markdown('<div class="metric-container perfect-match">', unsafe_allow_html=True)
             st.metric("🎯 Perfect Matches", perfect_count, delta=None)
             st.markdown('</div>', unsafe_allow_html=True)
-                with col2:
+        with col2:
             st.markdown('<div class="metric-container difference-match">', unsafe_allow_html=True)
             st.metric("⚠️ Differences", diff_count, delta=None)
             st.markdown('</div>', unsafe_allow_html=True)
