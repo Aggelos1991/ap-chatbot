@@ -486,7 +486,7 @@ def tier2_match(erp_missing, ven_missing):
             v_code = clean_invoice_code(v_inv)
             diff = abs(e_amt - v_amt)
             sim = fuzzy_ratio(e_code, v_code)
-            if sim >= 0.8:
+            if sim >= 0.9:
                 match_info = {
                     "ERP Invoice": e_inv,
                     "Vendor Invoice": v_inv,
