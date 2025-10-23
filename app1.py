@@ -40,6 +40,33 @@ def normalize_number(value):
     except:
         return ""
 
+def is_valid_document_number(doc):
+    """STRICT validation - NO amounts allowed as documents"""
+    doc = str(doc).strip()
+    
+    # BLOCK ALL amounts/decimals
+    if re.search(r"[.,]", doc):
+        return False
+    
+    # Must have 3+ digits
+    if not re.search(r"\d{3,}", doc):
+        return False
+    
+    # Block words that indicate amounts
+    amount_words = ['debe', 'haber', 'saldo', 'total', 'iva', 'concil', 'apertur', 'cierre']
+    if any(word in doc.lower() for word in amount_words):
+        return False
+    
+    # Only allow typical document patterns
+    doc_patterns = [
+        r"^\d{3,}$",  # 12345
+        r"^\d{1,4}[-/]\d{1,4}$",  # 2024/001, 123-45
+        r"^(Nº|Num|Fra|Ref|INV|DOC|ΤΛ|Αρ|Τ/Λ)\s*\d+",  # Nº 123, Fra 456
+        r"^\d{2,4}/\d{1,3}$",  # 24/123
+    ]
+    
+    return any(re.match(pattern, doc, re.IGNORECASE) for pattern in doc_patterns)
+
 def extract_raw_lines(uploaded_pdf):
     all_lines = []
     with pdfplumber.open(uploaded_pdf) as pdf:
@@ -63,20 +90,23 @@ def extract_with_gpt(lines):
         text_block = "\n".join(batch)
         
         prompt = (
-            "Extract ONLY lines that contain DOCUMENT NUMBERS. "
-            "NEVER use DEBE/HABER amounts as document numbers.\n\n"
-            "DOCUMENT = Factura number, Invoice number, Ref number\n\n"
-            "LOOK FOR THESE PATTERNS:\n"
-            "• Nº 12345, Num 678, Factura 001, Fra 2024/001\n"
-            "• Τιμολόγιο 123, Αρ. 456, ΤΛ 789, Παραστατικό 001\n"
-            "• 12345, 2024-001, 24/123, INV001\n\n"
-            "DOCUMENT RULES:\n"
-            "1. Must be 3-12 DIGITS or with prefix (Nº, Fra, ΤΛ)\n"
-            "2. NEVER extract DEBE or HABER amounts (1.234,56 = WRONG)\n"
-            "3. Skip if no clear document identifier\n\n"
-            "For EACH valid document line extract:\n"
-            '{"Alternative Document": "12345", "Date": "01/10/24", "Debit": "1234.56", "Credit": "", "Reason": "Invoice", "Description": "text"}'
-            "\n\nONLY return valid JSON array for lines with DOCUMENTS:\n" + text_block
+            "CRITICAL: ONLY extract lines with CLEAR DOCUMENT NUMBERS.\n"
+            "DOCUMENT = Invoice/Factura number ONLY.\n\n"
+            "VALID DOCUMENTS LOOK LIKE:\n"
+            "• Nº 12345\n"
+            "• Factura 001234\n"
+            "• Fra 2024/001\n"
+            "• Τιμολόγιο 123\n"
+            "• Αρ. 45678\n"
+            "• 2024/123\n\n"
+            "NEVER extract:\n"
+            "• DEBE amounts: 1.234,56 ❌\n"
+            "• HABER amounts: 987,65 ❌\n"
+            "• 123 (too short) ❌\n"
+            "• Lines with 'saldo', 'total', 'iva' ❌\n\n"
+            "For EACH VALID DOCUMENT line:\n"
+            '{"Alternative Document": "12345", "Date": "", "Debit": "1234.56", "Credit": "", "Reason": "Invoice", "Description": "Factura"}'
+            "\n\nONLY return JSON for lines with DOCUMENTS:\n" + text_block
         )
         
         try:
@@ -101,21 +131,8 @@ def extract_with_gpt(lines):
         for row in data:
             alt_doc = str(row.get("Alternative Document", "")).strip()
             
-            # STRICT document validation
-            if not alt_doc:
-                continue
-                
-            # Must have digits AND be reasonable document length
-            if not re.search(r"\d{3,}", alt_doc):
-                continue
-                
-            # NEVER allow decimal amounts as documents
-            if re.search(r"[.,]\d{2}$", alt_doc):
-                continue
-                
-            # Block common exclusion words
-            exclude_words = ['concil', 'total', 'saldo', 'iva', 'apertur', 'cierre']
-            if any(word in alt_doc.lower() for word in exclude_words):
+            # 🔥 ULTRA-STRICT DOCUMENT VALIDATION
+            if not is_valid_document_number(alt_doc):
                 continue
             
             debit_val = normalize_number(row.get("Debit"))
@@ -123,12 +140,12 @@ def extract_with_gpt(lines):
             reason = row.get("Reason", "Invoice").strip()
             
             # Handle negatives
-            if debit_val and isinstance(debit_val, (int, float)) and debit_val < 0:
-                credit_val = abs(debit_val)
+            if debit_val and float(debit_val) < 0:
+                credit_val = abs(float(debit_val))
                 debit_val = ""
                 reason = "Credit Note"
-            elif credit_val and isinstance(credit_val, (int, float)) and credit_val < 0:
-                debit_val = abs(credit_val)
+            elif credit_val and float(credit_val) < 0:
+                debit_val = abs(float(credit_val))
                 credit_val = ""
                 reason = "Invoice"
             
@@ -168,7 +185,7 @@ if uploaded_pdf:
                 
                 if data:
                     df = pd.DataFrame(data)
-                    st.success(f"✅ {len(df)} documents extracted!")
+                    st.success(f"✅ {len(df)} VALID documents extracted!")
                     st.dataframe(df, use_container_width=True, hide_index=True)
                     
                     df_num = df.copy()
@@ -191,7 +208,7 @@ if uploaded_pdf:
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
                 else:
-                    st.warning("⚠️ No valid documents found. Check preview for document numbers.")
+                    st.warning("⚠️ No VALID documents found. Check preview - looking for Nº 12345, Factura 001234, etc.")
         
         with col2:
             st.metric("Lines", len(lines))
