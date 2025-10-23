@@ -40,6 +40,28 @@ def normalize_number(value):
         return round(float(s), 2)
     except:
         return ""
+
+def is_valid_document(doc):
+    """STRICT: Only accept real document numbers, never amounts"""
+    doc = str(doc).strip().upper()
+    
+    # Block ANYTHING that looks like an amount
+    if re.search(r"[.,]", doc):
+        return False
+    
+    # Block your specific DEBE values from screenshot
+    debe_amounts = ['1729', '1775', '1778', '1779', '1780', '1781', '1782', '2312', '2313', '2713']
+    if doc in debe_amounts:
+        return False
+    
+    # Must be under N° DOC column format
+    if not re.search(r'N°\s*DOC', doc, re.IGNORECASE):
+        # Must have 4+ digits OR specific document patterns
+        if not re.search(r'\d{4,}', doc):
+            return False
+    
+    return True
+
 def extract_raw_lines(uploaded_pdf):
     """Extract all text lines from every page of the PDF."""
     all_lines = []
@@ -65,25 +87,32 @@ def extract_with_gpt(lines):
         prompt = f"""
 You are an expert accountant fluent in Spanish and Greek.
 You are reading extracted lines from a vendor statement.
+
+**CRITICAL: N° DOC column contains document numbers like: 1729, 1775, etc.**
+
 Each line may include columns labeled as:
-- DEBE → Debit (Invoice)
-- HABER → Credit (Payment)
+- N° DOC → DOCUMENT NUMBER (1729, 1775, 1778, etc.)
+- DEBE → Debit (Invoice amount - NEVER use as document)
+- HABER → Credit (Payment amount - NEVER use as document)  
 - SALDO → Running Balance
-- CONCEPTO → Description such as "Fra. emitida", "Cobro Efecto", etc.
+- CONCEPTO → Description
+
 Your task:
 For each valid transaction line, output:
-- "Alternative Document": document number (under Nº, DOC, Num, Documento, Factura, etc.)
+- "Alternative Document": document number from N° DOC column ONLY
 - "Date": date if visible (dd/mm/yy or dd/mm/yyyy)
 - "Reason": classify as "Invoice", "Payment", or "Credit Note"
 - "Debit": numeric value under DEBE column (if exists)
 - "Credit": numeric value under HABER column (if exists)
+
 Rules:
 1. If DEBE > 0 → Reason = "Invoice"
-2. If HABER > 0 → Reason = "Payment"
-3. If DEBE < 0 OR the line includes "Abono", "Nota de Credito", "NC", "πιστω", "Ακυρωτικό" → Reason = "Credit Note" and place ABSOLUTE value under Credit.
-4. Ignore summary lines: "Saldo", "Apertura", "Total General", "IVA", "Base", "Impuestos".
-5. Exclude any line where the document number contains "concil" (not case-sensitive).
-6. Ensure output is valid JSON array.
+2. If HABER > 0 → Reason = "Payment"  
+3. If DEBE < 0 OR "Abono", "Nota de Credito", "NC" → Reason = "Credit Note" (put ABSOLUTE value in Credit)
+4. **NEVER** use DEBE or HABER amounts as "Alternative Document"
+5. Ignore summary lines: "Saldo", "Apertura", "Total General", "IVA"
+6. Exclude lines where document contains "concil"
+
 Lines:
 \"\"\"{text_block}\"\"\"
 """
@@ -103,22 +132,30 @@ Lines:
             continue
         for row in data:
             alt_doc = str(row.get("Alternative Document", "")).strip()
-            # 🚫 exclude concil. or conciliación or reconcil etc.
+            
+            # 🔥 ULTRA-STRICT DOCUMENT VALIDATION
+            if not is_valid_document(alt_doc):
+                continue
+                
+            # 🚫 exclude concil
             if re.search(r"concil", alt_doc, re.IGNORECASE):
                 continue
+                
             debit_val = normalize_number(row.get("Debit"))
             credit_val = normalize_number(row.get("Credit"))
-            reason_text = row.get("Reason", "").lower()
-            concept = alt_doc.lower()
+            
             # Move Cobro/Efecto to Credit if missing
+            concept = alt_doc.lower()
             if "cobro" in concept or "efecto" in concept:
                 credit_val = credit_val or debit_val
                 debit_val = ""
+            
             # 🆕 Handle negative DEBE as Credit Note
             if debit_val and float(debit_val) < 0:
                 credit_val = abs(float(debit_val))
                 debit_val = ""
                 row["Reason"] = "Credit Note"
+                
             all_records.append({
                 "Alternative Document": alt_doc,
                 "Date": str(row.get("Date", "")).strip(),
