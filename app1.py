@@ -41,129 +41,105 @@ def normalize_number(value):
     except:
         return ""
 
-def is_valid_document(doc):
-    """STRICT: Only accept real document numbers, never amounts"""
-    doc = str(doc).strip().upper()
-    
-    # Block ANYTHING that looks like an amount
-    if re.search(r"[.,]", doc):
-        return False
-    
-    # Block your specific DEBE values from screenshot
-    debe_amounts = ['1729', '1775', '1778', '1779', '1780', '1781', '1782', '2312', '2313', '2713']
-    if doc in debe_amounts:
-        return False
-    
-    # Must be under N° DOC column format
-    if not re.search(r'N°\s*DOC', doc, re.IGNORECASE):
-        # Must have 4+ digits OR specific document patterns
-        if not re.search(r'\d{4,}', doc):
-            return False
-    
-    return True
-
 def extract_raw_lines(uploaded_pdf):
-    """Extract all text lines from every page of the PDF."""
+    """Extract ALL text lines from every page of the PDF."""
     all_lines = []
     with pdfplumber.open(uploaded_pdf) as pdf:
         for page in pdf.pages:
             text = page.extract_text()
             if not text:
                 continue
+            # Extract ALL lines, not just ones with money amounts
             for line in text.split("\n"):
-                if re.search(r"\d{1,3}(?:[.,]\d{3})*[.,]\d{2}", line):
-                    all_lines.append(" ".join(line.split()))
+                clean_line = " ".join(line.split())
+                if clean_line.strip():
+                    all_lines.append(clean_line)
     return all_lines
+
 # ==========================================================
-# GPT EXTRACTOR — detect DEBE & HABER columns explicitly
+# GPT EXTRACTOR — SIMPLIFIED & ROBUST
 # ==========================================================
 def extract_with_gpt(lines):
     """Use GPT to detect Debit (DEBE) and Credit (HABER) from vendor statements."""
-    BATCH_SIZE = 150
+    BATCH_SIZE = 100
     all_records = []
+    
     for i in range(0, len(lines), BATCH_SIZE):
         batch = lines[i:i + BATCH_SIZE]
         text_block = "\n".join(batch)
-        prompt = f"""
-You are an expert accountant fluent in Spanish and Greek.
-You are reading extracted lines from a vendor statement.
+        
+        prompt = f"""Extract accounting transactions from this text.
 
-**CRITICAL: N° DOC column contains document numbers like: 1729, 1775, etc.**
+Look for columns: N° DOC, DEBE, HABER, CONCEPTO
 
-Each line may include columns labeled as:
-- N° DOC → DOCUMENT NUMBER (1729, 1775, 1778, etc.)
-- DEBE → Debit (Invoice amount - NEVER use as document)
-- HABER → Credit (Payment amount - NEVER use as document)  
-- SALDO → Running Balance
-- CONCEPTO → Description
+For each transaction line, return:
+{{"Alternative Document": "document number from N° DOC", 
+  "Date": "dd/mm/yy", 
+  "Reason": "Invoice", 
+  "Debit": "amount from DEBE", 
+  "Credit": "amount from HABER"}}
 
-Your task:
-For each valid transaction line, output:
-- "Alternative Document": document number from N° DOC column ONLY
-- "Date": date if visible (dd/mm/yy or dd/mm/yyyy)
-- "Reason": classify as "Invoice", "Payment", or "Credit Note"
-- "Debit": numeric value under DEBE column (if exists)
-- "Credit": numeric value under HABER column (if exists)
+Examples:
+N° DOC 1729 → "Alternative Document": "1729"
+DEBE 1.234,56 → "Debit": "1234.56"
 
-Rules:
-1. If DEBE > 0 → Reason = "Invoice"
-2. If HABER > 0 → Reason = "Payment"  
-3. If DEBE < 0 OR "Abono", "Nota de Credito", "NC" → Reason = "Credit Note" (put ABSOLUTE value in Credit)
-4. **NEVER** use DEBE or HABER amounts as "Alternative Document"
-5. Ignore summary lines: "Saldo", "Apertura", "Total General", "IVA"
-6. Exclude lines where document contains "concil"
+Return ONLY valid JSON array, even if empty: []
 
-Lines:
-\"\"\"{text_block}\"\"\"
-"""
+Text:
+{text_block}"""
+        
         try:
             response = client.chat.completions.create(
                 model=MODEL,
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0.1
+                temperature=0.0
             )
             content = response.choices[0].message.content.strip()
-            json_match = re.search(r"\[.*\]", content, re.DOTALL)
+            
+            # Debug: show what GPT returned
+            st.text_area(f"GPT Response Batch {i//BATCH_SIZE + 1}:", content, height=200, key=f"debug_{i}")
+            
+            # More flexible JSON extraction
+            json_match = re.search(r'\[.*\]', content, re.DOTALL)
             if not json_match:
-                continue
-            data = json.loads(json_match.group(0))
+                # Try to find any JSON array
+                json_match = re.search(r'(\[.*?\])', content, re.DOTALL)
+            
+            if json_match:
+                json_str = json_match.group(0)
+                data = json.loads(json_str)
+                
+                for row in data:
+                    alt_doc = str(row.get("Alternative Document", "")).strip()
+                    
+                    # Skip if no document or contains bad words
+                    if not alt_doc or re.search(r"concil|saldo|total|iva", alt_doc, re.IGNORECASE):
+                        continue
+                    
+                    debit_val = normalize_number(row.get("Debit"))
+                    credit_val = normalize_number(row.get("Credit"))
+                    
+                    # Handle negative DEBE as Credit Note
+                    if debit_val and float(debit_val) < 0:
+                        credit_val = abs(float(debit_val))
+                        debit_val = ""
+                    
+                    all_records.append({
+                        "Alternative Document": alt_doc,
+                        "Date": str(row.get("Date", "")).strip(),
+                        "Reason": row.get("Reason", "Invoice").strip(),
+                        "Debit": debit_val,
+                        "Credit": credit_val
+                    })
+            else:
+                st.warning(f"No JSON found in batch {i//BATCH_SIZE + 1}")
+                
         except Exception as e:
-            st.warning(f"⚠️ GPT failed on batch {i//BATCH_SIZE + 1}: {e}")
+            st.warning(f"GPT error batch {i//BATCH_SIZE + 1}: {e}")
             continue
-        for row in data:
-            alt_doc = str(row.get("Alternative Document", "")).strip()
-            
-            # 🔥 ULTRA-STRICT DOCUMENT VALIDATION
-            if not is_valid_document(alt_doc):
-                continue
-                
-            # 🚫 exclude concil
-            if re.search(r"concil", alt_doc, re.IGNORECASE):
-                continue
-                
-            debit_val = normalize_number(row.get("Debit"))
-            credit_val = normalize_number(row.get("Credit"))
-            
-            # Move Cobro/Efecto to Credit if missing
-            concept = alt_doc.lower()
-            if "cobro" in concept or "efecto" in concept:
-                credit_val = credit_val or debit_val
-                debit_val = ""
-            
-            # 🆕 Handle negative DEBE as Credit Note
-            if debit_val and float(debit_val) < 0:
-                credit_val = abs(float(debit_val))
-                debit_val = ""
-                row["Reason"] = "Credit Note"
-                
-            all_records.append({
-                "Alternative Document": alt_doc,
-                "Date": str(row.get("Date", "")).strip(),
-                "Reason": row.get("Reason", "").strip(),
-                "Debit": debit_val,
-                "Credit": credit_val
-            })
+    
     return all_records
+
 # ==========================================================
 # EXPORT
 # ==========================================================
@@ -173,39 +149,50 @@ def to_excel_bytes(records):
     df.to_excel(buf, index=False)
     buf.seek(0)
     return buf
+
 # ==========================================================
 # STREAMLIT UI
 # ==========================================================
 uploaded_pdf = st.file_uploader("📂 Upload Vendor Statement (PDF)", type=["pdf"])
+
 if uploaded_pdf:
     with st.spinner("📄 Extracting text from all pages..."):
         lines = extract_raw_lines(uploaded_pdf)
-    if not lines:
-        st.warning("⚠️ No readable text lines found. Check if the PDF is scanned.")
-    else:
-        st.text_area("📄 Preview (first 25 lines):", "\n".join(lines[:25]), height=250)
-        if st.button("🤖 Run Hybrid Extraction"):
-            with st.spinner("Analyzing data with GPT-4o-mini..."):
-                data = extract_with_gpt(lines)
-            if not data:
-                st.warning("⚠️ No structured data detected.")
-            else:
-                df = pd.DataFrame(data)
-                st.success(f"✅ Extraction complete — {len(df)} valid records found.")
-                st.dataframe(df, use_container_width=True)
-                # Totals
-                try:
-                    total_debit = df["Debit"].apply(pd.to_numeric, errors="coerce").sum()
-                    total_credit = df["Credit"].apply(pd.to_numeric, errors="coerce").sum()
-                    net = round(total_debit - total_credit, 2)
-                    st.markdown(f"**💰 Total Debit:** {total_debit:,.2f} | **Total Credit:** {total_credit:,.2f} | **Net:** {net:,.2f}")
-                except:
-                    pass
-                st.download_button(
-                    "⬇️ Download Excel",
-                    data=to_excel_bytes(data),
-                    file_name="vendor_statement_debe_haber.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                )
+    
+    st.success(f"✅ Found {len(lines)} lines of text!")
+    st.text_area("📄 Preview (first 30 lines):", "\n".join(lines[:30]), height=300)
+    
+    if st.button("🤖 Run Hybrid Extraction", type="primary"):
+        with st.spinner("Analyzing with GPT-4o-mini..."):
+            data = extract_with_gpt(lines)
+        
+        if data:
+            df = pd.DataFrame(data)
+            st.success(f"✅ Extraction complete — {len(df)} valid records found!")
+            st.dataframe(df, use_container_width=True, hide_index=True)
+            
+            # Totals
+            try:
+                total_debit = df["Debit"].apply(pd.to_numeric, errors="coerce").sum()
+                total_credit = df["Credit"].apply(pd.to_numeric, errors="coerce").sum()
+                net = round(total_debit - total_credit, 2)
+                
+                col1, col2, col3 = st.columns(3)
+                col1.metric("💰 Total Debit", f"{total_debit:,.2f}")
+                col2.metric("💳 Total Credit", f"{total_credit:,.2f}")
+                col3.metric("⚖️ Net", f"{net:,.2f}")
+                
+            except Exception as e:
+                st.error(f"Totals error: {e}")
+            
+            st.download_button(
+                "⬇️ Download Excel",
+                data=to_excel_bytes(data),
+                file_name=f"vendor_statement_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+        else:
+            st.warning("⚠️ No structured data detected. Check GPT responses above.")
+
 else:
     st.info("Please upload a vendor statement PDF to begin.")
