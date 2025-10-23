@@ -87,7 +87,6 @@ def clean_invoice_code_strict(v):
     if not v:
         return ""
     s = str(v).strip().lower()
-    # Remove special characters, years (e.g., 20xx), slashes, and spaces
     s = re.sub(r"[^a-z0-9]", "", s)  # Keep only alphanumeric
     s = re.sub(r"20\d{2}", "", s)    # Remove year patterns like 2023
     s = re.sub(r"^\D+", "", s)       # Remove leading non-numeric characters
@@ -422,7 +421,7 @@ def strict_match_unmatched(erp_missing, ven_missing):
     erp_missing['Cleaned_Invoice'] = erp_missing['Invoice'].apply(clean_invoice_code_strict)
     ven_missing['Cleaned_Invoice'] = ven_missing['Invoice'].apply(clean_invoice_code_strict)
     
-    # Create dictionaries for quick lookup
+    # Create dictionaries mapping cleaned invoices to their indices
     erp_dict = dict(zip(erp_missing['Cleaned_Invoice'], erp_missing.index))
     ven_dict = dict(zip(ven_missing['Cleaned_Invoice'], ven_missing.index))
     
@@ -435,7 +434,7 @@ def strict_match_unmatched(erp_missing, ven_missing):
             continue
         if cleaned_erp in ven_dict:
             idx_ven = ven_dict[cleaned_erp]
-            if idx_ven not in used_ven_indices:
+            if 0 <= idx_ven < len(ven_missing) and idx_ven not in used_ven_indices:
                 erp_row = erp_missing.iloc[idx_erp]
                 ven_row = ven_missing.iloc[idx_ven]
                 diff = abs(erp_row['Amount'] - ven_row['Amount'])
@@ -708,7 +707,7 @@ if uploaded_erp and uploaded_vendor:
                 'Fuzzy Score': [f"{len(tier2_display)} MATCHES"]
             })
             tier2_with_total = pd.concat([tier2_display, total_row_tier2], ignore_index=True)
-            st.dataframe(tier2_with_totals, use_container_width=True)
+            st.dataframe(tier2_with_total, use_container_width=True)
         
         # ======================================
         # TIER-2 AMOUNT DIFF MATCHES
