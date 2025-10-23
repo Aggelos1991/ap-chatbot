@@ -47,13 +47,15 @@ def extract_raw_lines(uploaded_pdf):
             text = page.extract_text()
             if not text:
                 continue
-            for line in text.split("\n"):
-                if re.search(r"\d{1,3}(?:[.,]\d{3})*[.,]?\d{0,2}", line):
-                    all_lines.append(" ".join(line.split()))
+            lines = text.split("\n")
+            for line in lines:
+                clean_line = " ".join(line.split())
+                if clean_line.strip():
+                    all_lines.append(clean_line)
     return all_lines
 
 def extract_with_gpt(lines):
-    BATCH_SIZE = 100
+    BATCH_SIZE = 50
     all_records = []
     
     for i in range(0, len(lines), BATCH_SIZE):
@@ -61,27 +63,20 @@ def extract_with_gpt(lines):
         text_block = "\n".join(batch)
         
         prompt = (
-            "You are extracting accounting transactions from vendor statements. "
-            "CRITICAL: Find EVERY document number accurately.\n\n"
-            "DOCUMENT NUMBERS appear as:\n"
-            "Spanish: Nº 12345, Num. 678, Factura 001234, Fra 2024/001, Ref 456, Documento 789\n"
-            "Greek: Τιμολόγιο 12345, Αρ. 67890, ΤΛ 001, Παραστατικό 456\n"
-            "Numbers: 123, 12345, 2024-001, 24/001, 001234\n\n"
-            "For EACH transaction line with a document number, extract:\n"
-            "1. Alternative Document: EXACT document number ONLY (12345, FRA001, ΤΛ678)\n"
-            "2. Date: dd/mm/yy or dd/mm/yyyy\n"
-            "3. Debit: number from DEBE column (keep negative if present)\n"
-            "4. Credit: number from HABER column (keep negative if present)\n"
-            "5. Reason: Invoice, Payment, or Credit Note\n"
-            "6. Description: short text\n\n"
-            "Rules:\n"
-            "- DEBE > 0 = Invoice\n"
-            "- HABER > 0 = Payment\n"
-            "- DEBE < 0 or NC = Credit Note\n"
-            "- NEVER extract lines with 'concil', 'total', 'saldo', 'iva'\n\n"
-            "Return ONLY JSON array:\n"
-            '[{"Alternative Document":"12345","Date":"01/10/24","Debit":"1234.56","Credit":"","Reason":"Invoice","Description":"Factura emitida"}]'
-            "\n\nText:\n" + text_block
+            "Extract ONLY lines that contain DOCUMENT NUMBERS. "
+            "NEVER use DEBE/HABER amounts as document numbers.\n\n"
+            "DOCUMENT = Factura number, Invoice number, Ref number\n\n"
+            "LOOK FOR THESE PATTERNS:\n"
+            "• Nº 12345, Num 678, Factura 001, Fra 2024/001\n"
+            "• Τιμολόγιο 123, Αρ. 456, ΤΛ 789, Παραστατικό 001\n"
+            "• 12345, 2024-001, 24/123, INV001\n\n"
+            "DOCUMENT RULES:\n"
+            "1. Must be 3-12 DIGITS or with prefix (Nº, Fra, ΤΛ)\n"
+            "2. NEVER extract DEBE or HABER amounts (1.234,56 = WRONG)\n"
+            "3. Skip if no clear document identifier\n\n"
+            "For EACH valid document line extract:\n"
+            '{"Alternative Document": "12345", "Date": "01/10/24", "Debit": "1234.56", "Credit": "", "Reason": "Invoice", "Description": "text"}'
+            "\n\nONLY return valid JSON array for lines with DOCUMENTS:\n" + text_block
         )
         
         try:
@@ -92,25 +87,35 @@ def extract_with_gpt(lines):
             )
             content = response.choices[0].message.content.strip()
             
-            # Extract JSON more reliably
             json_start = content.find('[')
             json_end = content.rfind(']') + 1
-            if json_start != -1 and json_end > json_start:
-                json_str = content[json_start:json_end]
-                data = json.loads(json_str)
-            else:
+            if json_start == -1 or json_end <= json_start:
                 continue
                 
+            json_str = content[json_start:json_end]
+            data = json.loads(json_str)
+            
         except:
             continue
         
         for row in data:
             alt_doc = str(row.get("Alternative Document", "")).strip()
             
-            if not alt_doc or not re.search(r"\d", alt_doc):
+            # STRICT document validation
+            if not alt_doc:
                 continue
-            
-            if re.search(r"concil|total|saldo|iva|apertur|cierre", alt_doc, re.IGNORECASE):
+                
+            # Must have digits AND be reasonable document length
+            if not re.search(r"\d{3,}", alt_doc):
+                continue
+                
+            # NEVER allow decimal amounts as documents
+            if re.search(r"[.,]\d{2}$", alt_doc):
+                continue
+                
+            # Block common exclusion words
+            exclude_words = ['concil', 'total', 'saldo', 'iva', 'apertur', 'cierre']
+            if any(word in alt_doc.lower() for word in exclude_words):
                 continue
             
             debit_val = normalize_number(row.get("Debit"))
@@ -118,12 +123,12 @@ def extract_with_gpt(lines):
             reason = row.get("Reason", "Invoice").strip()
             
             # Handle negatives
-            if debit_val and float(debit_val) < 0:
-                credit_val = abs(float(debit_val))
+            if debit_val and isinstance(debit_val, (int, float)) and debit_val < 0:
+                credit_val = abs(debit_val)
                 debit_val = ""
                 reason = "Credit Note"
-            elif credit_val and float(credit_val) < 0:
-                debit_val = abs(float(credit_val))
+            elif credit_val and isinstance(credit_val, (int, float)) and credit_val < 0:
+                debit_val = abs(credit_val)
                 credit_val = ""
                 reason = "Invoice"
             
@@ -153,17 +158,17 @@ if uploaded_pdf:
     if not lines:
         st.warning("⚠️ No readable text found.")
     else:
-        st.text_area("📄 Preview:", "\n".join(lines[:25]), height=250)
+        st.text_area("📄 Preview:", "\n".join(lines[:30]), height=300)
         
         col1, col2 = st.columns([3,1])
         with col1:
             if st.button("🤖 Extract Documents", type="primary"):
-                with st.spinner("🔍 Analyzing..."):
+                with st.spinner("🔍 Finding documents..."):
                     data = extract_with_gpt(lines)
                 
                 if data:
                     df = pd.DataFrame(data)
-                    st.success(f"✅ {len(df)} records extracted!")
+                    st.success(f"✅ {len(df)} documents extracted!")
                     st.dataframe(df, use_container_width=True, hide_index=True)
                     
                     df_num = df.copy()
@@ -182,14 +187,14 @@ if uploaded_pdf:
                     st.download_button(
                         "⬇️ Download Excel",
                         data=to_excel_bytes(data),
-                        file_name=f"extraction_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                        file_name=f"documents_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
                 else:
-                    st.warning("⚠️ No documents found.")
+                    st.warning("⚠️ No valid documents found. Check preview for document numbers.")
         
         with col2:
             st.metric("Lines", len(lines))
 
 else:
-    st.info("👆 Upload PDF to extract documents")
+    st.info("👆 Upload PDF")
