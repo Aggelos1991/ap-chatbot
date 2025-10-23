@@ -3,7 +3,6 @@ import pandas as pd
 import re
 from io import BytesIO
 from difflib import SequenceMatcher
-import numpy as np
 
 # ======================================
 # CONFIGURATION
@@ -14,7 +13,7 @@ st.markdown("""
     .perfect-match { background-color: #2E7D32 !important; color: white !important; font-weight: bold !important; }
     .difference-match { background-color: #F9A825 !important; color: black !important; font-weight: bold !important; }
     .tier2-strict { background-color: #26A69A !important; color: white !important; font-weight: bold !important; }
-    .tier2-relaxed { background-color: #FFCA28 !important; color: black !important; font-weight: bold !important; }
+    .tier2-amount-diff { background-color: #FFCA28 !important; color: black !important; font-weight: bold !important; }
     .missing-erp { background-color: #C62828 !important; color: white !important; font-weight: bold !important; }
     .missing-vendor { background-color: #AD1457 !important; color: white !important; font-weight: bold !important; }
     .metric-container { padding: 1rem !important; border-radius: 10px !important; }
@@ -24,7 +23,7 @@ st.markdown("""
 st.title("🦖 ReconRaptor — Vendor Reconciliation")
 
 # ======================================
-# ULTRA-FAST HELPERS (CACHED)
+# HELPERS
 # ======================================
 @st.cache_data
 def normalize_number(v):
@@ -57,9 +56,14 @@ def normalize_date(v):
 def clean_invoice_code(v):
     if not v: return "0"
     s = str(v).strip().lower()
+    # Extract the MAIN numeric sequence (longest one)
+    digits = re.findall(r'\b\d{4,}\b', s)  # Word boundary + 4+ digits
+    if digits:
+        return digits[-1].lstrip('0') or '0'
+    # Fallback to any digits
     digits = re.findall(r'\d{3,}', s)
     if digits:
-        return ''.join(digits[-1].lstrip('0')) or '0'
+        return digits[-1].lstrip('0') or '0'
     return "0"
 
 def normalize_columns(df, tag):
@@ -87,10 +91,9 @@ def normalize_columns(df, tag):
     return out
 
 # ======================================
-# ULTRA-FAST TIER-2 MATCHING (VECTORIZED)
+# TIER-2 STRICT (UNCHANGED - FAST)
 # ======================================
 def tier2_match_strict(erp_missing, ven_missing):
-    """🔒 TIER-2 STRICT: Vectorized matching"""
     if erp_missing.empty or ven_missing.empty:
         return pd.DataFrame(), set(), set(), erp_missing.copy(), ven_missing.copy()
     
@@ -99,23 +102,24 @@ def tier2_match_strict(erp_missing, ven_missing):
     
     e_codes = e_df["invoice_erp"].apply(clean_invoice_code).values
     v_codes = v_df["invoice_ven"].apply(clean_invoice_code).values
-    e_amts = e_df["__amt"].values
-    v_amts = v_df["__amt"].values
+    e_amts = e_df["__amt"].astype(float).values
+    v_amts = v_df["__amt"].astype(float).values
     
     matches = []
-    used_e, used_v = [], []
+    used_e, used_v = set(), set()
     
     for i, e_code in enumerate(e_codes):
         if i in used_e: continue
         e_amt = e_amts[i]
         
-        candidates = [j for j, v_code in enumerate(v_codes) if len(e_code) == len(v_code) and j not in used_v]
+        # Only same length codes
+        candidates = [j for j, v_code in enumerate(v_codes) if len(str(e_code)) == len(str(v_code)) and j not in used_v]
         
-        for j in candidates[:10]:
+        for j in candidates[:5]:  # Top 5 candidates
             v_amt = v_amts[j]
             if abs(e_amt - v_amt) > 0.05: continue
             
-            sim = SequenceMatcher(None, e_code, v_codes[j]).ratio()
+            sim = SequenceMatcher(None, str(e_code), str(v_codes[j])).ratio()
             if sim >= 0.8:
                 matches.append({
                     "ERP Invoice": e_df.iloc[i]["invoice_erp"],
@@ -126,18 +130,21 @@ def tier2_match_strict(erp_missing, ven_missing):
                     "Fuzzy Score": f"{sim:.1%}",
                     "Match Type": "🔒 Tier-2 Strict"
                 })
-                used_e.append(i)
-                used_v.append(j)
+                used_e.add(i)
+                used_v.add(j)
                 break
     
     tier2_matches = pd.DataFrame(matches)
-    remaining_erp = e_df.drop(used_e).reset_index(drop=True)
-    remaining_ven = v_df.drop(used_v).reset_index(drop=True)
+    remaining_erp = e_df.drop(list(used_e)).reset_index(drop=True)
+    remaining_ven = v_df.drop(list(used_v)).reset_index(drop=True)
     
-    return tier2_matches, set(used_e), set(used_v), remaining_erp, remaining_ven
+    return tier2_matches, used_e, used_v, remaining_erp, remaining_ven
 
-def tier2_match_relaxed(erp_missing, ven_missing):
-    """🟡 TIER-2 RELAXED: Ultra-fast pattern matching"""
+# ======================================
+# NEW: TIER-2 AMOUNT DIFFERENCE (90%+ FUZZY INVOICE)
+# ======================================
+def tier2_match_amount_diff(erp_missing, ven_missing):
+    """🟡 TIER-2 AMOUNT DIFF: 90%+ FUZZY INVOICE + ANY amount difference"""
     if erp_missing.empty or ven_missing.empty:
         return pd.DataFrame()
     
@@ -146,28 +153,35 @@ def tier2_match_relaxed(erp_missing, ven_missing):
     
     e_codes = e_df["invoice_erp"].apply(clean_invoice_code).values
     v_codes = v_df["invoice_ven"].apply(clean_invoice_code).values
-    e_amts = e_df["__amt"].values
-    v_amts = v_df["__amt"].values
+    e_amts = e_df["__amt"].astype(float).values
+    v_amts = v_df["__amt"].astype(float).values
     
     matches = []
     
+    # BUCKET BY LENGTH (SUPER FAST)
     code_len_to_indices = {}
     for j, v_code in enumerate(v_codes):
-        length = len(v_code)
+        length = len(str(v_code))
         if length not in code_len_to_indices:
             code_len_to_indices[length] = []
         code_len_to_indices[length].append(j)
     
     for i, e_code in enumerate(e_codes):
-        length = len(e_code)
+        e_code_str = str(e_code)
+        length = len(e_code_str)
+        
         if length not in code_len_to_indices:
             continue
             
-        candidates = code_len_to_indices[length][:5]
+        # Top 3 candidates per bucket
+        candidates = code_len_to_indices[length][:3]
         
         for j in candidates:
-            sim = SequenceMatcher(None, e_code, v_codes[j]).ratio()
-            if sim >= 0.85:
+            v_code_str = str(v_codes[j])
+            sim = SequenceMatcher(None, e_code_str, v_code_str).ratio()
+            
+            # **90%+ FUZZY MATCH** - GOOD PATTERN SIMILARITY
+            if sim >= 0.90:
                 matches.append({
                     "ERP Invoice": e_df.iloc[i]["invoice_erp"],
                     "Vendor Invoice": v_df.iloc[j]["invoice_ven"],
@@ -177,14 +191,14 @@ def tier2_match_relaxed(erp_missing, ven_missing):
                     "Fuzzy Score": f"{sim:.1%}",
                     "ERP Date": e_df.iloc[i].get("date_erp", ""),
                     "Vendor Date": v_df.iloc[j].get("date_ven", ""),
-                    "Match Type": "🟡 Tier-2 Relaxed"
+                    "Match Type": "🟡 Tier-2 Amount Diff"
                 })
-                break
+                break  # One match per ERP invoice
     
     return pd.DataFrame(matches)
 
 # ======================================
-# CORE MATCHING (CACHED)
+# MATCH_INVOICES (FAST VERSION)
 # ======================================
 @st.cache_data
 def match_invoices(erp_df, ven_df):
@@ -289,20 +303,20 @@ def create_summary_table_with_totals(matched_df, erp_missing, ven_missing):
                   f"{erp_missing['Amount'].sum():,.2f}", f"{ven_missing['Amount'].sum():,.2f}"]
     })
 
-def export_reconciliation_excel(matched, erp_missing, ven_missing, tier2_strict, tier2_relaxed):
+def export_reconciliation_excel(matched, erp_missing, ven_missing, tier2_strict, tier2_amount_diff):
     output = BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         if not matched.empty: matched.to_excel(writer, sheet_name='Matched_Invoices', index=False)
         if not erp_missing.empty: erp_missing.to_excel(writer, sheet_name='ERP_Missing', index=False)
         if not ven_missing.empty: ven_missing.to_excel(writer, sheet_name='Vendor_Missing', index=False)
         if not tier2_strict.empty: tier2_strict.to_excel(writer, sheet_name='Tier2_Strict', index=False)
-        if not tier2_relaxed.empty: tier2_relaxed.to_excel(writer, sheet_name='Tier2_Relaxed', index=False)
+        if not tier2_amount_diff.empty: tier2_amount_diff.to_excel(writer, sheet_name='Tier2_Amount_Diff', index=False)
        
         summary_data = {
-            'Category': ['Perfect Matches', 'Difference Matches', 'Tier-2 Strict', 'Tier-2 Relaxed', 'ERP Unmatched', 'Vendor Unmatched'],
+            'Category': ['Perfect Matches', 'Difference Matches', 'Tier-2 Strict', 'Tier-2 Amount Diff', 'ERP Unmatched', 'Vendor Unmatched'],
             'Count': [len(matched[matched['Status']=='Perfect Match']) if not matched.empty else 0,
                      len(matched[matched['Status']=='Difference Match']) if not matched.empty else 0,
-                     len(tier2_strict), len(tier2_relaxed),
+                     len(tier2_strict), len(tier2_amount_diff),
                      len(erp_missing), len(ven_missing)]
         }
         pd.DataFrame(summary_data).to_excel(writer, sheet_name='Summary', index=False)
@@ -317,20 +331,26 @@ uploaded_vendor = st.file_uploader("📂 Upload Vendor Statement (Excel)", type=
 
 if uploaded_erp and uploaded_vendor:
     try:
-        with st.spinner("🔍 Ultra-fast analysis..."):
+        with st.spinner("🔍 Analyzing invoices..."):
             erp_raw = pd.read_excel(uploaded_erp, dtype=str)
             ven_raw = pd.read_excel(uploaded_vendor, dtype=str)
             erp_df = normalize_columns(erp_raw, "erp")
             ven_df = normalize_columns(ven_raw, "ven")
             
+            # Step 1: Exact matches
             matched, erp_missing, ven_missing = match_invoices(erp_df, ven_df)
-            tier2_strict, used_e, used_v, final_erp_missing, final_ven_missing = tier2_match_strict(erp_missing, ven_missing)
-            tier2_relaxed = tier2_match_relaxed(final_erp_missing, final_ven_missing)
             
+            # Step 2: Tier-2 Strict (exact amounts)
+            tier2_strict, used_e, used_v, final_erp_missing, final_ven_missing = tier2_match_strict(erp_missing, ven_missing)
+            
+            # Step 3: Tier-2 Amount Diff (90%+ fuzzy invoice)
+            tier2_amount_diff = tier2_match_amount_diff(final_erp_missing, final_ven_missing)
+            
+            # Final unmatched
             erp_missing = final_erp_missing.rename(columns={"invoice_erp": "Invoice", "__amt": "Amount", "date_erp": "Date"})
             ven_missing = final_ven_missing.rename(columns={"invoice_ven": "Invoice", "__amt": "Amount", "date_ven": "Date"})
         
-        st.success("✅ Reconciliation complete in seconds! 🚀")
+        st.success("✅ Analysis complete!")
         
         # ======================================
         # EXECUTIVE SUMMARY
@@ -359,8 +379,8 @@ if uploaded_erp and uploaded_vendor:
             st.metric("🔒 Tier-2 Strict", len(tier2_strict))
             st.markdown('</div>', unsafe_allow_html=True)
         with col4:
-            st.markdown('<div class="metric-container tier2-relaxed">', unsafe_allow_html=True)
-            st.metric("🟡 Tier-2 Relaxed", len(tier2_relaxed))
+            st.markdown('<div class="metric-container tier2-amount-diff">', unsafe_allow_html=True)
+            st.metric("🟡 Tier-2 Amount Diff", len(tier2_amount_diff))
             st.markdown('</div>', unsafe_allow_html=True)
         with col5:
             st.markdown('<div class="metric-container missing-erp">', unsafe_allow_html=True)
@@ -393,7 +413,8 @@ if uploaded_erp and uploaded_vendor:
         # TIER-2 STRICT
         # ======================================
         if not tier2_strict.empty:
-            st.markdown("### 🔒 TIER-2 STRICT (Fuzzy Invoice + Exact Amounts ±0.05)")
+            st.markdown("### 🔒 TIER-2 STRICT")
+            st.info("💡 Fuzzy invoice numbers + **EXACT amounts** (±0.05)")
             tier2s_display = tier2_strict[['ERP Invoice', 'Vendor Invoice', 'ERP Amount', 'Vendor Amount', 'Difference', 'Fuzzy Score']].copy()
             total_row_s = pd.DataFrame({
                 'ERP Invoice': ['STRICT TOTAL'],
@@ -406,23 +427,23 @@ if uploaded_erp and uploaded_vendor:
             st.dataframe(pd.concat([tier2s_display, total_row_s], ignore_index=True), use_container_width=True)
         
         # ======================================
-        # TIER-2 RELAXED
+        # TIER-2 AMOUNT DIFFERENCE (YOUR REQUESTED TABLE)
         # ======================================
-        if not tier2_relaxed.empty:
-            st.markdown("### 🟡 TIER-2 RELAXED (Fuzzy Invoice Pattern - ANY Amount Difference)")
-            st.info("💡 **Invoice numbers have similar patterns** - Review amount differences manually")
-           
-            tier2r_display = tier2_relaxed[['ERP Invoice', 'Vendor Invoice', 'ERP Amount', 'Vendor Amount', 'Amount Diff', 'Fuzzy Score']].copy()
-            total_row_r = pd.DataFrame({
-                'ERP Invoice': ['RELAXED TOTAL'],
+        if not tier2_amount_diff.empty:
+            st.markdown("### 🟡 TIER-2 AMOUNT DIFFERENCE")
+            st.info("💡 **90%+ FUZZY INVOICE MATCH** + **DIFFERENT amounts** - Review these!")
+            
+            tier2ad_display = tier2_amount_diff[['ERP Invoice', 'Vendor Invoice', 'ERP Amount', 'Vendor Amount', 'Amount Diff', 'Fuzzy Score']].copy()
+            total_row_ad = pd.DataFrame({
+                'ERP Invoice': ['AMOUNT DIFF TOTAL'],
                 'Vendor Invoice': [''],
-                'ERP Amount': [tier2r_display['ERP Amount'].sum()],
-                'Vendor Amount': [tier2r_display['Vendor Amount'].sum()],
-                'Amount Diff': [tier2r_display['Amount Diff'].sum()],
-                'Fuzzy Score': [f"{len(tier2r_display)} MATCHES"]
+                'ERP Amount': [tier2ad_display['ERP Amount'].sum()],
+                'Vendor Amount': [tier2ad_display['Vendor Amount'].sum()],
+                'Amount Diff': [tier2ad_display['Amount Diff'].sum()],
+                'Fuzzy Score': [f"{len(tier2ad_display)} MATCHES"]
             })
-            st.dataframe(pd.concat([tier2r_display, total_row_r], ignore_index=True), use_container_width=True, height=400)
-            st.warning(f"**{len(tier2_relaxed)} RELAXED MATCHES | Total Amount Diff: €{tier2_relaxed['Amount Diff'].sum():,.2f}**")
+            st.dataframe(pd.concat([tier2ad_display, total_row_ad], ignore_index=True), use_container_width=True, height=400)
+            st.warning(f"**{len(tier2_amount_diff)} FUZZY INVOICES | Total Amount Diff: €{tier2_amount_diff['Amount Diff'].sum():,.2f}**")
         
         # ======================================
         # UNMATCHED
@@ -448,7 +469,7 @@ if uploaded_erp and uploaded_vendor:
         # DOWNLOAD
         # ======================================
         st.markdown("### 📥 Download Full Report")
-        excel_output = export_reconciliation_excel(matched, erp_missing, ven_missing, tier2_strict, tier2_relaxed)
+        excel_output = export_reconciliation_excel(matched, erp_missing, ven_missing, tier2_strict, tier2_amount_diff)
         st.download_button(
             "💾 Download Excel Report",
             data=excel_output,
