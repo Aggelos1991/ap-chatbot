@@ -4,25 +4,27 @@ import pandas as pd
 import streamlit as st
 from io import BytesIO
 from openai import OpenAI
-
-st.set_page_config(page_title="🦅 DataFalcon Pro", layout="wide")
+# ==========================================================
+# CONFIGURATION
+# ==========================================================
+st.set_page_config(page_title="🦅 DataFalcon Pro — Hybrid GPT Extractor", layout="wide")
 st.title("🦅 DataFalcon Pro")
-
 try:
     from dotenv import load_dotenv
     load_dotenv()
 except:
     pass
-
 api_key = os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY")
 if not api_key:
     st.error("❌ No OpenAI API key found. Add it to .env or Streamlit Secrets.")
     st.stop()
-
 client = OpenAI(api_key=api_key)
 MODEL = "gpt-4o-mini"
-
+# ==========================================================
+# HELPERS
+# ==========================================================
 def normalize_number(value):
+    """Normalize decimals like 1.234,56 → 1234.56"""
     if not value:
         return ""
     s = str(value).strip().replace(" ", "")
@@ -35,183 +37,138 @@ def normalize_number(value):
         s = s.replace(",", ".")
     s = re.sub(r"[^\d.\-]", "", s)
     try:
-        num = float(s)
-        return round(num, 2)
+        return round(float(s), 2)
     except:
         return ""
-
-def is_valid_document_number(doc):
-    """STRICT validation - NO amounts allowed as documents"""
-    doc = str(doc).strip()
-    
-    # BLOCK ALL amounts/decimals
-    if re.search(r"[.,]", doc):
-        return False
-    
-    # Must have 3+ digits
-    if not re.search(r"\d{3,}", doc):
-        return False
-    
-    # Block words that indicate amounts
-    amount_words = ['debe', 'haber', 'saldo', 'total', 'iva', 'concil', 'apertur', 'cierre']
-    if any(word in doc.lower() for word in amount_words):
-        return False
-    
-    # Only allow typical document patterns
-    doc_patterns = [
-        r"^\d{3,}$",  # 12345
-        r"^\d{1,4}[-/]\d{1,4}$",  # 2024/001, 123-45
-        r"^(Nº|Num|Fra|Ref|INV|DOC|ΤΛ|Αρ|Τ/Λ)\s*\d+",  # Nº 123, Fra 456
-        r"^\d{2,4}/\d{1,3}$",  # 24/123
-    ]
-    
-    return any(re.match(pattern, doc, re.IGNORECASE) for pattern in doc_patterns)
-
 def extract_raw_lines(uploaded_pdf):
+    """Extract all text lines from every page of the PDF."""
     all_lines = []
     with pdfplumber.open(uploaded_pdf) as pdf:
         for page in pdf.pages:
             text = page.extract_text()
             if not text:
                 continue
-            lines = text.split("\n")
-            for line in lines:
-                clean_line = " ".join(line.split())
-                if clean_line.strip():
-                    all_lines.append(clean_line)
+            for line in text.split("\n"):
+                if re.search(r"\d{1,3}(?:[.,]\d{3})*[.,]\d{2}", line):
+                    all_lines.append(" ".join(line.split()))
     return all_lines
-
+# ==========================================================
+# GPT EXTRACTOR — detect DEBE & HABER columns explicitly
+# ==========================================================
 def extract_with_gpt(lines):
-    BATCH_SIZE = 50
+    """Use GPT to detect Debit (DEBE) and Credit (HABER) from vendor statements."""
+    BATCH_SIZE = 150
     all_records = []
-    
     for i in range(0, len(lines), BATCH_SIZE):
         batch = lines[i:i + BATCH_SIZE]
         text_block = "\n".join(batch)
-        
-        prompt = (
-            "CRITICAL: ONLY extract lines with CLEAR DOCUMENT NUMBERS.\n"
-            "DOCUMENT = Invoice/Factura number ONLY.\n\n"
-            "VALID DOCUMENTS LOOK LIKE:\n"
-            "• Nº 12345\n"
-            "• Factura 001234\n"
-            "• Fra 2024/001\n"
-            "• Τιμολόγιο 123\n"
-            "• Αρ. 45678\n"
-            "• 2024/123\n\n"
-            "NEVER extract:\n"
-            "• DEBE amounts: 1.234,56 ❌\n"
-            "• HABER amounts: 987,65 ❌\n"
-            "• 123 (too short) ❌\n"
-            "• Lines with 'saldo', 'total', 'iva' ❌\n\n"
-            "For EACH VALID DOCUMENT line:\n"
-            '{"Alternative Document": "12345", "Date": "", "Debit": "1234.56", "Credit": "", "Reason": "Invoice", "Description": "Factura"}'
-            "\n\nONLY return JSON for lines with DOCUMENTS:\n" + text_block
-        )
-        
+        prompt = f"""
+You are an expert accountant fluent in Spanish and Greek.
+You are reading extracted lines from a vendor statement.
+Each line may include columns labeled as:
+- DEBE → Debit (Invoice)
+- HABER → Credit (Payment)
+- SALDO → Running Balance
+- CONCEPTO → Description such as "Fra. emitida", "Cobro Efecto", etc.
+Your task:
+For each valid transaction line, output:
+- "Alternative Document": document number (under Nº, Num, Documento, Factura, etc.)
+- "Date": date if visible (dd/mm/yy or dd/mm/yyyy)
+- "Reason": classify as "Invoice", "Payment", or "Credit Note"
+- "Debit": numeric value under DEBE column (if exists)
+- "Credit": numeric value under HABER column (if exists)
+Rules:
+1. If DEBE > 0 → Reason = "Invoice"
+2. If HABER > 0 → Reason = "Payment"
+3. If DEBE < 0 OR the line includes "Abono", "Nota de Credito", "NC", "πιστω", "Ακυρωτικό" → Reason = "Credit Note" and place ABSOLUTE value under Credit.
+4. Ignore summary lines: "Saldo", "Apertura", "Total General", "IVA", "Base", "Impuestos".
+5. Exclude any line where the document number contains "concil" (not case-sensitive).
+6. Ensure output is valid JSON array.
+Lines:
+\"\"\"{text_block}\"\"\"
+"""
         try:
             response = client.chat.completions.create(
                 model=MODEL,
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0.0
+                temperature=0.1
             )
             content = response.choices[0].message.content.strip()
-            
-            json_start = content.find('[')
-            json_end = content.rfind(']') + 1
-            if json_start == -1 or json_end <= json_start:
+            json_match = re.search(r"\[.*\]", content, re.DOTALL)
+            if not json_match:
                 continue
-                
-            json_str = content[json_start:json_end]
-            data = json.loads(json_str)
-            
-        except:
+            data = json.loads(json_match.group(0))
+        except Exception as e:
+            st.warning(f"⚠️ GPT failed on batch {i//BATCH_SIZE + 1}: {e}")
             continue
-        
         for row in data:
             alt_doc = str(row.get("Alternative Document", "")).strip()
-            
-            # 🔥 ULTRA-STRICT DOCUMENT VALIDATION
-            if not is_valid_document_number(alt_doc):
+            # 🚫 exclude concil. or conciliación or reconcil etc.
+            if re.search(r"concil", alt_doc, re.IGNORECASE):
                 continue
-            
             debit_val = normalize_number(row.get("Debit"))
             credit_val = normalize_number(row.get("Credit"))
-            reason = row.get("Reason", "Invoice").strip()
-            
-            # Handle negatives
+            reason_text = row.get("Reason", "").lower()
+            concept = alt_doc.lower()
+            # Move Cobro/Efecto to Credit if missing
+            if "cobro" in concept or "efecto" in concept:
+                credit_val = credit_val or debit_val
+                debit_val = ""
+            # 🆕 Handle negative DEBE as Credit Note
             if debit_val and float(debit_val) < 0:
                 credit_val = abs(float(debit_val))
                 debit_val = ""
-                reason = "Credit Note"
-            elif credit_val and float(credit_val) < 0:
-                debit_val = abs(float(credit_val))
-                credit_val = ""
-                reason = "Invoice"
-            
+                row["Reason"] = "Credit Note"
             all_records.append({
                 "Alternative Document": alt_doc,
                 "Date": str(row.get("Date", "")).strip(),
-                "Reason": reason,
+                "Reason": row.get("Reason", "").strip(),
                 "Debit": debit_val,
-                "Credit": credit_val,
-                "Description": str(row.get("Description", "")).strip()
+                "Credit": credit_val
             })
     return all_records
-
+# ==========================================================
+# EXPORT
+# ==========================================================
 def to_excel_bytes(records):
     df = pd.DataFrame(records)
     buf = BytesIO()
     df.to_excel(buf, index=False)
     buf.seek(0)
     return buf
-
+# ==========================================================
+# STREAMLIT UI
+# ==========================================================
 uploaded_pdf = st.file_uploader("📂 Upload Vendor Statement (PDF)", type=["pdf"])
-
 if uploaded_pdf:
-    with st.spinner("📄 Extracting text..."):
+    with st.spinner("📄 Extracting text from all pages..."):
         lines = extract_raw_lines(uploaded_pdf)
-    
     if not lines:
-        st.warning("⚠️ No readable text found.")
+        st.warning("⚠️ No readable text lines found. Check if the PDF is scanned.")
     else:
-        st.text_area("📄 Preview:", "\n".join(lines[:30]), height=300)
-        
-        col1, col2 = st.columns([3,1])
-        with col1:
-            if st.button("🤖 Extract Documents", type="primary"):
-                with st.spinner("🔍 Finding documents..."):
-                    data = extract_with_gpt(lines)
-                
-                if data:
-                    df = pd.DataFrame(data)
-                    st.success(f"✅ {len(df)} VALID documents extracted!")
-                    st.dataframe(df, use_container_width=True, hide_index=True)
-                    
-                    df_num = df.copy()
-                    df_num["Debit"] = pd.to_numeric(df_num["Debit"], errors="coerce")
-                    df_num["Credit"] = pd.to_numeric(df_num["Credit"], errors="coerce")
-                    
-                    total_debit = df_num["Debit"].sum()
-                    total_credit = df_num["Credit"].sum()
+        st.text_area("📄 Preview (first 25 lines):", "\n".join(lines[:25]), height=250)
+        if st.button("🤖 Run Hybrid Extraction"):
+            with st.spinner("Analyzing data with GPT-4o-mini..."):
+                data = extract_with_gpt(lines)
+            if not data:
+                st.warning("⚠️ No structured data detected.")
+            else:
+                df = pd.DataFrame(data)
+                st.success(f"✅ Extraction complete — {len(df)} valid records found.")
+                st.dataframe(df, use_container_width=True)
+                # Totals
+                try:
+                    total_debit = df["Debit"].apply(pd.to_numeric, errors="coerce").sum()
+                    total_credit = df["Credit"].apply(pd.to_numeric, errors="coerce").sum()
                     net = round(total_debit - total_credit, 2)
-                    
-                    col_a, col_b, col_c = st.columns(3)
-                    col_a.metric("💰 Debit", f"{total_debit:,.2f}")
-                    col_b.metric("💳 Credit", f"{total_credit:,.2f}")
-                    col_c.metric("⚖️ Net", f"{net:,.2f}")
-                    
-                    st.download_button(
-                        "⬇️ Download Excel",
-                        data=to_excel_bytes(data),
-                        file_name=f"documents_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
-                else:
-                    st.warning("⚠️ No VALID documents found. Check preview - looking for Nº 12345, Factura 001234, etc.")
-        
-        with col2:
-            st.metric("Lines", len(lines))
-
+                    st.markdown(f"**💰 Total Debit:** {total_debit:,.2f} | **Total Credit:** {total_credit:,.2f} | **Net:** {net:,.2f}")
+                except:
+                    pass
+                st.download_button(
+                    "⬇️ Download Excel",
+                    data=to_excel_bytes(data),
+                    file_name="vendor_statement_debe_haber.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
 else:
-    st.info("👆 Upload PDF")
+    st.info("Please upload a vendor statement PDF to begin.")
