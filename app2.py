@@ -90,7 +90,7 @@ def clean_invoice_code(v):
             s = p.lstrip("0")
             break
     s = re.sub(r"^(αρ|τιμ|pf|ab|inv|tim|cn|ar|pa|πφ|πα|apo|ref|doc|num|no|apd|vs)\W*", "", s)
-    s = re.sub(r"20\d{2}", "", s)
+    # Removed: s = re.sub(r"20\d{2}", "", s) to prevent incorrect stripping of number parts
     s = re.sub(r"[^a-z0-9]", "", s)
     s = re.sub(r"^0+", "", s)
     s = re.sub(r"[^\d]", "", s)
@@ -462,8 +462,21 @@ def match_invoices(erp_df, ven_df):
     missing_in_erp = missing_in_erp.rename(columns={"invoice_erp": "Invoice", "__amt": "Amount", "date_erp": "Date"})
     missing_in_vendor = missing_in_vendor.rename(columns={"invoice_ven": "Invoice", "__amt": "Amount", "date_ven": "Date"})
     return matched_df, missing_in_erp, missing_in_vendor
-def fuzzy_ratio(a, b):
-    return SequenceMatcher(None, str(a), str(b)).ratio()
+def levenshtein(a, b):
+    if len(a) < len(b):
+        a, b = b, a
+    if len(b) == 0:
+        return len(a)
+    previous_row = range(len(b) + 1)
+    for i, c1 in enumerate(a):
+        current_row = [i + 1]
+        for j, c2 in enumerate(b):
+            insertions = previous_row[j + 1] + 1
+            deletions = current_row[j] + 1
+            substitutions = previous_row[j] + (c1 != c2)
+            current_row.append(min(insertions, deletions, substitutions))
+        previous_row = current_row
+    return previous_row[-1]
 def tier2_match(erp_missing, ven_missing):
     if erp_missing.empty or ven_missing.empty:
         return pd.DataFrame(), pd.DataFrame(), set(), set(), erp_missing.copy(), ven_missing.copy()
@@ -485,8 +498,10 @@ def tier2_match(erp_missing, ven_missing):
             v_date = v.get("date_norm", "")
             v_code = clean_invoice_code(v_inv)
             diff = abs(e_amt - v_amt)
-            sim = fuzzy_ratio(e_code, v_code)
-            if sim >= 0.99:
+            dist = levenshtein(e_code, v_code)
+            max_len = max(len(e_code), len(v_code))
+            sim = 1 - (dist / max_len) if max_len > 0 else 0
+            if sim >= 0.8:
                 match_info = {
                     "ERP Invoice": e_inv,
                     "Vendor Invoice": v_inv,
