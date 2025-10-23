@@ -7,11 +7,12 @@ from openpyxl.utils.dataframe import dataframe_to_rows
 from openpyxl.utils import get_column_letter
 from openpyxl.styles import PatternFill, Font, Alignment
 from difflib import SequenceMatcher
+
 # ======================================
 # CONFIGURATION WITH CUSTOM CSS COLORS
 # ======================================
 st.set_page_config(page_title="🦖 ReconRaptor — Vendor Reconciliation", layout="wide")
-# Custom CSS for beautiful color styling
+
 st.markdown("""
 <style>
     .perfect-match { background-color: #2E7D32 !important; color: white !important; font-weight: bold !important; }
@@ -30,7 +31,7 @@ st.markdown("""
 st.title("🦖 ReconRaptor — Vendor Reconciliation")
 
 # ======================================
-# HELPERS (UNCHANGED)
+# HELPERS
 # ======================================
 def normalize_number(v):
     """Convert numeric strings like '1.234,56' or '1,234.56' safely to float."""
@@ -172,16 +173,16 @@ def create_summary_table_with_totals(matched_df, erp_missing, ven_missing):
     # Create summary DataFrame
     summary_data = {
         'Category': [
-            'ERP Total Amount',
-            'Vendor Total Amount', 
-            'Total Difference',
+            '🔵 ERP Total Amount',
+            '🟡 Vendor Total Amount', 
+            '🔴 Total Difference',
             '',
-            'Matched ERP Amount',
-            'Matched Vendor Amount',
-            'Matched Difference',
+            '✅ Matched ERP Amount',
+            '✅ Matched Vendor Amount',
+            '⚠️ Matched Difference',
             '',
-            'Unmatched ERP',
-            'Unmatched Vendor'
+            '❌ Unmatched ERP',
+            '❌ Unmatched Vendor'
         ],
         'Count': [
             len(matched_df) + len(erp_missing),
@@ -196,16 +197,16 @@ def create_summary_table_with_totals(matched_df, erp_missing, ven_missing):
             len(ven_missing)
         ],
         'Amount': [
-            f"{erp_total:,.2f}",
-            f"{vendor_total:,.2f}", 
-            f"{total_difference:,.2f}",
+            f"€{erp_total:,.2f}",
+            f"€{vendor_total:,.2f}", 
+            f"€{total_difference:,.2f}",
             '',
-            f"{matched_erp_total:,.2f}",
-            f"{matched_vendor_total:,.2f}",
-            f"{abs(matched_erp_total - matched_vendor_total):,.2f}",
+            f"€{matched_erp_total:,.2f}",
+            f"€{matched_vendor_total:,.2f}",
+            f"€{abs(matched_erp_total - matched_vendor_total):,.2f}",
             '',
-            f"{erp_missing['Amount'].sum():,.2f}",
-            f"{ven_missing['Amount'].sum():,.2f}"
+            f"€{erp_missing['Amount'].sum():,.2f}",
+            f"€{ven_missing['Amount'].sum():,.2f}"
         ]
     }
     
@@ -227,7 +228,7 @@ def style_summary_table(df):
     return df.style.apply(highlight_totals, axis=1)
 
 # ======================================
-# COLOR STYLING FUNCTIONS (UNCHANGED)
+# COLOR STYLING FUNCTIONS
 # ======================================
 def style_perfect_matches(df):
     return df.style.apply(
@@ -254,7 +255,7 @@ def style_missing(df):
     )
 
 # ======================================
-# CORE FUNCTIONS (UNCHANGED - keeping your existing logic)
+# CORE MATCHING
 # ======================================
 def match_invoices(erp_df, ven_df):
     matched = []
@@ -416,6 +417,9 @@ def match_invoices(erp_df, ven_df):
    
     return matched_df, missing_in_erp, missing_in_vendor
 
+# ======================================
+# TIER-2 MATCHING
+# ======================================
 def fuzzy_ratio(a, b):
     return SequenceMatcher(None, str(a), str(b)).ratio()
 
@@ -467,7 +471,131 @@ def tier2_match(erp_missing, ven_missing):
     return tier2_matches, used_e, used_v, remaining_erp_missing, remaining_ven_missing
 
 # ======================================
-# STREAMLIT UI WITH TOTALS AND UNMATCHED
+# PAYMENTS (FIXED - NOW INCLUDED)
+# ======================================
+def extract_payments(erp_df: pd.DataFrame, ven_df: pd.DataFrame):
+    payment_keywords = [
+        "πληρωμή", "payment", "bank transfer", "transferencia bancaria",
+        "transfer", "trf", "remesa", "pago", "deposit", "μεταφορά", "έμβασμα",
+        "εξοφληση", "pagado", "paid"
+    ]
+    exclude_keywords = [
+        "invoice of expenses", "expense invoice", "τιμολόγιο εξόδων",
+        "διόρθωση", "διορθώσεις", "correction", "reclass", "adjustment",
+        "μεταφορά υπολοίπου", "balance transfer"
+    ]
+    def is_real_payment(row: pd.Series, tag: str) -> bool:
+        text = str(row.get(f"reason_{tag}", "")).lower()
+        has_payment = any(k in text for k in payment_keywords)
+        has_exclusion = any(bad in text for bad in exclude_keywords)
+        if tag == "erp":
+            debit = normalize_number(row.get("debit_erp", 0))
+            return has_payment and not has_exclusion and debit > 0
+        elif tag == "ven":
+            credit = normalize_number(row.get("credit_ven", 0))
+            return has_payment and not has_exclusion and credit > 0
+        return False
+    erp_pay = erp_df[erp_df.apply(lambda x: is_real_payment(x, "erp"), axis=1)].copy() if "reason_erp" in erp_df else pd.DataFrame()
+    ven_pay = ven_df[ven_df.apply(lambda x: is_real_payment(x, "ven"), axis=1)].copy() if "reason_ven" in ven_df else pd.DataFrame()
+    if not erp_pay.empty:
+        erp_pay["Amount"] = erp_pay.apply(
+            lambda r: abs(normalize_number(r.get("debit_erp")) - normalize_number(r.get("credit_erp"))),
+            axis=1
+        )
+    if not ven_pay.empty:
+        ven_pay["Amount"] = ven_pay.apply(
+            lambda r: abs(normalize_number(r.get("debit_ven")) - normalize_number(r.get("credit_ven"))),
+            axis=1
+        )
+    matched_payments = []
+    used_vendor = set()
+    for _, e in erp_pay.iterrows():
+        for v_idx, v in ven_pay.iterrows():
+            if v_idx in used_vendor: continue
+            diff = abs(e["Amount"] - v["Amount"])
+            if diff < 0.05:
+                matched_payments.append({
+                    "ERP Reason": e.get("reason_erp", ""),
+                    "Vendor Reason": v.get("reason_ven", ""),
+                    "ERP Amount": round(float(e["Amount"]), 2),
+                    "Vendor Amount": round(float(v["Amount"]), 2),
+                    "Difference": round(diff, 2)
+                })
+                used_vendor.add(v_idx)
+                break
+    return erp_pay, ven_pay, pd.DataFrame(matched_payments)
+
+# ======================================
+# EXCEL EXPORT (UPDATED)
+# ======================================
+def export_reconciliation_excel(matched, erp_missing, ven_missing, matched_pay, tier2_matches):
+    wb = Workbook()
+    def style_header(ws, row, color):
+        for cell in ws[row]:
+            cell.fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
+            cell.font = Font(color="FFFFFF", bold=True, size=12)
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+    
+    # Summary
+    ws0 = wb.active
+    ws0.title = "Summary"
+    summary = create_summary_table_with_totals(matched, erp_missing, ven_missing)
+    for r in dataframe_to_rows(summary, index=False, header=True):
+        ws0.append(r)
+    style_header(ws0, 1, "1E88E5")
+    
+    # Tier-1 Matches
+    ws1 = wb.create_sheet("Tier1_Matches")
+    if not matched.empty:
+        for r in dataframe_to_rows(matched[["ERP Invoice", "Vendor Invoice", "ERP Amount", "Vendor Amount", "Difference", "Status"]], index=False, header=True):
+            ws1.append(r)
+        style_header(ws1, 1, "1E88E5")
+    
+    # Missing
+    ws2 = wb.create_sheet("Unmatched")
+    current_row = 1
+    if not erp_missing.empty:
+        ws2.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=erp_missing.shape[1])
+        ws2.cell(row=current_row, column=1, value="Missing in Vendor (ERP Only)").font = Font(bold=True, size=14)
+        current_row += 2
+        for r in dataframe_to_rows(erp_missing, index=False, header=True):
+            ws2.append(r)
+        style_header(ws2, current_row, "C62828")
+        current_row = ws2.max_row + 3
+    if not ven_missing.empty:
+        ws2.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=ven_missing.shape[1])
+        ws2.cell(row=current_row, column=1, value="Missing in ERP (Vendor Only)").font = Font(bold=True, size=14)
+        current_row += 2
+        for r in dataframe_to_rows(ven_missing, index=False, header=True):
+            ws2.append(r)
+        style_header(ws2, current_row, "AD1457")
+    
+    # Tier-2
+    ws3 = wb.create_sheet("Tier2_Matches")
+    if not tier2_matches.empty:
+        for r in dataframe_to_rows(tier2_matches, index=False, header=True):
+            ws3.append(r)
+        style_header(ws3, 1, "26A69A")
+    
+    # Payments
+    ws4 = wb.create_sheet("Payments")
+    if not matched_pay.empty:
+        for r in dataframe_to_rows(matched_pay, index=False, header=True):
+            ws4.append(r)
+        style_header(ws4, 1, "004D40")
+    
+    for ws in [ws0, ws1, ws2, ws3, ws4]:
+        for col in ws.columns:
+            max_len = max(len(str(c.value)) if c.value else 0 for c in col)
+            ws.column_dimensions[get_column_letter(col[0].column)].width = max_len + 3
+    
+    buffer = BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    return buffer
+
+# ======================================
+# STREAMLIT UI
 # ======================================
 uploaded_erp = st.file_uploader("📂 Upload ERP Export (Excel)", type=["xlsx"])
 uploaded_vendor = st.file_uploader("📂 Upload Vendor Statement (Excel)", type=["xlsx"])
@@ -483,28 +611,23 @@ if uploaded_erp and uploaded_vendor:
             matched, erp_missing, ven_missing = match_invoices(erp_df, ven_df)
             erp_pay, ven_pay, matched_pay = extract_payments(erp_df, ven_df)
             tier2_matches, used_erp_indices, used_ven_indices, final_erp_missing, final_ven_missing = tier2_match(erp_missing, ven_missing)
-      
+        
             # Update final missing after tier2
             erp_missing = final_erp_missing
             ven_missing = final_ven_missing
 
         st.success("✅ Reconciliation complete!")
   
-        # ======================================
-        # NEW: EXECUTIVE SUMMARY WITH TOTALS
-        # ======================================
+        # EXECUTIVE SUMMARY WITH TOTALS
         st.markdown("## 📈 Executive Summary")
         summary_table = create_summary_table_with_totals(matched, erp_missing, ven_missing)
-        
         st.dataframe(
             style_summary_table(summary_table),
             use_container_width=True,
             hide_index=True
         )
   
-        # ======================================
-        # ENHANCED METRICS WITH UNMATCHED COUNTS
-        # ======================================
+        # ENHANCED METRICS
         col1, col2, col3, col4, col5, col6 = st.columns(6)
         perfect_count = len(matched[matched['Status'] == 'Perfect Match']) if not matched.empty else 0
         diff_count = len(matched[matched['Status'] == 'Difference Match']) if not matched.empty else 0
@@ -540,12 +663,9 @@ if uploaded_erp and uploaded_vendor:
   
         st.markdown("---")
   
-        # ======================================
-        # MATCHED INVOICES TABLE WITH TOTALS
-        # ======================================
+        # MATCHED INVOICES WITH TOTALS
         st.subheader("✅ MATCHED INVOICES WITH DIFFERENCES")
         if not matched.empty:
-            # Add total row
             matched_display = matched[['ERP Invoice', 'Vendor Invoice', 'ERP Amount', 'Vendor Amount', 'Difference', 'Status']].copy()
             total_row = pd.DataFrame({
                 'ERP Invoice': ['TOTAL'],
@@ -556,18 +676,11 @@ if uploaded_erp and uploaded_vendor:
                 'Status': [f"TOTAL ({len(matched_display)} MATCHES)"]
             })
             matched_with_totals = pd.concat([matched_display, total_row], ignore_index=True)
-            
-            st.dataframe(
-                matched_with_totals,
-                use_container_width=True,
-                height=400
-            )
+            st.dataframe(matched_with_totals, use_container_width=True, height=400)
         else:
             st.info("❌ No Tier-1 matches/differences found.")
   
-        # ======================================
         # UNMATCHED INVOICES WITH TOTALS
-        # ======================================
         st.subheader("❌ UNMATCHED INVOICES")
         col1, col2 = st.columns(2)
         
@@ -575,12 +688,14 @@ if uploaded_erp and uploaded_vendor:
             st.markdown("**🔴 Missing in ERP (Vendor Only)**")
             if not ven_missing.empty:
                 ven_display = ven_missing.copy()
+                if 'Date' not in ven_display.columns:
+                    ven_display['Date'] = ''
                 total_row_ven = pd.DataFrame({
                     'Invoice': ['TOTAL UNMATCHED'],
                     'Amount': [ven_missing['Amount'].sum()],
                     'Date': [f"{len(ven_missing)} INVOICES"]
                 })
-                ven_with_total = pd.concat([ven_display, total_row_ven], ignore_index=True)
+                ven_with_total = pd.concat([ven_display[['Invoice', 'Amount', 'Date']], total_row_ven], ignore_index=True)
                 st.dataframe(ven_with_total, use_container_width=True)
                 st.error(f"**{len(ven_missing)} UNMATCHED | €{ven_missing['Amount'].sum():,.2f}**")
             else:
@@ -590,35 +705,20 @@ if uploaded_erp and uploaded_vendor:
             st.markdown("**🔴 Missing in Vendor (ERP Only)**")
             if not erp_missing.empty:
                 erp_display = erp_missing.copy()
+                if 'Date' not in erp_display.columns:
+                    erp_display['Date'] = ''
                 total_row_erp = pd.DataFrame({
                     'Invoice': ['TOTAL UNMATCHED'],
                     'Amount': [erp_missing['Amount'].sum()],
                     'Date': [f"{len(erp_missing)} INVOICES"]
                 })
-                erp_with_total = pd.concat([erp_display, total_row_erp], ignore_index=True)
+                erp_with_total = pd.concat([erp_display[['Invoice', 'Amount', 'Date']], total_row_erp], ignore_index=True)
                 st.dataframe(erp_with_total, use_container_width=True)
                 st.error(f"**{len(erp_missing)} UNMATCHED | €{erp_missing['Amount'].sum():,.2f}**")
             else:
                 st.success("✅ No unmatched ERP invoices!")
   
-        # ======================================
-        # TIER-2 AND PAYMENTS (keeping existing)
-        # ======================================
-        if not tier2_matches.empty:
-            st.subheader("🔍 Tier-2 Fuzzy Matches")
-            tier2_display = tier2_matches[['ERP Invoice', 'Vendor Invoice', 'ERP Amount', 'Vendor Amount', 'Difference', 'Fuzzy Score']].copy()
-            total_row_tier2 = pd.DataFrame({
-                'ERP Invoice': ['TIER-2 TOTAL'],
-                'Vendor Invoice': [''],
-                'ERP Amount': [tier2_display['ERP Amount'].sum()],
-                'Vendor Amount': [tier2_display['Vendor Amount'].sum()],
-                'Difference': [abs(tier2_display['ERP Amount'].sum() - tier2_display['Vendor Amount'].sum())],
-                'Fuzzy Score': [f"{len(tier2_display)} MATCHES"]
-            })
-            tier2_with_total = pd.concat([tier2_display, total_row_tier2], ignore_index=True)
-            st.dataframe(tier2_with_total, use_container_width=True)
-  
-        # Download button
+        # Download
         st.markdown("### 📥 Download Full Report")
         excel_output = export_reconciliation_excel(matched, erp_missing, ven_missing, matched_pay, tier2_matches)
         st.download_button(
