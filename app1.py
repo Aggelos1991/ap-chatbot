@@ -72,7 +72,7 @@ Each line may include columns labeled as:
 - CONCEPTO → Description such as "Fra. emitida", "Cobro Efecto", etc.
 Your task:
 For each valid transaction line, output:
-- "Alternative Document": document number (under Nº, Num, Documento, Factura, etc.)
+- "Alternative Document": document number (under Nº, DOC, Num, Documento, Factura, etc.)
 - "Date": date if visible (dd/mm/yy or dd/mm/yyyy)
 - "Reason": classify as "Invoice", "Payment", or "Credit Note"
 - "Debit": numeric value under DEBE column (if exists)
