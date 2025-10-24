@@ -4,8 +4,9 @@ import pandas as pd
 import plotly.express as px
 import io
 import xlsxwriter
-from openpyxl.utils.dataframe import dataframe_to_rows
 from openpyxl import Workbook
+from openpyxl.utils import get_column_letter
+from openpyxl.styles import Font, PatternFill
 
 st.set_page_config(page_title="Overdue Invoices", layout="wide")
 st.title("Overdue Invoices Dashboard")
@@ -58,12 +59,16 @@ if uploaded_file:
         df['Overdue'] = df['Due_Date'] < today
         df['Status'] = df['Overdue'].map({True: 'Overdue', False: 'Not Overdue'})
 
-        # Aggregation for chart
-        summary = df.groupby('Vendor_Name').agg(
-            Total=('Open_Amount', 'sum'),
-            Overdue=('Open_Amount', lambda x: x[df.loc[x.index, 'Overdue']]),
-            Not_Overdue=('Open_Amount', lambda x: x[~df.loc[x.index, 'Overdue']])
-        ).reset_index()
+        # FIXED: Safe aggregation — NO LAMBDA INDEXING
+        summary = (
+            df.groupby('Vendor_Name')
+            .apply(lambda g: pd.Series({
+                'Total': g['Open_Amount'].sum(),
+                'Overdue': g[g['Overdue']]['Open_Amount'].sum(),
+                'Not_Overdue': g[~g['Overdue']]['Open_Amount'].sum()
+            }))
+            .reset_index()
+        )
         top20 = summary.nlargest(20, 'Total')
 
         # Filters
@@ -89,7 +94,7 @@ if uploaded_file:
             value_vars=['Overdue', 'Not_Overdue'],
             var_name='Type',
             value_name='Amount'
-        ).replace({'Overdue': 'Overdue', 'Not_Overdue': 'Not Overdue'})
+        )
         plot_df = plot_df[plot_df['Amount'] > 0]
 
         # Title
@@ -170,29 +175,25 @@ if uploaded_file:
                 # Currency
                 money_fmt = workbook.add_format({'num_format': '€#,##0.00'})
                 worksheet.set_column('D:D', 15, money_fmt)
-                worksheet.set_column('C:C', 12, workbook.add_format({'num_format': 'dd/mm/yyyy'}))
+                worksheet.set_column('C:C', 12, workbook.add_format_format({'num_format': 'dd/mm/yyyy'}))
 
-                # Create pivot table
+                # Pivot sheet
                 pivot = workbook.add_worksheet('Pivot')
-                writer.sheets['Pivot'] = pivot
-
-                # Pivot cache
-                cache = pd.pivot_table(
-                    raw_df,
+                # Write pivot data
+                pivot_data = raw_df.pivot_table(
                     values='Open_Amount',
                     index='Vendor_Name',
                     columns='Status',
                     aggfunc='sum',
                     fill_value=0
                 ).reset_index()
-                cache.columns.name = None
-                cache.to_excel(writer, sheet_name='Pivot', startrow=3, index=False)
+                pivot_data.columns.name = None
+                pivot_data.to_excel(writer, sheet_name='Pivot', startrow=3, index=False)
 
-                # Pivot table definition
+                # Add pivot table
                 pt = workbook.add_pivot_table()
-                pt.name = "VendorSummary"
-                pt.cache = cache
-                pt.ref = f"A4:{get_column_letter(len(cache.columns))}{len(cache)+3}"
+                pt.ref = f"A4:{get_column_letter(len(pivot_data.columns))}{len(pivot_data)+3}"
+                pt.cache = pivot_data
                 pt.row_grand_totals = True
                 pt.col_grand_totals = True
                 pt.data_fields[0].number_format = '€#,##0.00'
