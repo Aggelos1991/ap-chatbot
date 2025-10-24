@@ -256,5 +256,4 @@ if uploaded_file:
     except Exception as e:
         st.error(f"Error processing file: {str(e)}")
         st.stop()
-else:
-    st.info("Upload your Excel file → Click bar → See raw data → Export Raw")
+
