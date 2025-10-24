@@ -1,10 +1,12 @@
 # overdue_app.py
 import streamlit as st
-import pandas as st
+import pandas as pd   # ← FIXED: Use pd, not st
 import plotly.express as px
 import io
 
+# === MUST BE FIRST STREAMLIT COMMAND ===
 st.set_page_config(page_title="Overdue Invoices", layout="wide")
+
 st.title("Overdue Invoices – Priority Vendors Dashboard")
 st.markdown("**Click a bar segment to see only that data | Export to Filtered Excel**")
 
@@ -51,7 +53,6 @@ if uploaded_file:
             (df['AJ'].astype(str).str.strip().str.upper() == 'YES') &
             (df['AN'].astype(str).str.strip().str.upper() == 'YES')
         )
-        # FIXED LINE: Removed invalid ' | '
         bd_keywords = ['ENTERTAINMENT', 'FALSE', 'REGULAR', 'PRIORITY VENDOR', 'PRIORITY VENDOR OS&E']
         bd_mask = df['BD'].astype(str).str.upper().apply(
             lambda x: any(k in x for k in bd_keywords)
@@ -131,8 +132,6 @@ if uploaded_file:
             value_name='Amount'
         )
         plot_df = plot_df[plot_df['Amount'] > 0].copy()
-
-        # Add customdata for click detection
         plot_df['Status_Label'] = plot_df['Type']
 
         # === BAR CHART ===
@@ -182,12 +181,11 @@ if uploaded_file:
             point = chart.selection['points'][0]
             if 'y' in point and 'customdata' in point and point['customdata']:
                 clicked_vendor = point['y']
-                clicked_status = point['customdata'][0]  # From Status_Label
+                clicked_status = point['customdata'][0]
             elif 'y' in point:
                 clicked_vendor = point['y']
                 clicked_status = 'Overdue' if point.get('marker.color') == '#8B0000' else 'Not Overdue'
 
-        # Update session state
         st.session_state.clicked_vendor = clicked_vendor
         st.session_state.clicked_status = clicked_status
 
@@ -213,7 +211,6 @@ if uploaded_file:
                 raw_details['Open_Amount'] = raw_details['Open_Amount'].map('€{:,.2f}'.format)
                 st.dataframe(raw_details, use_container_width=True)
 
-                # Download
                 buffer = io.BytesIO()
                 with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
                     raw_details.to_excel(writer, index=False, sheet_name='Raw_Data')
@@ -225,7 +222,7 @@ if uploaded_file:
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
         else:
-            st.info("**Click any colored bar segment** to view only that data (e.g., only Overdue or Not Overdue).")
+            st.info("**Click any colored bar segment** to view only that data.")
 
         # === EXPORT ALL FILTERED ===
         st.markdown("---")
