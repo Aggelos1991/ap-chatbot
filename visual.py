@@ -3,7 +3,6 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import io
-import xlsxwriter
 
 st.set_page_config(page_title="Overdue Invoices", layout="wide")
 st.title("Overdue Invoices Dashboard")
@@ -33,30 +32,31 @@ if uploaded_file:
 
         start_row = header_row[0] + 1
         df = df_raw.iloc[start_row:].copy().reset_index(drop=True)
+
         if df.shape[1] < 31:
-            st.error("Need A to AE.")
+            st.error("Need columns A to AE (31 columns).")
             st.stop()
 
-        # Map columns
+        # Map columns: A=0, B=1, E=4, G=6, AD=29, AE=30
         df = df.iloc[:, [0, 1, 4, 6, 29, 30]].copy()
         df.columns = ['Vendor_Name', 'VAT_ID', 'Due_Date', 'Open_Amount', 'Vendor_Email', 'Account_Email']
 
-        # Clean — FIXED TYPO
+        # Clean data
         df['Due_Date'] = pd.to_datetime(df['Due_Date'], errors='coerce')
         df['Open_Amount'] = pd.to_numeric(df['Open_Amount'], errors='coerce')
         df = df.dropna(subset=['Vendor_Name', 'Open_Amount', 'Due_Date'])
         df = df[df['Open_Amount'] > 0]
 
         if df.empty:
-            st.warning("No open invoices.")
+            st.warning("No open invoices found.")
             st.stop()
 
-        # Overdue
+        # Overdue logic
         today = pd.Timestamp.today().normalize()
         df['Overdue'] = df['Due_Date'] < today
         df['Status'] = df['Overdue'].map({True: 'Overdue', False: 'Not Overdue'})
 
-        # FULL SUMMARY
+        # Full summary by vendor
         full_summary = df.groupby(['Vendor_Name', 'Status'])['Open_Amount'].sum().unstack(fill_value=0).reset_index()
         full_summary['Total'] = full_summary['Overdue'] + full_summary['Not Overdue']
 
@@ -68,23 +68,23 @@ if uploaded_file:
             vendor_list = ["Top 20"] + sorted(df['Vendor_Name'].unique().tolist())
             selected_vendor = st.selectbox("Select Vendor", vendor_list, key="vendor_select")
 
-        # GET TOP 20 FOR CURRENT FILTER
+        # Get Top 20 based on filter
         if status_filter == "All Open":
             top_df = full_summary.nlargest(20, 'Total')
             title = "Top 20 Vendors (All Open)"
         elif status_filter == "Overdue Only":
-            top_df = full_summary.nlargest(20, 'Overdue')
+            top_df = full_summary.nlargest(20, 'Overdue').copy()
             top_df['Not Overdue'] = 0
             title = "Top 20 Vendors (Overdue Only)"
         else:
-            top_df = full_summary.nlargest(20, 'Not Overdue')
+            top_df = full_summary.nlargest(20, 'Not Overdue').copy()
             top_df['Overdue'] = 0
             title = "Top 20 Vendors (Not Overdue Only)"
 
-        # Base data
+        # Base data: Top 20 or selected vendor
         base_df = top_df if selected_vendor == "Top 20" else full_summary[full_summary['Vendor_Name'] == selected_vendor]
 
-        # Melt
+        # Melt for stacked bar
         plot_df = base_df.melt(
             id_vars='Vendor_Name',
             value_vars=['Overdue', 'Not Overdue'],
@@ -93,11 +93,11 @@ if uploaded_file:
         )
         plot_df = plot_df[plot_df['Amount'] > 0]
 
-        # Add Total per Vendor
+        # Add total per vendor for labels
         total_per_vendor = base_df.set_index('Vendor_Name')['Total'].to_dict()
         plot_df['Total'] = plot_df['Vendor_Name'].map(total_per_vendor)
 
-        # Bar chart — NO TEXT INSIDE
+        # Bar chart
         fig = px.bar(
             plot_df,
             x='Amount',
@@ -106,13 +106,14 @@ if uploaded_file:
             orientation='h',
             title=title,
             color_discrete_map={
-                'Overdue': '#8B0000',      # Dark Red
-                'Not Overdue': '#4682B4'   # Steel Blue
+                'Overdue': '#8B0000',    # Dark Red
+                'Not Overdue': '#4682B4' # Steel Blue
             },
-            height=max(400, len(plot_df) * 50)
+            height=max(500, len(plot_df) * 45),
+            text=None  # We'll add custom text
         )
 
-        # ADD TOTAL AMOUNT ON TOP OF EACH VENDOR BAR
+        # ADD TOTAL LABEL ON TOP OF EACH BAR (BOLD, WHITE)
         totals = plot_df.groupby('Vendor_Name')['Amount'].sum().reset_index()
         fig.add_scatter(
             x=totals['Amount'],
@@ -120,28 +121,35 @@ if uploaded_file:
             mode='text',
             text=totals['Amount'].apply(lambda x: f'€{x:,.0f}'),
             textposition='top center',
-            textfont=dict(size=14, color='white', family='Arial Black', bold=True),
+            textfont=dict(
+                size=14,
+                color='white',
+                family='Arial Black'  # Bold font
+            ),
             showlegend=False,
             hoverinfo='skip'
         )
 
+        # Layout
         fig.update_layout(
             xaxis_title="Amount (€)",
             yaxis_title="Vendor",
             legend_title="Status",
-            barmode='stack'
+            barmode='stack',
+            plot_bgcolor='rgba(0,0,0,0)',
+            paper_bgcolor='rgba(0,0,0,0)',
+            margin=dict(l=150, r=50, t=80, b=50)
         )
 
-        # Plotly chart
+        # Interactive chart
         chart = st.plotly_chart(fig, use_container_width=True, key="vendor_chart", on_select="rerun")
 
         # Capture click
-        if st.session_state.vendor_chart and 'selection' in st.session_state.vendor_chart:
-            points = st.session_state.vendor_chart['selection']['points']
-            if points:
-                st.session_state.clicked_vendor = points[0]['y']
+        if chart.selection and chart.selection['points']:
+            point = chart.selection['points'][0]
+            st.session_state.clicked_vendor = point['y']
 
-        # Show raw data
+        # Show raw data for clicked vendor
         show_vendor = st.session_state.clicked_vendor
         if show_vendor:
             st.subheader(f"Raw Invoices: {show_vendor}")
@@ -151,6 +159,7 @@ if uploaded_file:
             raw_details['Open_Amount'] = raw_details['Open_Amount'].map('€{:,.2f}'.format)
             st.dataframe(raw_details, use_container_width=True)
 
+            # Download button for this vendor
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
                 raw_details.to_excel(writer, index=False, sheet_name='Raw_Data')
@@ -164,29 +173,36 @@ if uploaded_file:
         else:
             st.info("**Click any bar** to see raw invoice lines.")
 
-        # EXPORT RAW DATA ONLY
+        # EXPORT RAW DATA (ALL / OVERDUE / NOT OVERDUE)
         st.markdown("---")
         st.subheader("Export Raw Data Only")
 
         def export_raw(raw_df, filename):
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+                # Write data starting at row 1 (header at row 0)
                 raw_df.to_excel(writer, sheet_name='Raw_Data', index=False, startrow=1, header=False)
                 workbook = writer.book
                 worksheet = writer.sheets['Raw_Data']
 
-                # Header
+                # Header format
                 header_fmt = workbook.add_format({
-                    'bold': True, 'bg_color': '#1f4e79', 'font_color': 'white', 'border': 1
+                    'bold': True,
+                    'bg_color': '#1f4e79',
+                    'font_color': 'white',
+                    'border': 1,
+                    'font_name': 'Arial',
+                    'font_size': 11
                 })
                 for col_num, value in enumerate(raw_df.columns):
                     worksheet.write(0, col_num, value, header_fmt)
 
-                # Currency
-                worksheet.set_column('C:C', 15, workbook.add_format({'num_format': '€#,##0.00'}))
-                worksheet.set_column('B:B', 12, workbook.add_format({'num_format': 'dd/mm/yyyy'}))
+                # Column formats
+                currency_fmt = workbook.add_format({'num_format': '€#,##0.00'})
+                date_fmt = workbook.add_format({'num_format': 'dd/mm/yyyy'})
+                worksheet.set_column('C:C', 15, currency_fmt)  # Open_Amount
+                worksheet.set_column('B:B', 12, date_fmt)      # Due_Date
                 worksheet.freeze_panes(1, 0)
-
             buffer.seek(0)
             return buffer
 
@@ -205,6 +221,7 @@ if uploaded_file:
                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
     except Exception as e:
-        st.error(f"Error: {str(e)}")
+        st.error(f"Error processing file: {str(e)}")
+        st.stop()
 else:
-    st.info("Upload your Excel → Click bar → See raw data → Export Raw")
+    st.info("Upload your Excel file → Click bar → See raw data → Export Raw")
