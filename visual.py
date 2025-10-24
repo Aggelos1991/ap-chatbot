@@ -3,12 +3,13 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import io
-from openpyxl.styles import Font, PatternFill, Alignment
-from openpyxl.utils import get_column_letter
+import xlsxwriter
+from openpyxl.utils.dataframe import dataframe_to_rows
+from openpyxl import Workbook
 
 st.set_page_config(page_title="Overdue Invoices", layout="wide")
 st.title("Overdue Invoices Dashboard")
-st.markdown("**Click bar → Raw data | Export → Pivot + Raw Data in Fancy Excel**")
+st.markdown("**Click bar → Raw data | Export → Real Pivot Table + Raw Data**")
 
 # Session state
 if 'clicked_vendor' not in st.session_state:
@@ -57,13 +58,12 @@ if uploaded_file:
         df['Overdue'] = df['Due_Date'] < today
         df['Status'] = df['Overdue'].map({True: 'Overdue', False: 'Not Overdue'})
 
-        # Aggregation
-        def agg_vendor(group):
-            total = group['Open_Amount'].sum()
-            overdue = group[group['Overdue']]['Open_Amount'].sum()
-            not_overdue = total - overdue
-            return pd.Series({'Total': total, 'Overdue': overdue, 'Not_Overdue': not_overdue})
-        summary = df.groupby('Vendor_Name').apply(agg_vendor).reset_index()
+        # Aggregation for chart
+        summary = df.groupby('Vendor_Name').agg(
+            Total=('Open_Amount', 'sum'),
+            Overdue=('Open_Amount', lambda x: x[df.loc[x.index, 'Overdue']]),
+            Not_Overdue=('Open_Amount', lambda x: x[~df.loc[x.index, 'Overdue']])
+        ).reset_index()
         top20 = summary.nlargest(20, 'Total')
 
         # Filters
@@ -134,7 +134,7 @@ if uploaded_file:
                 raw_details.to_excel(writer, index=False, sheet_name='Raw_Invoices')
             buffer.seek(0)
             st.download_button(
-                "Download This Vendor (Excel)",
+                "Download This Vendor",
                 data=buffer,
                 file_name=f"{show_vendor.replace(' ', '_')}_invoices.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -142,72 +142,80 @@ if uploaded_file:
         else:
             st.info("**Click any bar** to see raw invoice lines.")
 
-        # EXPORT ALL WITH PIVOT + RAW
+        # EXPORT WITH REAL PIVOT TABLE
         st.markdown("---")
-        st.subheader("Export All Invoices by Filter (Pivot + Raw Data)")
+        st.subheader("Export All with Real Pivot Table")
 
         # Prepare datasets
         all_open = df.copy()
         all_overdue = df[df['Overdue']].copy()
         all_not_overdue = df[~df['Overdue']].copy()
 
-        # Pivot summaries
-        pivot_open = summary.copy()
-        pivot_overdue = summary[summary['Overdue'] > 0].copy()
-        pivot_not_overdue = summary[summary['Not_Overdue'] > 0].copy()
-
-        # Fancy Excel with 2 sheets
-        def make_pivot_excel(pivot_df, raw_df, filename):
+        def create_excel_with_pivot(raw_df, filename):
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-                # Sheet 1: Pivot
-                pivot_df.to_excel(writer, sheet_name='Summary', index=False, startrow=1)
-                # Sheet 2: Raw
-                raw_df.to_excel(writer, sheet_name='Raw_Data', index=False, startrow=1)
-
+                # Raw data
+                raw_df.to_excel(writer, sheet_name='Data', index=False, startrow=1, header=False)
                 workbook = writer.book
+                worksheet = writer.sheets['Data']
 
-                # Format Summary
-                ws1 = writer.sheets['Summary']
-                header_fmt = workbook.add_format({
-                    'bold': True, 'font_color': 'white', 'bg_color': '#1f4e79',
-                    'border': 1, 'align': 'center'
+                # Headers
+                header_format = workbook.add_format({
+                    'bold': True, 'text_wrap': True, 'valign': 'top',
+                    'fg_color': '#1f4e79', 'font_color': 'white', 'border': 1
                 })
-                euro_fmt = workbook.add_format({'num_format': '€#,##0.00'})
-                for col_num, col in enumerate(pivot_df.columns):
-                    ws1.write(1, col_num, col, header_fmt)
-                    if col in ['Total', 'Overdue', 'Not_Overdue']:
-                        ws1.set_column(col_num, col_num, 15, euro_fmt)
-                ws1.freeze_panes(2, 0)
+                for col_num, value in enumerate(raw_df.columns.values):
+                    worksheet.write(0, col_num, value, header_format)
 
-                # Format Raw Data
-                ws2 = writer.sheets['Raw_Data']
-                for col_num, col in enumerate(raw_df.columns):
-                    ws2.write(1, col_num, col, header_fmt)
-                    if col == 'Open_Amount':
-                        ws2.set_column(col_num, col_num, 15, euro_fmt)
-                    elif col == 'Due_Date':
-                        ws2.set_column(col_num, col_num, 12, workbook.add_format({'num_format': 'dd/mm/yyyy'}))
-                ws2.freeze_panes(2, 0)
+                # Currency
+                money_fmt = workbook.add_format({'num_format': '€#,##0.00'})
+                worksheet.set_column('D:D', 15, money_fmt)
+                worksheet.set_column('C:C', 12, workbook.add_format({'num_format': 'dd/mm/yyyy'}))
+
+                # Create pivot table
+                pivot = workbook.add_worksheet('Pivot')
+                writer.sheets['Pivot'] = pivot
+
+                # Pivot cache
+                cache = pd.pivot_table(
+                    raw_df,
+                    values='Open_Amount',
+                    index='Vendor_Name',
+                    columns='Status',
+                    aggfunc='sum',
+                    fill_value=0
+                ).reset_index()
+                cache.columns.name = None
+                cache.to_excel(writer, sheet_name='Pivot', startrow=3, index=False)
+
+                # Pivot table definition
+                pt = workbook.add_pivot_table()
+                pt.name = "VendorSummary"
+                pt.cache = cache
+                pt.ref = f"A4:{get_column_letter(len(cache.columns))}{len(cache)+3}"
+                pt.row_grand_totals = True
+                pt.col_grand_totals = True
+                pt.data_fields[0].number_format = '€#,##0.00'
+                pivot.add_pivot_table(pt)
 
             buffer.seek(0)
             return buffer
 
         col_a, col_b, col_c = st.columns(3)
         with col_a:
-            buf = make_pivot_excel(pivot_open, all_open, "all.xlsx")
-            st.download_button("Download All Open", data=buf, file_name="All_Open_Invoices.xlsx",
+            buf = create_excel_with_pivot(all_open, "all.xlsx")
+            st.download_button("Download All Open", data=buf, file_name="All_Open_With_Pivot.xlsx",
                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         with col_b:
-            buf = make_pivot_excel(pivot_overdue, all_overdue, "overdue.xlsx")
-            st.download_button("Download All Overdue", data=buf, file_name="All_Overdue_Invoices.xlsx",
+            buf = create_excel_with_pivot(all_overdue, "overdue.xlsx")
+            st.download_button("Download All Overdue", data=buf, file_name="All_Overdue_With_Pivot.xlsx",
                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         with col_c:
-            buf = make_pivot_excel(pivot_not_overdue, all_not_overdue, "not.xlsx")
-            st.download_button("Download All Not Overdue", data=buf, file_name="All_Not_Overdue_Invoices.xlsx",
+            buf = create_excel_with_pivot(all_not_overdue, "not.xlsx")
+            st.download_button("Download All Not Overdue", data=buf, file_name="All_Not_Overdue_With_Pivot.xlsx",
                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
     except Exception as e:
         st.error(f"Error: {str(e)}")
 else:
-    st.info("Upload your Excel → Click bar → See raw data → Export Pivot + Raw")
+    st.info("Upload your Excel → Click bar → See raw data → Export with REAL Pivot Table")
