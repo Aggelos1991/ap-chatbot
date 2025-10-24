@@ -7,7 +7,7 @@ import xlsxwriter
 
 st.set_page_config(page_title="Overdue Invoices", layout="wide")
 st.title("Overdue Invoices Dashboard")
-st.markdown("**Click bar → Raw data | Export → Fancy Excel (Insert Pivot in Excel)**")
+st.markdown("**Click bar → Raw data | Export → Raw Data Only (Graph = Excel)**")
 
 # Session state
 if 'clicked_vendor' not in st.session_state:
@@ -56,16 +56,9 @@ if uploaded_file:
         df['Overdue'] = df['Due_Date'] < today
         df['Status'] = df['Overdue'].map({True: 'Overdue', False: 'Not Overdue'})
 
-        # Aggregation
-        summary = (
-            df.groupby('Vendor_Name')
-            .apply(lambda g: pd.Series({
-                'Total': g['Open_Amount'].sum(),
-                'Overdue': g[g['Overdue']]['Open_Amount'].sum(),
-                'Not_Overdue': g[~g['Overdue']]['Open_Amount'].sum()
-            }))
-            .reset_index()
-        )
+        # Aggregation — EXACT MATCH TO EXCEL
+        summary = df.groupby(['Vendor_Name', 'Status'])['Open_Amount'].sum().unstack(fill_value=0).reset_index()
+        summary['Total'] = summary['Overdue'] + summary['Not Overdue']
         top20 = summary.nlargest(20, 'Total')
 
         # Filters
@@ -81,14 +74,14 @@ if uploaded_file:
 
         # Apply filter
         if status_filter == "Overdue Only":
-            base_df['Not_Overdue'] = 0
+            base_df['Not Overdue'] = 0
         elif status_filter == "Not Overdue Only":
             base_df['Overdue'] = 0
 
         # Melt
         plot_df = base_df.melt(
             id_vars='Vendor_Name',
-            value_vars=['Overdue', 'Not_Overdue'],
+            value_vars=['Overdue', 'Not Overdue'],
             var_name='Type',
             value_name='Amount'
         )
@@ -136,7 +129,7 @@ if uploaded_file:
 
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-                raw_details.to_excel(writer, index=False, sheet_name='Raw_Invoices')
+                raw_details.to_excel(writer, index=False, sheet_name='Raw_Data')
             buffer.seek(0)
             st.download_button(
                 "Download This Vendor",
@@ -147,60 +140,47 @@ if uploaded_file:
         else:
             st.info("**Click any bar** to see raw invoice lines.")
 
-        # EXPORT FANCY EXCEL (NO PIVOT — BUT READY FOR PIVOT)
+        # EXPORT RAW DATA ONLY
         st.markdown("---")
-        st.subheader("Export Fancy Excel (Insert Pivot in Excel)")
+        st.subheader("Export Raw Data Only")
 
-        def create_fancy_excel(raw_df, summary_df, filename):
+        def export_raw(raw_df, filename):
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-                # Raw data
                 raw_df.to_excel(writer, sheet_name='Raw_Data', index=False, startrow=1, header=False)
-                # Summary
-                summary_df.to_excel(writer, sheet_name='Summary', index=False, startrow=1, header=False)
-
                 workbook = writer.book
+                worksheet = writer.sheets['Raw_Data']
 
-                # Format Raw Data
-                ws_raw = writer.sheets['Raw_Data']
+                # Header
                 header_fmt = workbook.add_format({
                     'bold': True, 'bg_color': '#1f4e79', 'font_color': 'white', 'border': 1
                 })
                 for col_num, value in enumerate(raw_df.columns):
-                    ws_raw.write(0, col_num, value, header_fmt)
-                ws_raw.set_column('C:C', 15, workbook.add_format({'num_format': '€#,##0.00'}))
-                ws_raw.set_column('B:B', 12, workbook.add_format({'num_format': 'dd/mm/yyyy'}))
-                ws_raw.freeze_panes(1, 0)
+                    worksheet.write(0, col_num, value, header_fmt)
 
-                # Format Summary
-                ws_sum = writer.sheets['Summary']
-                for col_num, value in enumerate(summary_df.columns):
-                    ws_sum.write(0, col_num, value, header_fmt)
-                for col in ['Total', 'Overdue', 'Not_Overdue']:
-                    col_idx = summary_df.columns.get_loc(col)
-                    ws_sum.set_column(col_idx, col_idx, 15, workbook.add_format({'num_format': '€#,##0.00'}))
-                ws_sum.freeze_panes(1, 0)
+                # Currency
+                worksheet.set_column('C:C', 15, workbook.add_format({'num_format': '€#,##0.00'}))
+                worksheet.set_column('B:B', 12, workbook.add_format({'num_format': 'dd/mm/yyyy'}))
+                worksheet.freeze_panes(1, 0)
 
             buffer.seek(0)
             return buffer
 
         col_a, col_b, col_c = st.columns(3)
         with col_a:
-            buf = create_fancy_excel(df, summary, "all.xlsx")
-            st.download_button("Download All Open", data=buf, file_name="All_Open_Fancy.xlsx",
+            buf = export_raw(df, "all.xlsx")
+            st.download_button("Download All Open", data=buf, file_name="All_Open_Raw.xlsx",
                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         with col_b:
-            buf = create_fancy_excel(df[df['Overdue']], summary[summary['Overdue'] > 0], "overdue.xlsx")
-            st.download_button("Download All Overdue", data=buf, file_name="All_Overdue_Fancy.xlsx",
+            buf = export_raw(df[df['Overdue']], "overdue.xlsx")
+            st.download_button("Download All Overdue", data=buf, file_name="All_Overdue_Raw.xlsx",
                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         with col_c:
-            buf = create_fancy_excel(df[~df['Overdue']], summary[summary['Not_Overdue'] > 0], "not.xlsx")
-            st.download_button("Download All Not Overdue", data=buf, file_name="All_Not_Overdue_Fancy.xlsx",
+            buf = export_raw(df[~df['Overdue']], "not.xlsx")
+            st.download_button("Download All Not Overdue", data=buf, file_name="All_Not_Overdue_Raw.xlsx",
                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-        st.info("**Open in Excel → Select Raw_Data → Insert → Pivot Table → Done!**")
 
     except Exception as e:
         st.error(f"Error: {str(e)}")
 else:
-    st.info("Upload your Excel → Click bar → See raw data → Export Fancy Excel")
+    st.info("Upload your Excel → Click bar → See raw data → Export Raw")
