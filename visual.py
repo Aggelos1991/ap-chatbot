@@ -24,7 +24,7 @@ if uploaded_file:
         with pd.ExcelFile(uploaded_file) as xls:
             if 'Outstanding Invoices IB' not in xls.sheet_names:
                 st.error("Sheet 'Outstanding Invoices IB' not found.")
-               福祉st.stop()
+                st.stop()
 
             # === COLUMNS: A(0), B(1), E(4), G(6), BK(60), AD(29), AE(30), AF(31), AH(33), AJ(35), AN(39), BD(55)
             keep_cols = [0, 1, 4, 6, 60, 29, 30, 31, 33, 35, 39, 55]  # ← BK changed from 17 to 60
