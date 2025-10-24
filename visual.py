@@ -6,7 +6,6 @@ import io
 
 st.set_page_config(page_title="Overdue Invoices", layout="wide")
 st.title("Overdue Invoices – Priority Vendors Dashboard")
-st.markdown("**Click a bar → See only that segment's data | Export → Filtered Excel**")
 
 # Session state
 if 'clicked_vendor' not in st.session_state:
