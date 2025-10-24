@@ -27,7 +27,7 @@ if uploaded_file:
                 st.stop()
 
             # === COLUMNS: A(0), B(1), E(4), G(6), BK(60), AD(29), AE(30), AF(31), AH(33), AJ(35), AN(39), BD(55)
-            keep_cols = [0, 1, 4, 6, 60, 29, 30, 31, 33, 35, 39, 55]  # ← BK (60) instead of R (17)
+            keep_cols = [0, 1, 4, 6, 60, 29, 30, 31, 33, 35, 39, 55]  # ← BK (60) for Invoice Number
             df_raw = pd.read_excel(xls, sheet_name='Outstanding Invoices IB', header=None, usecols=keep_cols)
 
         # Find header row
@@ -39,10 +39,10 @@ if uploaded_file:
         start_row = header_row[0] + 1
         df = df_raw.iloc[start_row:].copy().reset_index(drop=True)
 
-        # Assign column names — 5th column is now BK (Alt_Document)
+        # Assign column names — 5th column is now BK (Invoice Number)
         df.columns = [
             'Vendor_Name', 'VAT_ID', 'Due_Date', 'Open_Amount',
-            'Alt_Document', 'Vendor_Email', 'Account_Email',
+            'Invoice_Number', 'Vendor_Email', 'Account_Email',  # ← Changed to Invoice_Number
             'AF', 'AH', 'AJ', 'AN', 'BD'
         ]
 
@@ -205,7 +205,7 @@ if uploaded_file:
             else:
                 raw_details = raw_details[[
                     'VAT_ID', 'Due_Date', 'Open_Amount', 'Status',
-                    'Alt_Document', 'Vendor_Email', 'Account_Email'
+                    'Invoice_Number', 'Vendor_Email', 'Account_Email'  # ← Now Invoice_Number
                 ]]
                 raw_details['Due_Date'] = raw_details['Due_Date'].dt.strftime('%Y-%m-%d')
                 raw_details['Open_Amount'] = raw_details['Open_Amount'].map('€{:,.2f}'.format)
@@ -248,7 +248,7 @@ if uploaded_file:
             buffer.seek(0)
             return buffer
 
-        export_df = df[['VAT_ID', 'Due_Date', 'Open_Amount', 'Status', 'Alt_Document', 'Vendor_Email', 'Account_Email']].copy()
+        export_df = df[['VAT_ID', 'Due_Date', 'Open_Amount', 'Status', 'Invoice_Number', 'Vendor_Email', 'Account_Email']].copy()
         export_df['Due_Date'] = export_df['Due_Date'].dt.strftime('%Y-%m-%d')
         export_df['Open_Amount'] = export_df['Open_Amount'].map('€{:,.2f}'.format)
 
