@@ -3,10 +3,12 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import io
+from openpyxl.styles import Font, PatternFill, Alignment
+from openpyxl.utils import get_column_letter
 
 st.set_page_config(page_title="Overdue Invoices", layout="wide")
 st.title("Overdue Invoices Dashboard")
-st.markdown("**Click bar → See raw invoice lines from your Excel — Top 20 Vendors**")
+st.markdown("**Click bar → See raw lines | Export All by Filter → Fancy Excel**")
 
 # Session state
 if 'clicked_vendor' not in st.session_state:
@@ -60,14 +62,8 @@ if uploaded_file:
             total = group['Open_Amount'].sum()
             overdue = group[group['Overdue']]['Open_Amount'].sum()
             not_overdue = total - overdue
-            return pd.Series({
-                'Total': total,
-                'Overdue_Amount': overdue,
-                'Not_Overdue_Amount': not_overdue
-            })
+            return pd.Series({'Total': total, 'Overdue_Amount': overdue, 'Not_Overdue_Amount': not_overdue})
         summary = df.groupby('Vendor_Name').apply(agg_vendor).reset_index()
-        
-        # CHANGED: TOP 20
         top20 = summary.nlargest(20, 'Total')
 
         # Filters
@@ -114,20 +110,14 @@ if uploaded_file:
         fig.update_traces(texttemplate='€%{text:,.0f}', textposition='inside')
         fig.update_layout(xaxis_title="Amount (€)", yaxis_title="Vendor", legend_title="Status")
 
-        # Plotly chart with click
-        chart = st.plotly_chart(
-            fig,
-            use_container_width=True,
-            key="vendor_chart",
-            on_select="rerun"
-        )
+        # Plotly chart
+        chart = st.plotly_chart(fig, use_container_width=True, key="vendor_chart", on_select="rerun")
 
         # Capture click
         if st.session_state.vendor_chart and 'selection' in st.session_state.vendor_chart:
             points = st.session_state.vendor_chart['selection']['points']
             if points:
-                clicked_vendor = points[0]['y']
-                st.session_state.clicked_vendor = clicked_vendor
+                st.session_state.clicked_vendor = points[0]['y']
 
         # Show raw data
         show_vendor = st.session_state.clicked_vendor
@@ -141,18 +131,76 @@ if uploaded_file:
 
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-                raw_details.to_excel(writer, index=False, sheet_name='Raw_Invoices')
+                raw_details.to_excel(writer, index=False, sheet_name='Invoices')
             buffer.seek(0)
             st.download_button(
-                "Download Raw Data (Excel)",
+                "Download This Vendor (Excel)",
                 data=buffer,
-                file_name=f"{show_vendor.replace(' ', '_')}_raw_invoices.xlsx",
+                file_name=f"{show_vendor.replace(' ', '_')}_invoices.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
         else:
-            st.info("**Click any bar** to see raw invoice lines from your Excel.")
+            st.info("**Click any bar** to see raw invoice lines.")
+
+        # EXPORT ALL BY FILTER — FANCY EXCEL
+        st.markdown("---")
+        st.subheader("Export All Invoices by Filter")
+
+        # Prepare data for each filter
+        all_open = df.copy()
+        all_overdue = df[df['Overdue']].copy()
+        all_not_overdue = df[~df['Overdue']].copy()
+
+        # Fancy Excel function
+        def make_fancy_excel(data, filename, sheet_name):
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+                data.to_excel(writer, index=False, sheet_name=sheet_name, startrow=1)
+                workbook = writer.book
+                worksheet = writer.sheets[sheet_name]
+
+                # Header format
+                header_fmt = workbook.add_format({
+                    'bold': True, 'font_color': 'white', 'bg_color': '#1f4e79',
+                    'border': 1, 'align': 'center', 'valign': 'vcenter'
+                })
+                for col_num, value in enumerate(data.columns):
+                    worksheet.write(1, col_num, value, header_fmt)
+
+                # Currency format
+                euro_fmt = workbook.add_format({'num_format': '€#,##0.00', 'align': 'right'})
+                worksheet.set_column('D:D', 15, euro_fmt)  # Open_Amount
+
+                # Date format
+                date_fmt = workbook.add_format({'num_format': 'dd/mm/yyyy'})
+                worksheet.set_column('C:C', 12, date_fmt)
+
+                # Freeze panes
+                worksheet.freeze_panes(2, 0)
+
+                # Auto-fit
+                for i, col in enumerate(data.columns):
+                    max_len = max(data[col].astype(str).map(len).max(), len(col)) + 2
+                    worksheet.set_column(i, i, min(max_len, 50))
+
+            buffer.seek(0)
+            return buffer
+
+        col_a, col_b, col_c = st.columns(3)
+        with col_a:
+            buf_all = make_fancy_excel(all_open, "all_open.xlsx", "All_Open")
+            st.download_button("Download All Open", data=buf_all, file_name="All_Open_Invoices.xlsx",
+                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        with col_b:
+            buf_over = make_fancy_excel(all_overdue, "overdue.xlsx", "Overdue")
+            st.download_button("Download All Overdue", data=buf_over, file_name="All_Overdue_Invoices.xlsx",
+                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        with col_c:
+            buf_not = make_fancy_excel(all_not_overdue, "not_overdue.xlsx", "Not_Overdue")
+            st.download_button("Download All Not Overdue", data=buf_not, file_name="All_Not_Overdue_Invoices.xlsx",
+                               mime=" priority="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
     except Exception as e:
         st.error(f"Error: {str(e)}")
 else:
-    st.info("Upload your Excel → Click bar → See raw data")
+    st.info("Upload your Excel → Click bar → See raw data → Export All")
