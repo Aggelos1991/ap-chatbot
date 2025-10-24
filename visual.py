@@ -3,15 +3,11 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import io
-from openpyxl import Workbook
-from openpyxl.pivot.table import PivotTable, PivotField, PivotCacheDefinition, PivotCacheRecords
-from openpyxl.utils.dataframe import dataframe_to_rows
-from openpyxl.styles import Font, PatternFill
-from openpyxl.utils import get_column_letter
+import xlsxwriter
 
 st.set_page_config(page_title="Overdue Invoices", layout="wide")
 st.title("Overdue Invoices Dashboard")
-st.markdown("**Click bar → Raw data | Export → Real Pivot Table + Raw Data**")
+st.markdown("**Click bar → Raw data | Export → Fancy Excel (Insert Pivot in Excel)**")
 
 # Session state
 if 'clicked_vendor' not in st.session_state:
@@ -139,7 +135,7 @@ if uploaded_file:
             st.dataframe(raw_details, use_container_width=True)
 
             buffer = io.BytesIO()
-            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+            with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
                 raw_details.to_excel(writer, index=False, sheet_name='Raw_Invoices')
             buffer.seek(0)
             st.download_button(
@@ -151,82 +147,60 @@ if uploaded_file:
         else:
             st.info("**Click any bar** to see raw invoice lines.")
 
-        # EXPORT WITH REAL PIVOT TABLE USING OPENPYXL
+        # EXPORT FANCY EXCEL (NO PIVOT — BUT READY FOR PIVOT)
         st.markdown("---")
-        st.subheader("Export All with Real Pivot Table")
+        st.subheader("Export Fancy Excel (Insert Pivot in Excel)")
 
-        def create_excel_with_real_pivot(raw_df, filename):
+        def create_fancy_excel(raw_df, summary_df, filename):
             buffer = io.BytesIO()
-            wb = Workbook()
-            ws_data = wb.active
-            ws_data.title = "Data"
+            with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+                # Raw data
+                raw_df.to_excel(writer, sheet_name='Raw_Data', index=False, startrow=1, header=False)
+                # Summary
+                summary_df.to_excel(writer, sheet_name='Summary', index=False, startrow=1, header=False)
 
-            # Write raw data
-            for r in dataframe_to_rows(raw_df, index=False, header=True):
-                ws_data.append(r)
+                workbook = writer.book
 
-            # Format headers
-            header_fill = PatternFill(start_color="1f4e79", end_color="1f4e79", fill_type="solid")
-            header_font = Font(color="FFFFFF", bold=True)
-            for cell in ws_data[1]:
-                cell.fill = header_fill
-                cell.font = header_font
+                # Format Raw Data
+                ws_raw = writer.sheets['Raw_Data']
+                header_fmt = workbook.add_format({
+                    'bold': True, 'bg_color': '#1f4e79', 'font_color': 'white', 'border': 1
+                })
+                for col_num, value in enumerate(raw_df.columns):
+                    ws_raw.write(0, col_num, value, header_fmt)
+                ws_raw.set_column('C:C', 15, workbook.add_format({'num_format': '€#,##0.00'}))
+                ws_raw.set_column('B:B', 12, workbook.add_format({'num_format': 'dd/mm/yyyy'}))
+                ws_raw.freeze_panes(1, 0)
 
-            # Format currency
-            for row in ws_data.iter_rows(min_row=2, min_col=4, max_col=4):
-                for cell in row:
-                    cell.number_format = '€#,##0.00'
+                # Format Summary
+                ws_sum = writer.sheets['Summary']
+                for col_num, value in enumerate(summary_df.columns):
+                    ws_sum.write(0, col_num, value, header_fmt)
+                for col in ['Total', 'Overdue', 'Not_Overdue']:
+                    col_idx = summary_df.columns.get_loc(col)
+                    ws_sum.set_column(col_idx, col_idx, 15, workbook.add_format({'num_format': '€#,##0.00'}))
+                ws_sum.freeze_panes(1, 0)
 
-            # Format date
-            for row in ws_data.iter_rows(min_row=2, min_col=3, max_col=3):
-                for cell in row:
-                    cell.number_format = 'dd/mm/yyyy'
-
-            # Create pivot sheet
-            ws_pivot = wb.create_sheet("Pivot")
-
-            # Pivot cache
-            cache = PivotCacheDefinition(
-                id=1,
-                cacheSource=ws_data
-            )
-            wb._pivots.append(cache)
-
-            # Pivot table
-            pt = PivotTable()
-            pt.cacheId = 1
-            pt.name = "VendorSummary"
-            pt.location = ws_pivot.cell(row=1, column=1).coordinate
-            pt.ref = f"A1:{get_column_letter(len(raw_df.columns))}{len(raw_df)+1}"
-
-            # Fields
-            pt.rowFields = [PivotField(name="Vendor_Name")]
-            pt.colFields = [PivotField(name="Status")]
-            pt.dataFields = [PivotField(name="Open_Amount", fld=3, subtotal="Sum", numberFormat='€#,##0.00')]
-            pt.rowGrandTotals = True
-            pt.colGrandTotals = True
-
-            ws_pivot.add_pivot(pt)
-
-            wb.save(buffer)
             buffer.seek(0)
             return buffer
 
         col_a, col_b, col_c = st.columns(3)
         with col_a:
-            buf = create_excel_with_real_pivot(all_open, "all.xlsx")
-            st.download_button("Download All Open", data=buf, file_name="All_Open_With_Pivot.xlsx",
+            buf = create_fancy_excel(df, summary, "all.xlsx")
+            st.download_button("Download All Open", data=buf, file_name="All_Open_Fancy.xlsx",
                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         with col_b:
-            buf = create_excel_with_real_pivot(all_overdue, "overdue.xlsx")
-            st.download_button("Download All Overdue", data=buf, file_name="All_Overdue_With_Pivot.xlsx",
+            buf = create_fancy_excel(df[df['Overdue']], summary[summary['Overdue'] > 0], "overdue.xlsx")
+            st.download_button("Download All Overdue", data=buf, file_name="All_Overdue_Fancy.xlsx",
                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         with col_c:
-            buf = create_excel_with_real_pivot(all_not_overdue, "not.xlsx")
-            st.download_button("Download All Not Overdue", data=buf, file_name="All_Not_Overdue_With_Pivot.xlsx",
+            buf = create_fancy_excel(df[~df['Overdue']], summary[summary['Not_Overdue'] > 0], "not.xlsx")
+            st.download_button("Download All Not Overdue", data=buf, file_name="All_Not_Overdue_Fancy.xlsx",
                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+        st.info("**Open in Excel → Select Raw_Data → Insert → Pivot Table → Done!**")
 
     except Exception as e:
         st.error(f"Error: {str(e)}")
 else:
-    st.info("Upload your Excel → Click bar → See raw data → Export with REAL Pivot Table")
+    st.info("Upload your Excel → Click bar → See raw data → Export Fancy Excel")
