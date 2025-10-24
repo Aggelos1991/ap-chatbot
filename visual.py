@@ -22,9 +22,12 @@ if uploaded_file:
             if 'Outstanding Invoices IB' not in xls.sheet_names:
                 st.error("Sheet 'Outstanding Invoices IB' not found.")
                 st.stop()
-            df_raw = pd.read_excel(xls, sheet_name='Outstanding Invoices IB', header=None)
 
-        # Find header "VENDOR"
+            # READ ONLY NEEDED COLUMNS: A(0), B(1), E(4), G(6), AD(29), AE(30), AF(31), AH(33), AJ(35), AN(39), BD(55)
+            keep_cols = [0, 1, 4, 6, 29, 30, 31, 33, 35, 39, 55]
+            df_raw = pd.read_excel(xls, sheet_name='Outstanding Invoices IB', header=None, usecols=keep_cols)
+
+        # Find header "VENDOR" in column A (index 0)
         header_row = df_raw[df_raw.iloc[:, 0].astype(str).str.contains("VENDOR", case=False, na=False)].index
         if header_row.empty:
             st.error("Header 'VENDOR' not found in column A.")
@@ -33,13 +36,47 @@ if uploaded_file:
         start_row = header_row[0] + 1
         df = df_raw.iloc[start_row:].copy().reset_index(drop=True)
 
-        if df.shape[1] < 31:
-            st.error("Need columns A to AE (31 columns).")
-            st.stop()
+        # Assign column names including filter columns
+        df.columns = [
+            'Vendor_Name', 'VAT_ID', 'Due_Date', 'Open_Amount',
+            'Vendor_Email', 'Account_Email',
+            'AF', 'AH', 'AJ', 'AN', 'BD'
+        ]
 
-        # Map columns: A=0, B=1, E=4, G=6, AD=29, AE=30
-        df = df.iloc[:, [0, 1, 4, 6, 29, 30]].copy()
-        df.columns = ['Vendor_Name', 'VAT_ID', 'Due_Date', 'Open_Amount', 'Vendor_Email', 'Account_Email']
+        # === UPDATED FILTER LOGIC ===
+        # 1. AF, AH, AJ, AN must be "YES"
+        # 2. BD must contain ANY of: ENTERTAINMENT, FALSE, REGULAR, PRIORITY VENDOR, PRIORITY VENDOR OS&E
+
+        yes_mask = (
+            (df['AF'].astype(str).str.strip().str.upper() == 'YES') &
+            (df['AH'].astype(str).str.strip().str.upper() == 'YES') &
+            (df['AJ'].astype(str).str.strip().str.upper() == 'YES') &
+            (df['AN'].astype(str).str.strip().str.upper() == 'YES')
+        )
+
+        # BD keywords (case-insensitive, partial match)
+        bd_keywords = [
+            'ENTERTAINMENT',
+            'FALSE',
+            'REGULAR',
+            'PRIORITY VENDOR',
+            'PRIORITY VENDOR OS&E'
+        ]
+
+        bd_mask = df['BD'].astype(str).str.upper().apply(
+            lambda x: any(keyword in x for keyword in [k.upper() for k in bd_keywords])
+        )
+
+        # Combine both filters
+        filter_mask = yes_mask & bd_mask
+        df = df[filter_mask].reset_index(drop=True)
+
+        # DROP FILTER COLUMNS
+        df = df.drop(columns=['AF', 'AH', 'AJ', 'AN', 'BD'])
+
+        if df.empty:
+            st.warning("No invoices match the filter criteria (AF=YES, AH=YES, AJ=YES, AN=YES, and BD contains ENTERTAINMENT, FALSE, REGULAR, PRIORITY VENDOR, or PRIORITY VENDOR OS&E).")
+            st.stop()
 
         # Clean data
         df['Due_Date'] = pd.to_datetime(df['Due_Date'], errors='coerce')
@@ -48,7 +85,7 @@ if uploaded_file:
         df = df[df['Open_Amount'] > 0]
 
         if df.empty:
-            st.warning("No open invoices found.")
+            st.warning("No open invoices found after cleaning.")
             st.stop()
 
         # Overdue logic
@@ -110,7 +147,7 @@ if uploaded_file:
                 'Not Overdue': '#4682B4' # Steel Blue
             },
             height=max(500, len(plot_df) * 45),
-            text=None  # We'll add custom text
+            text=None
         )
 
         # ADD TOTAL LABEL ON TOP OF EACH BAR (BOLD, WHITE)
@@ -124,7 +161,7 @@ if uploaded_file:
             textfont=dict(
                 size=14,
                 color='white',
-                family='Arial Black'  # Bold font
+                family='Arial Black'
             ),
             showlegend=False,
             hoverinfo='skip'
@@ -180,7 +217,6 @@ if uploaded_file:
         def export_raw(raw_df, filename):
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-                # Write data starting at row 1 (header at row 0)
                 raw_df.to_excel(writer, sheet_name='Raw_Data', index=False, startrow=1, header=False)
                 workbook = writer.book
                 worksheet = writer.sheets['Raw_Data']
