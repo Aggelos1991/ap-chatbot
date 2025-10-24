@@ -16,7 +16,6 @@ if 'selected_vendor' not in st.session_state:
 uploaded_file = st.file_uploader("Upload your Excel file", type=['xlsx'])
 
 if uploaded_file:
-    try = True
     try:
         # Read sheet
         with pd.ExcelFile(uploaded_file) as xls:
@@ -41,9 +40,9 @@ if uploaded_file:
         df = df.iloc[:, [0, 1, 4, 6, 29, 30]].copy()
         df.columns = ['Vendor_Name', 'VAT_ID', 'Due_Date', 'Open_Amount', 'Vendor_Email', 'Account_Email']
 
-        # Clean
+        # Clean — FIXED LINE!
         df['Due_Date'] = pd.to_datetime(df['Due_Date'], errors='coerce')
-        df['Open_Amount'] = pd.to_numeric(df['Open_A Reference', errors='coerce')
+        df['Open_Amount'] = pd.to_numeric(df['Open_Amount'], errors='coerce')  # ← FIXED
         df = df.dropna(subset=['Vendor_Name', 'Open_Amount', 'Due_Date'])
         df = df[df['Open_Amount'] > 0]
 
@@ -69,11 +68,12 @@ if uploaded_file:
         col1, col2 = st.columns(2)
         with col1:
             status_filter = st.selectbox("Show", ["All Open", "Overdue Only", "Not Overdue Only"], key="status")
-        vendor_list = ["Top 10"] + sorted(df['Vendor_Name'].unique().tolist())
-        selected_vendor = st.selectbox("Select Vendor", vendor_list, key="vendor_select")
+        with col2:
+            vendor_list = ["Top 10"] + sorted(df['Vendor_Name'].unique().tolist())
+            selected_vendor = st.selectbox("Select Vendor", vendor_list, key="vendor_select")
 
         # Update session state
-        if selected_vendor != "Top 10":
+        if selected_vendor != "Top 10_Last":
             st.session_state.selected_vendor = selected_vendor
         else:
             st.session_state.selected_vendor = None
@@ -99,7 +99,7 @@ if uploaded_file:
         # Title
         title = "Top 10 Vendors by Open Amount" if selected_vendor == "Top 10" else f"{selected_vendor}"
 
-        # Bar chart with € and click
+        # Bar chart with €
         fig = px.bar(
             plot_df,
             x='Amount',
