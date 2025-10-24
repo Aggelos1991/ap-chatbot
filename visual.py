@@ -8,7 +8,7 @@ from openpyxl.utils import get_column_letter
 
 st.set_page_config(page_title="Overdue Invoices", layout="wide")
 st.title("Overdue Invoices Dashboard")
-st.markdown("**Click bar → See raw lines | Export All by Filter → Fancy Excel**")
+st.markdown("**Click bar → Raw data | Export → Pivot + Raw Data in Fancy Excel**")
 
 # Session state
 if 'clicked_vendor' not in st.session_state:
@@ -62,7 +62,7 @@ if uploaded_file:
             total = group['Open_Amount'].sum()
             overdue = group[group['Overdue']]['Open_Amount'].sum()
             not_overdue = total - overdue
-            return pd.Series({'Total': total, 'Overdue_Amount': overdue, 'Not_Overdue_Amount': not_overdue})
+            return pd.Series({'Total': total, 'Overdue': overdue, 'Not_Overdue': not_overdue})
         summary = df.groupby('Vendor_Name').apply(agg_vendor).reset_index()
         top20 = summary.nlargest(20, 'Total')
 
@@ -79,17 +79,17 @@ if uploaded_file:
 
         # Apply filter
         if status_filter == "Overdue Only":
-            base_df['Not_Overdue_Amount'] = 0
+            base_df['Not_Overdue'] = 0
         elif status_filter == "Not Overdue Only":
-            base_df['Overdue_Amount'] = 0
+            base_df['Overdue'] = 0
 
         # Melt
         plot_df = base_df.melt(
             id_vars='Vendor_Name',
-            value_vars=['Overdue_Amount', 'Not_Overdue_Amount'],
+            value_vars=['Overdue', 'Not_Overdue'],
             var_name='Type',
             value_name='Amount'
-        ).replace({'Overdue_Amount': 'Overdue', 'Not_Overdue_Amount': 'Not Overdue'})
+        ).replace({'Overdue': 'Overdue', 'Not_Overdue': 'Not Overdue'})
         plot_df = plot_df[plot_df['Amount'] > 0]
 
         # Title
@@ -131,7 +131,7 @@ if uploaded_file:
 
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-                raw_details.to_excel(writer, index=False, sheet_name='Invoices')
+                raw_details.to_excel(writer, index=False, sheet_name='Raw_Invoices')
             buffer.seek(0)
             st.download_button(
                 "Download This Vendor (Excel)",
@@ -142,77 +142,72 @@ if uploaded_file:
         else:
             st.info("**Click any bar** to see raw invoice lines.")
 
-        # EXPORT ALL BY FILTER — FANCY EXCEL
+        # EXPORT ALL WITH PIVOT + RAW
         st.markdown("---")
-        st.subheader("Export All Invoices by Filter")
+        st.subheader("Export All Invoices by Filter (Pivot + Raw Data)")
 
-        # Prepare data
+        # Prepare datasets
         all_open = df.copy()
         all_overdue = df[df['Overdue']].copy()
         all_not_overdue = df[~df['Overdue']].copy()
 
-        # Fancy Excel function
-        def make_fancy_excel(data, filename, sheet_name):
+        # Pivot summaries
+        pivot_open = summary.copy()
+        pivot_overdue = summary[summary['Overdue'] > 0].copy()
+        pivot_not_overdue = summary[summary['Not_Overdue'] > 0].copy()
+
+        # Fancy Excel with 2 sheets
+        def make_pivot_excel(pivot_df, raw_df, filename):
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-                data.to_excel(writer, index=False, sheet_name=sheet_name, startrow=1)
-                workbook = writer.book
-                worksheet = writer.sheets[sheet_name]
+                # Sheet 1: Pivot
+                pivot_df.to_excel(writer, sheet_name='Summary', index=False, startrow=1)
+                # Sheet 2: Raw
+                raw_df.to_excel(writer, sheet_name='Raw_Data', index=False, startrow=1)
 
-                # Header format
+                workbook = writer.book
+
+                # Format Summary
+                ws1 = writer.sheets['Summary']
                 header_fmt = workbook.add_format({
                     'bold': True, 'font_color': 'white', 'bg_color': '#1f4e79',
-                    'border': 1, 'align': 'center', 'valign': 'vcenter'
+                    'border': 1, 'align': 'center'
                 })
-                for col_num, value in enumerate(data.columns):
-                    worksheet.write(1, col_num, value, header_fmt)
+                euro_fmt = workbook.add_format({'num_format': '€#,##0.00'})
+                for col_num, col in enumerate(pivot_df.columns):
+                    ws1.write(1, col_num, col, header_fmt)
+                    if col in ['Total', 'Overdue', 'Not_Overdue']:
+                        ws1.set_column(col_num, col_num, 15, euro_fmt)
+                ws1.freeze_panes(2, 0)
 
-                # Currency
-                euro_fmt = workbook.add_format({'num_format': '€#,##0.00', 'align': 'right'})
-                worksheet.set_column('C:C', 15, euro_fmt)  # Open_Amount
-
-                # Date
-                date_fmt = workbook.add_format({'num_format': 'dd/mm/yyyy'})
-                worksheet.set_column('B:B', 12, date_fmt)
-
-                # Freeze
-                worksheet.freeze_panes(2, 0)
-
-                # Auto-fit
-                for i, col in enumerate(data.columns):
-                    max_len = max(data[col].astype(str).map(len).max(), len(col)) + 2
-                    worksheet.set_column(i, i, min(max_len, 50))
+                # Format Raw Data
+                ws2 = writer.sheets['Raw_Data']
+                for col_num, col in enumerate(raw_df.columns):
+                    ws2.write(1, col_num, col, header_fmt)
+                    if col == 'Open_Amount':
+                        ws2.set_column(col_num, col_num, 15, euro_fmt)
+                    elif col == 'Due_Date':
+                        ws2.set_column(col_num, col_num, 12, workbook.add_format({'num_format': 'dd/mm/yyyy'}))
+                ws2.freeze_panes(2, 0)
 
             buffer.seek(0)
             return buffer
 
         col_a, col_b, col_c = st.columns(3)
         with col_a:
-            buf_all = make_fancy_excel(all_open, "all_open.xlsx", "All_Open")
-            st.download_button(
-                "Download All Open",
-                data=buf_all,
-                file_name="All_Open_Invoices.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+            buf = make_pivot_excel(pivot_open, all_open, "all.xlsx")
+            st.download_button("Download All Open", data=buf, file_name="All_Open_Invoices.xlsx",
+                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         with col_b:
-            buf_over = make_fancy_excel(all_overdue, "overdue.xlsx", "Overdue")
-            st.download_button(
-                "Download All Overdue",
-                data=buf_over,
-                file_name="All_Overdue_Invoices.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+            buf = make_pivot_excel(pivot_overdue, all_overdue, "overdue.xlsx")
+            st.download_button("Download All Overdue", data=buf, file_name="All_Overdue_Invoices.xlsx",
+                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         with col_c:
-            buf_not = make_fancy_excel(all_not_overdue, "not_overdue.xlsx", "Not_Overdue")
-            st.download_button(
-                "Download All Not Overdue",
-                data=buf_not,
-                file_name="All_Not_Overdue_Invoices.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+            buf = make_pivot_excel(pivot_not_overdue, all_not_overdue, "not.xlsx")
+            st.download_button("Download All Not Overdue", data=buf, file_name="All_Not_Overdue_Invoices.xlsx",
+                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
     except Exception as e:
         st.error(f"Error: {str(e)}")
 else:
-    st.info("Upload your Excel → Click bar → See raw data → Export All")
+    st.info("Upload your Excel → Click bar → See raw data → Export Pivot + Raw")
