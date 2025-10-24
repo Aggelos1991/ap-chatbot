@@ -32,7 +32,7 @@ if uploaded_file:
 
         # Find header row
         header_row = df_raw[df_raw.iloc[:, 0].astype(str).str.contains("VENDOR", case=False, na=False)].index
-        if header11_row.empty:
+        if header_row.empty:
             st.error("Header 'VENDOR' not found in column A.")
             st.stop()
 
