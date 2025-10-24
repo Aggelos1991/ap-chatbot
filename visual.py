@@ -57,37 +57,35 @@ if uploaded_file:
         df['Status'] = df['Overdue'].map({True: 'Overdue', False: 'Not Overdue'})
 
         # === YOUR PREFILTERS (ON BY DEFAULT) ===
-        # Load full data with filters
         df_full = df_raw.iloc[start_row:].copy().reset_index(drop=True)
         if df_full.shape[1] >= 56:
             df_full = df_full.iloc[:, [0, 1, 4, 6, 29, 30, 31, 33, 35, 37, 55]].copy()
             df_full.columns = ['Vendor_Name', 'VAT_ID', 'Due_Date', 'Open_Amount', 'Vendor_Email', 'Account_Email',
                               'AF_Filter', 'AH_Filter', 'AJ_Filter', 'AN_Filter', 'BD_Filter']
 
-            # Apply your filters
             df_full['Due_Date'] = pd.to_datetime(df_full['Due_Date'], errors='coerce')
             df_full['Open_Amount'] = pd.to_numeric(df_full['Open_Amount'], errors='coerce')
             df_full = df_full.dropna(subset=['Vendor_Name', 'Open_Amount', 'Due_Date'])
             df_full = df_full[df_full['Open_Amount'] > 0]
 
-            # === YOUR EXACT FILTERS ===
+            # Apply filters
             df_full = df_full[df_full['AF_Filter'] == 'YES']
             df_full = df_full[df_full['AH_Filter'] == 'YES']
             df_full = df_full[df_full['AJ_Filter'] == 'YES']
             df_full = df_full[df_full['AN_Filter'] == 'YES']
             df_full = df_full[df_full['BD_Filter'].isin(['ENTERTAINMENT', 'PRIORITY VENDOR', 'PRIORITY VENDOR OS&E', 'REGULAR'])]
 
-            # Overdue
             df_full['Overdue'] = df_full['Due_Date'] < today
             df_full['Status'] = df_full['Overdue'].map({True: 'Overdue', False: 'Not Overdue'})
 
-            # Use filtered data
             df = df_full[['Vendor_Name', 'VAT_ID', 'Due_Date', 'Open_Amount', 'Vendor_Email', 'Account_Email', 'Status']].copy()
 
-        # === ORIGINAL CODE BELOW (UNCHANGED) ===
-        # FULL SUMMARY
-        full_summary = df.groupby(['Vendor_Name', 'Status'])['Open_Amount'].sum().unstack(fill_value=0).reset_index()
-        full_summary['Total'] = full_summary.get('Overdue', 0) + full_summary.get('Not Overdue', 0)
+        # === ORIGINAL CODE BELOW (FIXED) ===
+        # Summary with safe column access
+        summary = df.groupby(['Vendor_Name', 'Status'])['Open_Amount'].sum().unstack(fill_value=0).reset_index()
+        summary['Overdue'] = summary.get('Overdue', 0)
+        summary['Not Overdue'] = summary.get('Not Overdue', 0)
+        summary['Total'] = summary['Overdue'] + summary['Not Overdue']
 
         # Filters
         col1, col2 = st.columns(2)
@@ -99,24 +97,29 @@ if uploaded_file:
 
         # GET TOP 20 FOR CURRENT FILTER
         if status_filter == "All Open":
-            top_df = full_summary.nlargest(20, 'Total')
+            top_df = summary.nlargest(20, 'Total').copy()
             title = "Top 20 Vendors (All Open)"
         elif status_filter == "Overdue Only":
-            top_df = full_summary.nlargest(20, 'Overdue').copy()
+            top_df = summary.nlargest(20, 'Overdue').copy()
             top_df['Not Overdue'] = 0
             title = "Top 20 Vendors (Overdue Only)"
         else:
-            top_df = full_summary.nlargest(20, 'Not Overdue').copy()
+            top_df = summary.nlargest(20, 'Not Overdue').copy()
             top_df['Overdue'] = 0
             title = "Top 20 Vendors (Not Overdue Only)"
 
         # Base data
-        base_df = top_df if selected_vendor == "Top 20" else full_summary[full_summary['Vendor_Name'] == selected_vendor]
+        base_df = top_df if selected_vendor == "Top 20" else summary[summary['Vendor_Name'] == selected_vendor]
 
-        # Melt
+        # Melt — SAFE COLUMNS
+        value_cols = [col for col in ['Overdue', 'Not Overdue'] if col in base_df.columns]
+        if not value_cols:
+            st.warning("No data to display after filtering.")
+            st.stop()
+
         plot_df = base_df.melt(
             id_vars='Vendor_Name',
-            value_vars=['Overdue', 'Not Overdue'],
+            value_vars=value_cols,
             var_name='Type',
             value_name='Amount'
         )
@@ -126,7 +129,7 @@ if uploaded_file:
         total_per_vendor = base_df.set_index('Vendor_Name')['Total'].to_dict()
         plot_df['Total'] = plot_df['Vendor_Name'].map(total_per_vendor)
 
-        # Bar chart — MANLY COLORS
+        # Bar chart
         fig = px.bar(
             plot_df,
             x='Amount',
