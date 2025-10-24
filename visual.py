@@ -64,7 +64,7 @@ if uploaded_file:
 
         # === Data Cleaning ===
         df['Due_Date'] = pd.to_datetime(df['Due_Date'], errors='coerce')
-        df['Open_Amount'] = pd.to_numeric(df['Open_Amount'], errors='coerce')  # Fixed: was 'cocoerce'
+        df['Open_Amount'] = pd.to_numeric(df['Open_Amount'], errors='coerce')
         df = df.dropna(subset=['Vendor_Name', 'Open_Amount', 'Due_Date'])
         df = df[df['Open_Amount'] > 0]
 
@@ -233,8 +233,8 @@ if uploaded_file:
         st.markdown("---")
         st.subheader("Export Raw Data Only")
 
-        def export_raw(raw_df  # Fixed indentation
-            raw_df, filename):
+        # === FIXED FUNCTION: Proper syntax and indentation ===
+        def export_raw(raw_df, filename):
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
                 raw_df.to_excel(writer, sheet_name='Raw_Data', index=False,
