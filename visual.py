@@ -4,9 +4,6 @@ import pandas as pd
 import plotly.express as px
 import io
 import xlsxwriter
-from openpyxl import Workbook
-from openpyxl.utils import get_column_letter
-from openpyxl.styles import Font, PatternFill
 
 st.set_page_config(page_title="Overdue Invoices", layout="wide")
 st.title("Overdue Invoices Dashboard")
@@ -59,7 +56,7 @@ if uploaded_file:
         df['Overdue'] = df['Due_Date'] < today
         df['Status'] = df['Overdue'].map({True: 'Overdue', False: 'Not Overdue'})
 
-        # FIXED: Safe aggregation — NO LAMBDA INDEXING
+        # Aggregation — SAFE
         summary = (
             df.groupby('Vendor_Name')
             .apply(lambda g: pd.Series({
@@ -100,7 +97,7 @@ if uploaded_file:
         # Title
         title = "Top 20 Vendors" if selected_vendor == "Top 20" else selected_vendor
 
-        # Bar chart
+        # Bar chart — MANLY COLORS
         fig = px.bar(
             plot_df,
             x='Amount',
@@ -108,7 +105,10 @@ if uploaded_file:
             color='Type',
             orientation='h',
             title=title,
-            color_discrete_map={'Overdue': '#FF5252', 'Not Overdue': '#4CAF50'},
+            color_discrete_map={
+                'Overdue': '#8B0000',      # Dark Red
+                'Not Overdue': '#4682B4'   # Steel Blue
+            },
             text='Amount',
             height=max(400, len(plot_df) * 45)
         )
@@ -175,7 +175,8 @@ if uploaded_file:
                 # Currency
                 money_fmt = workbook.add_format({'num_format': '€#,##0.00'})
                 worksheet.set_column('D:D', 15, money_fmt)
-                worksheet.set_column('C:C', 12, workbook.add_format_format({'num_format': 'dd/mm/yyyy'}))
+                # FIXED: add_format instead of add_format_format
+                worksheet.set_column('C:C', 12, workbook.add_format({'num_format': 'dd/mm/yyyy'}))
 
                 # Pivot sheet
                 pivot = workbook.add_worksheet('Pivot')
