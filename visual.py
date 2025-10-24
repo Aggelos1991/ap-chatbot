@@ -36,7 +36,7 @@ if uploaded_file:
             st.error("Need A to AE.")
             st.stop()
 
-        # Map columns: A, B, E, G, AD, AE
+        # Map columns
         df = df.iloc[:, [0, 1, 4, 6, 29, 30]].copy()
         df.columns = ['Vendor_Name', 'VAT_ID', 'Due_Date', 'Open_Amount', 'Vendor_Email', 'Account_Email']
 
@@ -55,7 +55,7 @@ if uploaded_file:
         df['Overdue'] = df['Due_Date'] < today
         df['Status'] = df['Overdue'].map({True: 'Overdue', False: 'Not Overdue'})
 
-        # FIXED: Safe aggregation using .apply()
+        # Aggregation for chart
         def agg_vendor(group):
             total = group['Open_Amount'].sum()
             overdue = group[group['Overdue']]['Open_Amount'].sum()
@@ -65,7 +65,6 @@ if uploaded_file:
                 'Overdue_Amount': overdue,
                 'Not_Overdue_Amount': not_overdue
             })
-
         summary = df.groupby('Vendor_Name').apply(agg_vendor).reset_index()
         top10 = summary.nlargest(10, 'Total')
 
@@ -113,17 +112,23 @@ if uploaded_file:
         fig.update_traces(texttemplate='€%{text:,.0f}', textposition='inside')
         fig.update_layout(xaxis_title="Amount (€)", yaxis_title="Vendor", legend_title="Status")
 
-        # Click → Set vendor
-        def handle_click(trace, points, state):
-            if points.point_inds:
-                vendor = plot_df.iloc[points.point_inds[0]]['Vendor_Name']
-                st.session_state.clicked_vendor = vendor
+        # PLOTLY CHART WITH CLICK CAPTURE
+        chart = st.plotly_chart(
+            fig,
+            use_container_width=True,
+            key="vendor_chart",
+            on_select="rerun"
+        )
 
-        st.plotly_chart(fig, use_container_width=True, on_select="rerun", selection_mode="points", key="chart")
+        # CAPTURE CLICK FROM PLOTLY
+        if st.session_state.vendor_chart and 'selection' in st.session_state.vendor_chart:
+            points = st.session_state.vendor_chart['selection']['points']
+            if points:
+                clicked_vendor = points[0]['y']
+                st.session_state.clicked_vendor = clicked_vendor
 
-        # SHOW RAW DATA FROM CLICKED VENDOR
+        # SHOW RAW DATA
         show_vendor = st.session_state.clicked_vendor
-
         if show_vendor:
             st.subheader(f"Raw Invoices: {show_vendor}")
             raw_details = df[df['Vendor_Name'] == show_vendor].copy()
@@ -132,7 +137,7 @@ if uploaded_file:
             raw_details['Open_Amount'] = raw_details['Open_Amount'].map('€{:,.2f}'.format)
             st.dataframe(raw_details, use_container_width=True)
 
-            # Export raw
+            # Export
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
                 raw_details.to_excel(writer, index=False, sheet_name='Raw_Invoices')
