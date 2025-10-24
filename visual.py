@@ -55,13 +55,18 @@ if uploaded_file:
         df['Overdue'] = df['Due_Date'] < today
         df['Status'] = df['Overdue'].map({True: 'Overdue', False: 'Not Overdue'})
 
-        # Aggregation for chart
-        summary = df.groupby('Vendor_Name').agg(
-            Total=('Open_Amount', 'sum'),
-            Overdue_Amount=('Open_Amount', lambda x: x[df.loc[x.index, 'Overdue']]),
-            Not_Overdue_Amount=('Open_Amount', lambda x: x[~df.loc[x.index, 'Overdue']])
-        ).reset_index()
-        summary['Not_Overdue_Amount'] = summary['Total'] - summary['Overdue_Amount']
+        # FIXED: Safe aggregation using .apply()
+        def agg_vendor(group):
+            total = group['Open_Amount'].sum()
+            overdue = group[group['Overdue']]['Open_Amount'].sum()
+            not_overdue = total - overdue
+            return pd.Series({
+                'Total': total,
+                'Overdue_Amount': overdue,
+                'Not_Overdue_Amount': not_overdue
+            })
+
+        summary = df.groupby('Vendor_Name').apply(agg_vendor).reset_index()
         top10 = summary.nlargest(10, 'Total')
 
         # Filters
@@ -72,7 +77,7 @@ if uploaded_file:
             vendor_list = ["Top 10"] + sorted(df['Vendor_Name'].unique().tolist())
             selected_vendor = st.selectbox("Select Vendor", vendor_list, key="vendor_select")
 
-        # Base data for chart
+        # Base data
         base_df = top10 if selected_vendor == "Top 10" else summary[summary['Vendor_Name'] == selected_vendor]
 
         # Apply filter
@@ -108,7 +113,7 @@ if uploaded_file:
         fig.update_traces(texttemplate='€%{text:,.0f}', textposition='inside')
         fig.update_layout(xaxis_title="Amount (€)", yaxis_title="Vendor", legend_title="Status")
 
-        # CLICK → Set vendor
+        # Click → Set vendor
         def handle_click(trace, points, state):
             if points.point_inds:
                 vendor = plot_df.iloc[points.point_inds[0]]['Vendor_Name']
@@ -127,7 +132,7 @@ if uploaded_file:
             raw_details['Open_Amount'] = raw_details['Open_Amount'].map('€{:,.2f}'.format)
             st.dataframe(raw_details, use_container_width=True)
 
-            # Export raw data
+            # Export raw
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
                 raw_details.to_excel(writer, index=False, sheet_name='Raw_Invoices')
