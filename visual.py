@@ -7,7 +7,7 @@ import xlsxwriter
 
 st.set_page_config(page_title="Overdue Invoices", layout="wide")
 st.title("Overdue Invoices Dashboard")
-st.markdown("**FILTERED ONLY → Click bar & Export = Filtered Raw Data**")
+st.markdown("**Click bar → Raw data | Export → Raw Data Only (Graph = Excel)**")
 
 # Session state
 if 'clicked_vendor' not in st.session_state:
@@ -33,14 +33,13 @@ if uploaded_file:
 
         start_row = header_row[0] + 1
         df = df_raw.iloc[start_row:].copy().reset_index(drop=True)
-        if df.shape[1] < 56:
-            st.error("Need up to BD (column 56).")
+        if df.shape[1] < 31:
+            st.error("Need A to AE.")
             st.stop()
 
         # Map columns
-        df = df.iloc[:, [0, 1, 4, 6, 29, 30, 31, 33, 35, 37, 55]].copy()
-        df.columns = ['Vendor_Name', 'VAT_ID', 'Due_Date', 'Open_Amount', 'Vendor_Email', 'Account_Email',
-                      'AF_Filter', 'AH_Filter', 'AJ_Filter', 'AN_Filter', 'BD_Filter']
+        df = df.iloc[:, [0, 1, 4, 6, 29, 30]].copy()
+        df.columns = ['Vendor_Name', 'VAT_ID', 'Due_Date', 'Open_Amount', 'Vendor_Email', 'Account_Email']
 
         # Clean
         df['Due_Date'] = pd.to_datetime(df['Due_Date'], errors='coerce')
@@ -57,73 +56,62 @@ if uploaded_file:
         df['Overdue'] = df['Due_Date'] < today
         df['Status'] = df['Overdue'].map({True: 'Overdue', False: 'Not Overdue'})
 
-        # === YOUR EXACT FILTERS (ALL ON BY DEFAULT) ===
-        st.markdown("---")
-        st.subheader("Your Filters (ON by default)")
+        # === YOUR PREFILTERS (ON BY DEFAULT) ===
+        # Load full data with filters
+        df_full = df_raw.iloc[start_row:].copy().reset_index(drop=True)
+        if df_full.shape[1] >= 56:
+            df_full = df_full.iloc[:, [0, 1, 4, 6, 29, 30, 31, 33, 35, 37, 55]].copy()
+            df_full.columns = ['Vendor_Name', 'VAT_ID', 'Due_Date', 'Open_Amount', 'Vendor_Email', 'Account_Email',
+                              'AF_Filter', 'AH_Filter', 'AJ_Filter', 'AN_Filter', 'BD_Filter']
 
-        col1, col2, col3, col4, col5 = st.columns(5)
+            # Apply your filters
+            df_full['Due_Date'] = pd.to_datetime(df_full['Due_Date'], errors='coerce')
+            df_full['Open_Amount'] = pd.to_numeric(df_full['Open_Amount'], errors='coerce')
+            df_full = df_full.dropna(subset=['Vendor_Name', 'Open_Amount', 'Due_Date'])
+            df_full = df_full[df_full['Open_Amount'] > 0]
 
-        with col1:
-            af_on = st.checkbox("AF = YES", value=True)
-            if af_on:
-                df = df[df['AF_Filter'] == 'YES']
+            # === YOUR EXACT FILTERS ===
+            df_full = df_full[df_full['AF_Filter'] == 'YES']
+            df_full = df_full[df_full['AH_Filter'] == 'YES']
+            df_full = df_full[df_full['AJ_Filter'] == 'YES']
+            df_full = df_full[df_full['AN_Filter'] == 'YES']
+            df_full = df_full[df_full['BD_Filter'].isin(['ENTERTAINMENT', 'PRIORITY VENDOR', 'PRIORITY VENDOR OS&E', 'REGULAR'])]
 
-        with col2:
-            ah_on = st.checkbox("AH = YES", value=True)
-            if ah_on:
-                df = df[df['AH_Filter'] == 'YES']
+            # Overdue
+            df_full['Overdue'] = df_full['Due_Date'] < today
+            df_full['Status'] = df_full['Overdue'].map({True: 'Overdue', False: 'Not Overdue'})
 
-        with col3:
-            aj_on = st.checkbox("AJ = YES", value=True)
-            if aj_on:
-                df = df[df['AJ_Filter'] == 'YES']
+            # Use filtered data
+            df = df_full[['Vendor_Name', 'VAT_ID', 'Due_Date', 'Open_Amount', 'Vendor_Email', 'Account_Email', 'Status']].copy()
 
-        with col4:
-            an_on = st.checkbox("AN = YES", value=True)
-            if an_on:
-                df = df[df['AN_Filter'] == 'YES']
-
-        with col5:
-            bd_on = st.checkbox("BD = ENTERTAINMENT / PRIORITY / REGULAR", value=True)
-            if bd_on:
-                allowed_bd = ['ENTERTAINMENT', 'PRIORITY VENDOR', 'PRIORITY VENDOR OS&E', 'REGULAR']
-                df = df[df['BD_Filter'].isin(allowed_bd)]
-
-        # === FILTERED DATA ONLY ===
-        filtered_df = df.copy()
-
-        # Summary from filtered data
-        summary = filtered_df.groupby(['Vendor_Name', 'Status'])['Open_Amount'].sum().unstack(fill_value=0).reset_index()
-        # Ensure both columns exist
-        if 'Overdue' not in summary.columns:
-            summary['Overdue'] = 0
-        if 'Not Overdue' not in summary.columns:
-            summary['Not Overdue'] = 0
-        summary['Total'] = summary['Overdue'] + summary['Not Overdue']
+        # === ORIGINAL CODE BELOW (UNCHANGED) ===
+        # FULL SUMMARY
+        full_summary = df.groupby(['Vendor_Name', 'Status'])['Open_Amount'].sum().unstack(fill_value=0).reset_index()
+        full_summary['Total'] = full_summary.get('Overdue', 0) + full_summary.get('Not Overdue', 0)
 
         # Filters
         col1, col2 = st.columns(2)
         with col1:
             status_filter = st.selectbox("Show", ["All Open", "Overdue Only", "Not Overdue Only"], key="status")
         with col2:
-            vendor_list = ["Top 20"] + sorted(filtered_df['Vendor_Name'].unique().tolist())
+            vendor_list = ["Top 20"] + sorted(df['Vendor_Name'].unique().tolist())
             selected_vendor = st.selectbox("Select Vendor", vendor_list, key="vendor_select")
 
-        # GET TOP 20 FROM FILTERED DATA
+        # GET TOP 20 FOR CURRENT FILTER
         if status_filter == "All Open":
-            top_df = summary.nlargest(20, 'Total').copy()
-            title = "Top 20 Vendors (Filtered)"
+            top_df = full_summary.nlargest(20, 'Total')
+            title = "Top 20 Vendors (All Open)"
         elif status_filter == "Overdue Only":
-            top_df = summary.nlargest(20, 'Overdue').copy()
+            top_df = full_summary.nlargest(20, 'Overdue').copy()
             top_df['Not Overdue'] = 0
-            title = "Top 20 Overdue (Filtered)"
+            title = "Top 20 Vendors (Overdue Only)"
         else:
-            top_df = summary.nlargest(20, 'Not Overdue').copy()
+            top_df = full_summary.nlargest(20, 'Not Overdue').copy()
             top_df['Overdue'] = 0
-            title = "Top 20 Not Overdue (Filtered)"
+            title = "Top 20 Vendors (Not Overdue Only)"
 
         # Base data
-        base_df = top_df if selected_vendor == "Top 20" else summary[summary['Vendor_Name'] == selected_vendor]
+        base_df = top_df if selected_vendor == "Top 20" else full_summary[full_summary['Vendor_Name'] == selected_vendor]
 
         # Melt
         plot_df = base_df.melt(
@@ -138,7 +126,7 @@ if uploaded_file:
         total_per_vendor = base_df.set_index('Vendor_Name')['Total'].to_dict()
         plot_df['Total'] = plot_df['Vendor_Name'].map(total_per_vendor)
 
-        # Bar chart
+        # Bar chart — MANLY COLORS
         fig = px.bar(
             plot_df,
             x='Amount',
@@ -182,11 +170,11 @@ if uploaded_file:
             if points:
                 st.session_state.clicked_vendor = points[0]['y']
 
-        # Show FILTERED raw data
+        # Show raw data
         show_vendor = st.session_state.clicked_vendor
         if show_vendor:
-            st.subheader(f"Filtered Raw Invoices: {show_vendor}")
-            raw_details = filtered_df[filtered_df['Vendor_Name'] == show_vendor].copy()
+            st.subheader(f"Raw Invoices: {show_vendor}")
+            raw_details = df[df['Vendor_Name'] == show_vendor].copy()
             raw_details = raw_details[['VAT_ID', 'Due_Date', 'Open_Amount', 'Status', 'Vendor_Email', 'Account_Email']]
             raw_details['Due_Date'] = raw_details['Due_Date'].dt.strftime('%Y-%m-%d')
             raw_details['Open_Amount'] = raw_details['Open_Amount'].map('€{:,.2f}'.format)
@@ -194,27 +182,27 @@ if uploaded_file:
 
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-                raw_details.to_excel(writer, index=False, sheet_name='Filtered_Raw_Data')
+                raw_details.to_excel(writer, index=False, sheet_name='Raw_Data')
             buffer.seek(0)
             st.download_button(
-                "Download This Vendor (Filtered)",
+                "Download This Vendor",
                 data=buffer,
-                file_name=f"{show_vendor.replace(' ', '_')}_filtered.xlsx",
+                file_name=f"{show_vendor.replace(' ', '_')}_invoices.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
         else:
-            st.info("**Click any bar** to see filtered raw invoice lines.")
+            st.info("**Click any bar** to see raw invoice lines.")
 
-        # EXPORT FILTERED RAW DATA ONLY
+        # EXPORT RAW DATA ONLY
         st.markdown("---")
-        st.subheader("Export Filtered Raw Data Only")
+        st.subheader("Export Raw Data Only")
 
-        def export_filtered(raw_df, name):
+        def export_raw(raw_df, filename):
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-                raw_df.to_excel(writer, sheet_name='Filtered_Raw_Data', index=False, startrow=1, header=False)
+                raw_df.to_excel(writer, sheet_name='Raw_Data', index=False, startrow=1, header=False)
                 workbook = writer.book
-                worksheet = writer.sheets['Filtered_Raw_Data']
+                worksheet = writer.sheets['Raw_Data']
 
                 header_fmt = workbook.add_format({
                     'bold': True, 'bg_color': '#1f4e79', 'font_color': 'white', 'border': 1
@@ -231,19 +219,19 @@ if uploaded_file:
 
         col_a, col_b, col_c = st.columns(3)
         with col_a:
-            buf = export_filtered(filtered_df, "all")
-            st.download_button("Download All Open (Filtered)", data=buf, file_name="All_Open_Filtered.xlsx",
+            buf = export_raw(df, "all.xlsx")
+            st.download_button("Download All Open", data=buf, file_name="All_Open_Raw.xlsx",
                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         with col_b:
-            buf = export_filtered(filtered_df[filtered_df['Overdue']], "overdue")
-            st.download_button("Download All Overdue (Filtered)", data=buf, file_name="All_Overdue_Filtered.xlsx",
+            buf = export_raw(df[df['Overdue']], "overdue.xlsx")
+            st.download_button("Download All Overdue", data=buf, file_name="All_Overdue_Raw.xlsx",
                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         with col_c:
-            buf = export_filtered(filtered_df[~filtered_df['Overdue']], "not")
-            st.download_button("Download All Not Overdue (Filtered)", data=buf, file_name="All_Not_Overdue_Filtered.xlsx",
+            buf = export_raw(df[~df['Overdue']], "not.xlsx")
+            st.download_button("Download All Not Overdue", data=buf, file_name="All_Not_Overdue_Raw.xlsx",
                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
     except Exception as e:
         st.error(f"Error: {str(e)}")
 else:
-    st.info("Upload your Excel → Filters → Click bar → Export Filtered Raw")
+    st.info("Upload your Excel → Click bar → See raw data → Export Raw")
