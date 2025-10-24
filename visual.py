@@ -41,7 +41,7 @@ if uploaded_file:
         df = df.iloc[:, [0, 1, 4, 6, 29, 30]].copy()
         df.columns = ['Vendor_Name', 'VAT_ID', 'Due_Date', 'Open_Amount', 'Vendor_Email', 'Account_Email']
 
-        # Clean — FIXED TYPO
+        # Clean
         df['Due_Date'] = pd.to_datetime(df['Due_Date'], errors='coerce')
         df['Open_Amount'] = pd.to_numeric(df['Open_Amount'], errors='coerce')
         df = df.dropna(subset=['Vendor_Name', 'Open_Amount', 'Due_Date'])
@@ -120,7 +120,12 @@ if uploaded_file:
             mode='text',
             text=totals['Amount'].apply(lambda x: f'€{x:,.0f}'),
             textposition='top center',
-            textfont=dict(size=14, color='white', family='Arial Black', bold=True),
+            textfont=dict(
+                size=14,
+                color='white',
+                family='Arial Black',
+                weight=700  # ← BOLD (instead of bold=True)
+            ),
             showlegend=False,
             hoverinfo='skip'
         )
