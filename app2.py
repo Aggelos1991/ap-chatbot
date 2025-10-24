@@ -490,15 +490,17 @@ if uploaded_erp and uploaded_vendor:
         flow_df["ERP Amount"] = flow_df["ERP Amount"].apply(lambda x: f"{x:,.2f}")
         flow_df["Vendor Amount"] = flow_df["Vendor Amount"].apply(lambda x: f"{x:,.2f}")
 
+        # ---------- REPLACE THIS FUNCTION ONLY ----------
         def style_flow(row):
             stage = row["Stage"]
             if "Total" in stage:
-                return ["flow-total"] * len(row)
-            if "Match" in stage or "Tier-" in stage:
-                return ["flow-match"] * len(row)
-            if "Unmatched" in stage:
-                return ["flow-miss"] * len(row)
-            return [""] * len(row)
+                return ["background:#E3F2FD;color:#1565C0;font-weight:bold;padding:8px;"] * len(row)
+            elif "Match" in stage or "Tier-" in stage:
+                return ["background:#E8F5E9;color:#2E7D32;font-weight:bold;padding:8px;"] * len(row)
+            elif "Unmatched" in stage:
+                return ["background:#FFEBEE;color:#C62828;font-weight:bold;padding:8px;"] * len(row)
+            else:
+                return [""] * len(row)
 
         styled_flow = flow_df.style.apply(style_flow, axis=1).format({"Count": "{:,}"})
         st.dataframe(styled_flow, use_container_width=True)
