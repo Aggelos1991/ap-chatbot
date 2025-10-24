@@ -6,7 +6,7 @@ import io
 
 st.set_page_config(page_title="Overdue Invoices", layout="wide")
 st.title("Overdue Invoices Dashboard")
-st.markdown("**Click bar → See raw invoice lines from your Excel**")
+st.markdown("**Click bar → See raw invoice lines from your Excel — Top 20 Vendors**")
 
 # Session state
 if 'clicked_vendor' not in st.session_state:
@@ -55,7 +55,7 @@ if uploaded_file:
         df['Overdue'] = df['Due_Date'] < today
         df['Status'] = df['Overdue'].map({True: 'Overdue', False: 'Not Overdue'})
 
-        # Aggregation for chart
+        # Aggregation
         def agg_vendor(group):
             total = group['Open_Amount'].sum()
             overdue = group[group['Overdue']]['Open_Amount'].sum()
@@ -66,18 +66,20 @@ if uploaded_file:
                 'Not_Overdue_Amount': not_overdue
             })
         summary = df.groupby('Vendor_Name').apply(agg_vendor).reset_index()
-        top10 = summary.nlargest(10, 'Total')
+        
+        # CHANGED: TOP 20
+        top20 = summary.nlargest(20, 'Total')
 
         # Filters
         col1, col2 = st.columns(2)
         with col1:
             status_filter = st.selectbox("Show", ["All Open", "Overdue Only", "Not Overdue Only"], key="status")
         with col2:
-            vendor_list = ["Top 10"] + sorted(df['Vendor_Name'].unique().tolist())
+            vendor_list = ["Top 20"] + sorted(df['Vendor_Name'].unique().tolist())
             selected_vendor = st.selectbox("Select Vendor", vendor_list, key="vendor_select")
 
         # Base data
-        base_df = top10 if selected_vendor == "Top 10" else summary[summary['Vendor_Name'] == selected_vendor]
+        base_df = top20 if selected_vendor == "Top 20" else summary[summary['Vendor_Name'] == selected_vendor]
 
         # Apply filter
         if status_filter == "Overdue Only":
@@ -95,7 +97,7 @@ if uploaded_file:
         plot_df = plot_df[plot_df['Amount'] > 0]
 
         # Title
-        title = "Top 10 Vendors" if selected_vendor == "Top 10" else selected_vendor
+        title = "Top 20 Vendors" if selected_vendor == "Top 20" else selected_vendor
 
         # Bar chart
         fig = px.bar(
@@ -107,12 +109,12 @@ if uploaded_file:
             title=title,
             color_discrete_map={'Overdue': '#FF5252', 'Not Overdue': '#4CAF50'},
             text='Amount',
-            height=max(400, len(plot_df) * 50)
+            height=max(400, len(plot_df) * 45)
         )
         fig.update_traces(texttemplate='€%{text:,.0f}', textposition='inside')
         fig.update_layout(xaxis_title="Amount (€)", yaxis_title="Vendor", legend_title="Status")
 
-        # PLOTLY CHART WITH CLICK CAPTURE
+        # Plotly chart with click
         chart = st.plotly_chart(
             fig,
             use_container_width=True,
@@ -120,14 +122,14 @@ if uploaded_file:
             on_select="rerun"
         )
 
-        # CAPTURE CLICK FROM PLOTLY
+        # Capture click
         if st.session_state.vendor_chart and 'selection' in st.session_state.vendor_chart:
             points = st.session_state.vendor_chart['selection']['points']
             if points:
                 clicked_vendor = points[0]['y']
                 st.session_state.clicked_vendor = clicked_vendor
 
-        # SHOW RAW DATA
+        # Show raw data
         show_vendor = st.session_state.clicked_vendor
         if show_vendor:
             st.subheader(f"Raw Invoices: {show_vendor}")
@@ -137,7 +139,6 @@ if uploaded_file:
             raw_details['Open_Amount'] = raw_details['Open_Amount'].map('€{:,.2f}'.format)
             st.dataframe(raw_details, use_container_width=True)
 
-            # Export
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
                 raw_details.to_excel(writer, index=False, sheet_name='Raw_Invoices')
