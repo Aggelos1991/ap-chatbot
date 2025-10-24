@@ -146,7 +146,7 @@ if uploaded_file:
         st.markdown("---")
         st.subheader("Export All Invoices by Filter")
 
-        # Prepare data for each filter
+        # Prepare data
         all_open = df.copy()
         all_overdue = df[df['Overdue']].copy()
         all_not_overdue = df[~df['Overdue']].copy()
@@ -167,15 +167,15 @@ if uploaded_file:
                 for col_num, value in enumerate(data.columns):
                     worksheet.write(1, col_num, value, header_fmt)
 
-                # Currency format
+                # Currency
                 euro_fmt = workbook.add_format({'num_format': '€#,##0.00', 'align': 'right'})
-                worksheet.set_column('D:D', 15, euro_fmt)  # Open_Amount
+                worksheet.set_column('C:C', 15, euro_fmt)  # Open_Amount
 
-                # Date format
+                # Date
                 date_fmt = workbook.add_format({'num_format': 'dd/mm/yyyy'})
-                worksheet.set_column('C:C', 12, date_fmt)
+                worksheet.set_column('B:B', 12, date_fmt)
 
-                # Freeze panes
+                # Freeze
                 worksheet.freeze_panes(2, 0)
 
                 # Auto-fit
@@ -189,16 +189,28 @@ if uploaded_file:
         col_a, col_b, col_c = st.columns(3)
         with col_a:
             buf_all = make_fancy_excel(all_open, "all_open.xlsx", "All_Open")
-            st.download_button("Download All Open", data=buf_all, file_name="All_Open_Invoices.xlsx",
-                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            st.download_button(
+                "Download All Open",
+                data=buf_all,
+                file_name="All_Open_Invoices.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
         with col_b:
             buf_over = make_fancy_excel(all_overdue, "overdue.xlsx", "Overdue")
-            st.download_button("Download All Overdue", data=buf_over, file_name="All_Overdue_Invoices.xlsx",
-                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            st.download_button(
+                "Download All Overdue",
+                data=buf_over,
+                file_name="All_Overdue_Invoices.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
         with col_c:
             buf_not = make_fancy_excel(all_not_overdue, "not_overdue.xlsx", "Not_Overdue")
-            st.download_button("Download All Not Overdue", data=buf_not, file_name="All_Not_Overdue_Invoices.xlsx",
-                               mime=" priority="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            st.download_button(
+                "Download All Not Overdue",
+                data=buf_not,
+                file_name="All_Not_Overdue_Invoices.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
 
     except Exception as e:
         st.error(f"Error: {str(e)}")
