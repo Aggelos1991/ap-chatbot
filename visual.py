@@ -56,10 +56,9 @@ if uploaded_file:
         df['Overdue'] = df['Due_Date'] < today
         df['Status'] = df['Overdue'].map({True: 'Overdue', False: 'Not Overdue'})
 
-        # Aggregation — EXACT MATCH TO EXCEL
-        summary = df.groupby(['Vendor_Name', 'Status'])['Open_Amount'].sum().unstack(fill_value=0).reset_index()
-        summary['Total'] = summary['Overdue'] + summary['Not Overdue']
-        top20 = summary.nlargest(20, 'Total')
+        # FULL SUMMARY (ALL VENDORS)
+        full_summary = df.groupby(['Vendor_Name', 'Status'])['Open_Amount'].sum().unstack(fill_value=0).reset_index()
+        full_summary['Total'] = full_summary['Overdue'] + full_summary['Not Overdue']
 
         # Filters
         col1, col2 = st.columns(2)
@@ -69,14 +68,21 @@ if uploaded_file:
             vendor_list = ["Top 20"] + sorted(df['Vendor_Name'].unique().tolist())
             selected_vendor = st.selectbox("Select Vendor", vendor_list, key="vendor_select")
 
-        # Base data
-        base_df = top20 if selected_vendor == "Top 20" else summary[summary['Vendor_Name'] == selected_vendor]
+        # GET TOP 20 FOR CURRENT FILTER
+        if status_filter == "All Open":
+            top_df = full_summary.nlargest(20, 'Total')
+            title = "Top 20 Vendors (All Open)"
+        elif status_filter == "Overdue Only":
+            top_df = full_summary.nlargest(20, 'Overdue')
+            top_df['Not Overdue'] = 0
+            title = "Top 20 Vendors (Overdue Only)"
+        else:  # Not Overdue Only
+            top_df = full_summary.nlargest(20, 'Not Overdue')
+            top_df['Overdue'] = 0
+            title = "Top 20 Vendors (Not Overdue Only)"
 
-        # Apply filter
-        if status_filter == "Overdue Only":
-            base_df['Not Overdue'] = 0
-        elif status_filter == "Not Overdue Only":
-            base_df['Overdue'] = 0
+        # Base data
+        base_df = top_df if selected_vendor == "Top 20" else full_summary[full_summary['Vendor_Name'] == selected_vendor]
 
         # Melt
         plot_df = base_df.melt(
@@ -86,9 +92,6 @@ if uploaded_file:
             value_name='Amount'
         )
         plot_df = plot_df[plot_df['Amount'] > 0]
-
-        # Title
-        title = "Top 20 Vendors" if selected_vendor == "Top 20" else selected_vendor
 
         # Bar chart — MANLY COLORS
         fig = px.bar(
@@ -123,7 +126,7 @@ if uploaded_file:
             st.subheader(f"Raw Invoices: {show_vendor}")
             raw_details = df[df['Vendor_Name'] == show_vendor].copy()
             raw_details = raw_details[['VAT_ID', 'Due_Date', 'Open_Amount', 'Status', 'Vendor_Email', 'Account_Email']]
-            raw_details['Due_Date'] = raw_details['Due_Date'].dt.strftime('%Y-%m-%d')
+            raw_details['Due_Date'] = raw_details['Due_Date'].dt.strftime('%Y-%m%d')
             raw_details['Open_Amount'] = raw_details['Open_Amount'].map('€{:,.2f}'.format)
             st.dataframe(raw_details, use_container_width=True)
 
