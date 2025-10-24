@@ -27,7 +27,7 @@ if uploaded_file:
                 st.stop()
 
             # === COLUMNS: A(0), B(1), E(4), G(6), BK(60), AD(29), AE(30), AF(31), AH(33), AJ(35), AN(39), BD(55)
-            keep_cols = [0, 1, 4, 6, 60, 29, 30, 31, 33, 35, 39, 55]  # ← BK changed from 17 to 60
+            keep_cols = [0, 1, 4, 6, 60, 29, 30, 31, 33, 35, 39, 55]  # ← BK (60) instead of R (17)
             df_raw = pd.read_excel(xls, sheet_name='Outstanding Invoices IB', header=None, usecols=keep_cols)
 
         # Find header row
@@ -39,7 +39,7 @@ if uploaded_file:
         start_row = header_row[0] + 1
         df = df_raw.iloc[start_row:].copy().reset_index(drop=True)
 
-        # Assign column names — BK is now Alt_Document
+        # Assign column names — 5th column is now BK (Alt_Document)
         df.columns = [
             'Vendor_Name', 'VAT_ID', 'Due_Date', 'Open_Amount',
             'Alt_Document', 'Vendor_Email', 'Account_Email',
@@ -95,7 +95,7 @@ if uploaded_file:
         # === FILTERS ===
         col1, col2 = st.columns(2)
         with col1:
-            status_filter = (st.selectbox("Show", ["All Open", "Overdue Only", "Not Overdue Only"], key="status"))
+            status_filter = st.selectbox("Show", ["All Open", "Overdue Only", "Not Overdue Only"], key="status")
         with col2:
             top_n_option = st.selectbox("Top N", ["Top 20", "Top 30"], key="top_n")
 
@@ -248,19 +248,19 @@ if uploaded_file:
             buffer.seek(0)
             return buffer
 
-        EXPORT_DF = df[['VAT_ID', 'Due_Date', 'Open_Amount', 'Status', 'Alt_Document', 'Vendor_Email', 'Account_Email']].copy()
-        EXPORT_DF['Due_Date'] = EXPORT_DF['Due_Date'].dt.strftime('%Y-%m-%d')
-        EXPORT_DF['Open_Amount'] = EXPORT_DF['Open_Amount'].map('€{:,.2f}'.format)
+        export_df = df[['VAT_ID', 'Due_Date', 'Open_Amount', 'Status', 'Alt_Document', 'Vendor_Email', 'Account_Email']].copy()
+        export_df['Due_Date'] = export_df['Due_Date'].dt.strftime('%Y-%m-%d')
+        export_df['Open_Amount'] = export_df['Open_Amount'].map('€{:,.2f}'.format)
 
         col_a, col_b, col_c = st.columns(3)
         with col_a:
-            buf = export_raw(EXPORT_DF)
+            buf = export_raw(export_df)
             st.download_button("All Open", data=buf, file_name="All_Open_Raw.xlsx")
         with col_b:
-            buf = export_raw(EXPORT_DF[EXPORT_DF['Status'] == 'Overdue'])
+            buf = export_raw(export_df[export_df['Status'] == 'Overdue'])
             st.download_button("All Overdue", data=buf, file_name="All_Overdue_Raw.xlsx")
         with col_c:
-            buf = export_raw(EXPORT_DF[EXPORT_DF['Status'] == 'Not Overdue'])
+            buf = export_raw(export_df[export_df['Status'] == 'Not Overdue'])
             st.download_button("All Not Overdue", data=buf, file_name="All_Not_Overdue_Raw.xlsx")
 
     except Exception as e:
