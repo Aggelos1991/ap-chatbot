@@ -7,7 +7,7 @@ import xlsxwriter
 
 st.set_page_config(page_title="Overdue Invoices", layout="wide")
 st.title("Overdue Invoices Dashboard")
-st.markdown("**Click bar → Raw data | Export → Filtered Raw Data**")
+st.markdown("**Filters from Excel → Graph + Export based on selection**")
 
 # Session state
 if 'clicked_vendor' not in st.session_state:
@@ -57,42 +57,46 @@ if uploaded_file:
         df['Overdue'] = df['Due_Date'] < today
         df['Status'] = df['Overdue'].map({True: 'Overdue', False: 'Not Overdue'})
 
-        # === YOUR EXACT FILTERS (ALL ON BY DEFAULT) ===
+        # === DYNAMIC FILTERS FROM EXCEL ===
         st.markdown("---")
-        st.subheader("Filters (All ON by default)")
+        st.subheader("Filters (from your Excel)")
 
         col1, col2, col3, col4, col5 = st.columns(5)
 
-        # AF = YES only
+        # AF
         with col1:
-            af_on = st.checkbox("AF = YES", value=True)
-            if af_on:
-                df = df[df['AF_Filter'] == 'YES']
+            af_options = ['(All)'] + sorted(df['AF_Filter'].dropna().unique().tolist())
+            af_filter = st.multiselect("AF", af_options, default=['(All)'])
+            if '(All)' not in af_filter:
+                df = df[df['AF_Filter'].isin(af_filter)]
 
-        # AH = YES only
+        # AH
         with col2:
-            ah_on = st.checkbox("AH = YES", value=True)
-            if ah_on:
-                df = df[df['AH_Filter'] == 'YES']
+            ah_options = ['(All)'] + sorted(df['AH_Filter'].dropna().unique().tolist())
+            ah_filter = st.multiselect("AH", ah_options, default=['(All)'])
+            if '(All)' not in ah_filter:
+                df = df[df['AH_Filter'].isin(ah_filter)]
 
-        # AJ = YES only
+        # AJ
         with col3:
-            aj_on = st.checkbox("AJ = YES", value=True)
-            if aj_on:
-                df = df[df['AJ_Filter'] == 'YES']
+            aj_options = ['(All)'] + sorted(df['AJ_Filter'].dropna().unique().tolist())
+            aj_filter = st.multiselect("AJ", aj_options, default=['(All)'])
+            if '(All)' not in aj_filter:
+                df = df[df['AJ_Filter'].isin(aj_filter)]
 
-        # AN = YES only
+        # AN
         with col4:
-            an_on = st.checkbox("AN = YES", value=True)
-            if an_on:
-                df = df[df['AN_Filter'] == 'YES']
+            an_options = ['(All)'] + sorted(df['AN_Filter'].dropna().unique().tolist())
+            an_filter = st.multiselect("AN", an_options, default=['(All)'])
+            if '(All)' not in an_filter:
+                df = df[df['AN_Filter'].isin(an_filter)]
 
-        # BD = ENTERTAINMENT, PRIORITY VENDOR, PRIORITY VENDOR OS&E, REGULAR
+        # BD
         with col5:
-            bd_on = st.checkbox("BD = ENTERTAINMENT / PRIORITY / REGULAR", value=True)
-            if bd_on:
-                allowed_bd = ['ENTERTAINMENT', 'PRIORITY VENDOR', 'PRIORITY VENDOR OS&E', 'REGULAR']
-                df = df[df['BD_Filter'].isin(allowed_bd)]
+            bd_options = ['(All)'] + sorted(df['BD_Filter'].dropna().unique().tolist())
+            bd_filter = st.multiselect("BD", bd_options, default=['(All)'])
+            if '(All)' not in bd_filter:
+                df = df[df['BD_Filter'].isin(bd_filter)]
 
         # === SUMMARY AFTER FILTERS ===
         full_summary = df.groupby(['Vendor_Name', 'Status'])['Open_Amount'].sum().unstack(fill_value=0).reset_index()
@@ -135,7 +139,7 @@ if uploaded_file:
         total_per_vendor = base_df.set_index('Vendor_Name')['Total'].to_dict()
         plot_df['Total'] = plot_df['Vendor_Name'].map(total_per_vendor)
 
-        # Bar chart — MANLY COLORS
+        # Bar chart
         fig = px.bar(
             plot_df,
             x='Amount',
@@ -144,8 +148,8 @@ if uploaded_file:
             orientation='h',
             title=title,
             color_discrete_map={
-                'Overdue': '#8B0000',      # Dark Red
-                'Not Overdue': '#4682B4'   # Steel Blue
+                'Overdue': '#8B0000',
+                'Not Overdue': '#4682B4'
             },
             height=max(400, len(plot_df) * 50)
         )
@@ -202,7 +206,7 @@ if uploaded_file:
         else:
             st.info("**Click any bar** to see raw invoice lines.")
 
-        # EXPORT RAW DATA ONLY
+        # EXPORT FILTERED RAW DATA
         st.markdown("---")
         st.subheader("Export Filtered Raw Data")
 
@@ -213,14 +217,12 @@ if uploaded_file:
                 workbook = writer.book
                 worksheet = writer.sheets['Raw_Data']
 
-                # Header
                 header_fmt = workbook.add_format({
                     'bold': True, 'bg_color': '#1f4e79', 'font_color': 'white', 'border': 1
                 })
                 for col_num, value in enumerate(raw_df.columns):
                     worksheet.write(0, col_num, value, header_fmt)
 
-                # Currency
                 worksheet.set_column('C:C', 15, workbook.add_format({'num_format': '€#,##0.00'}))
                 worksheet.set_column('B:B', 12, workbook.add_format({'num_format': 'dd/mm/yyyy'}))
                 worksheet.freeze_panes(1, 0)
@@ -245,4 +247,4 @@ if uploaded_file:
     except Exception as e:
         st.error(f"Error: {str(e)}")
 else:
-    st.info("Upload your Excel → Filters → Click bar → Export Raw")
+    st.info("Upload your Excel → Filters from data → Graph + Export")
