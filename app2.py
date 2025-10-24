@@ -786,7 +786,6 @@ if uploaded_erp and uploaded_vendor:
         )
     except Exception as e:
         st.error(f"❌ Error processing files: {str(e)}")
-        st.info("Please check that your Excel files have the expected columns (invoice, amount, date, etc.)")import streamlit as st
 import pandas as pd
 import re
 from io import BytesIO
