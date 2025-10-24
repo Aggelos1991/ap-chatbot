@@ -9,4 +9,3 @@ python-Levenshtein
 pdfplumber
 xlsxwriter
 plotly
-
