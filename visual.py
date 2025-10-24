@@ -9,8 +9,8 @@ st.title("Overdue Invoices Dashboard")
 # Session state
 if 'clicked_vendor' not in st.session_state:
     st.session_state.clicked_vendor = None
-if 'top_n' not in st.session_state:
-    st.session_state.top_n = 30
+if 'top_n_option' not in st.session_state:
+    st.session_state.top_n_option = "Top 30"
 
 # Upload
 uploaded_file = st.file_uploader("Upload your Excel file", type=['xlsx'])
@@ -55,12 +55,13 @@ if uploaded_file:
         df = df.drop(columns=['AF', 'AH', 'AJ', 'AN', 'BD'])
 
         if df.empty:
-            st.warning("No invoices match the filter criteria.")
-            st.stop()
+0
+        st.warning("No invoices match the filter criteria.")
+        st.stop()
 
         # Clean data
         df['Due_Date'] = pd.to_datetime(df['Due_Date'], errors='coerce')
-        df['Open_Amount'] = pd.to_numeric(df['Open_Amount'], errors='coerce')
+        df['Open_Amount'] = pd.to_numeric(df['Open_Amount'], errors='cocoerce')
         df = df.dropna(subset=['Vendor_Name', 'Open_Amount', 'Due_Date'])
         df = df[df['Open_Amount'] > 0]
         if df.empty:
@@ -80,7 +81,7 @@ if uploaded_file:
                 full_summary[col] = 0
         full_summary['Total'] = full_summary['Overdue'] + full_summary['Not Overdue']
 
-        # === FILTERS + TOP N SELECTOR ===
+        # === FILTERS ===
         col1, col2, col3 = st.columns([2, 2, 1])
         with col1:
             status_filter = st.selectbox("Show",
@@ -89,18 +90,29 @@ if uploaded_file:
             vendor_list = ["Top N"] + sorted(df['Vendor_Name'].unique().tolist())
             selected_vendor = st.selectbox("Select Vendor", vendor_list, key="vendor_select")
         with col3:
-            st.session_state.top_n = st.selectbox("Top N", [20, 30], index=1)
+            st.session_state.top_n_option = st.selectbox(
+                "Show", ["Top 20", "Top 30", "All Vendors"], index=1
+            )
 
-        top_n = st.session_state.top_n
+        # === DETERMINE TOP N OR ALL ===
+        if st.session_state.top_n_option == "Top 20":
+            top_n = 20
+            title_suffix = "Top 20"
+        elif st.session_state.top_n_option == "Top 30":
+            top_n = 30
+            title_suffix = "Top 30"
+        else:
+            top_n = len(full_summary)
+            title_suffix = "All"
 
-        # === TOP N LOGIC ===
+        # === APPLY FILTER & TOP N ===
         if status_filter == "All Open":
             top_df = full_summary.nlargest(top_n, 'Total')
-            title = f"Top {top_n} Vendors (All Open)"
+            title = f"{title_suffix} Vendors (All Open)"
         elif status_filter == "Overdue Only":
             top_df = full_summary.nlargest(top_n, 'Overdue').copy()
             top_df['Not Overdue'] = 0
-            title = f"Top {top_n} Vendors (Overdue Only)"
+            title = f"{title_suffix} Vendors (Overdue Only)"
         else:
             if full_summary['Not Overdue'].sum() == 0:
                 st.warning("No 'Not Overdue' invoices.")
@@ -110,7 +122,7 @@ if uploaded_file:
             else:
                 top_df = full_summary.nlargest(top_n, 'Not Overdue').copy()
                 top_df['Overdue'] = 0
-            title = f"Top {top_n} Vendors (Not Overdue Only)"
+            title = f"{title_suffix} Vendors (Not Overdue Only)"
 
         # Base data
         base_df = top_df if selected_vendor == "Top N" else \
@@ -127,7 +139,7 @@ if uploaded_file:
         total_per_vendor = base_df.set_index('Vendor_Name')['Total'].to_dict()
         plot_df['Total'] = plot_df['Vendor_Name'].map(total_per_vendor)
 
-        # === BAR CHART (100% your original) ===
+        # === BAR CHART (100% ORIGINAL) ===
         fig = px.bar(
             plot_df,
             x='Amount',
@@ -222,7 +234,7 @@ if uploaded_file:
                 header_fmt = workbook.add_format({
                     'bold': True, 'bg_color': '#1f4e79',
                     'font_color': 'white', 'border': 1,
-                    ' électrique_name': 'Arial', 'font_size': 11
+                    'font_name': 'Arial', 'font_size': 11
                 })
                 for col_num, value in enumerate(raw_df.columns):
                     worksheet.write(0, col_num, value, header_fmt)
