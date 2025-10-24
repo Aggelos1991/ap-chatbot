@@ -19,7 +19,7 @@ if uploaded_file:
                 st.stop()
             df_raw = pd.read_excel(xls, sheet_name='Outstanding Invoices IB', header=None)
 
-        # Find header row with "VENDOR" in column A
+        # Find header row with "VENDOR"
         header_row = df_raw[df_raw.iloc[:, 0].astype(str).str.contains("VENDOR", case=False, na=False)].index
         if header_row.empty:
             st.error("Header 'VENDOR' not found in column A.")
@@ -27,69 +27,57 @@ if uploaded_file:
 
         start_row = header_row[0] + 1
         df = df_raw.iloc[start_row:].copy().reset_index(drop=True)
-
         if df.shape[1] < 31:
-            st.error("Not enough columns. Need A to AE.")
+            st.error("Need A to AE.")
             st.stop()
 
-        # Map columns: A, B, E, G, AD, AE
+        # Map columns
         df = df.iloc[:, [0, 1, 4, 6, 29, 30]].copy()
         df.columns = ['Vendor_Name', 'VAT_ID', 'Due_Date', 'Open_Amount', 'Vendor_Email', 'Account_Email']
 
-        # Convert types — FIXED LINE!
+        # Clean
         df['Due_Date'] = pd.to_datetime(df['Due_Date'], errors='coerce')
         df['Open_Amount'] = pd.to_numeric(df['Open_Amount'], errors='coerce')
         df = df.dropna(subset=['Vendor_Name', 'Open_Amount', 'Due_Date'])
-        df = df[df['Open_Amount'] > 0]
+        df = df[df['Open_Amount'] >0]
 
         if df.empty:
-            st.warning("No open invoices found.")
+            st.warning("No open invoices.")
             st.stop()
 
-        # Overdue logic
+        # Overdue
         today = pd.Timestamp.today().normalize()
         df['Overdue'] = df['Due_Date'] < today
         df['Status'] = df['Overdue'].map({True: 'Overdue', False: 'Not Overdue'})
 
-        # Safe aggregation
+        # Aggregation
         def agg_vendor(group):
             total = group['Open_Amount'].sum()
             overdue = group[group['Overdue']]['Open_Amount'].sum()
             not_overdue = total - overdue
-            return pd.Series({
-                'Total': total,
-                'Overdue_Amount': overdue,
-                'Not_Overdue_Amount': not_overdue
-            })
-
+            return pd.Series({'Total': total, 'Overdue_Amount': overdue, 'Not_Overdue_Amount': not_overdue})
         summary = df.groupby('Vendor_Name').apply(agg_vendor).reset_index()
         top10 = summary.nlargest(10, 'Total')
 
         # Filters
         col1, col2 = st.columns(2)
         with col1:
-            status_filter = st.selectbox("Show", ["All Open", "Overdue Only", "Not Overdue Only"])
+            status_filter = st.selectbox("Show", ["All Open", "Overdue Only", "Not Overdue Only"], key="status")
         with col2:
             vendor_list = ["Top 10"] + sorted(df['Vendor_Name'].unique().tolist())
-            selected_vendor = st.selectbox("Select Vendor", vendor_list)
+            selected_vendor = st.selectbox("Select Vendor", vendor_list, key="vendor")
 
-        # Apply status filter
-        plot_df = summary.copy()
+        # Select base data
+        base_df = top10 if selected_vendor == "Top 10" else summary[summary['Vendor_Name'] == selected_vendor]
+
+        # Apply status filter to data BEFORE melting
         if status_filter == "Overdue Only":
-            plot_df['Not_Overdue_Amount'] = 0
+            base_df['Not_Overdue_Amount'] = 0
         elif status_filter == "Not Overdue Only":
-            plot_df['Overdue_Amount'] = 0
+            base_df['Overdue_Amount'] = 0
 
-        # Apply vendor selection
-        if selected_vendor != "Top 10":
-            plot_df = plot_df[plot_df['Vendor_Name'] == selected_vendor]
-            chart_title = f"{selected_vendor} - Open Items"
-        else:
-            plot_df = top10
-            chart_title = "Top 10 Vendors by Open Amount"
-
-        # Prepare chart
-        plot_df = plot_df.melt(
+        # Melt AFTER filtering
+        plot_df = base_df.melt(
             id_vars='Vendor_Name',
             value_vars=['Overdue_Amount', 'Not_Overdue_Amount'],
             var_name='Type',
@@ -100,6 +88,12 @@ if uploaded_file:
             'Not_Overdue_Amount': 'Not Overdue'
         })
 
+        # Remove zero bars
+        plot_df = plot_df[plot_df['Amount'] > 0]
+
+        # Title
+        title = "Top 10 Vendors by Open Amount" if selected_vendor == "Top 10" else f"{selected_vendor}"
+
         # Bar chart
         fig = px.bar(
             plot_df,
@@ -107,10 +101,10 @@ if uploaded_file:
             y='Vendor_Name',
             color='Type',
             orientation='h',
-            title=chart_title,
+            title=title,
             color_discrete_map={'Overdue': '#FF5252', 'Not Overdue': '#4CAF50'},
             text='Amount',
-            height=max(400, len(plot_df) * 45)
+            height=max(400, len(plot_df) * 50)
         )
         fig.update_traces(texttemplate='$%{text:,.0f}', textposition='inside')
         fig.update_layout(
@@ -140,7 +134,7 @@ if uploaded_file:
                 details.to_excel(writer, index=False, sheet_name='Invoices')
             buffer.seek(0)
             st.download_button(
-                label="Download Details (Excel)",
+                "Download Details (Excel)",
                 data=buffer,
                 file_name=f"{show_vendor.replace(' ', '_')}_open_invoices.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
