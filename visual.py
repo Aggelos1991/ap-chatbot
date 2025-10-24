@@ -44,7 +44,7 @@ if uploaded_file:
         # Clean
         df['Due_Date'] = pd.to_datetime(df['Due_Date'], errors='coerce')
         df['Open_Amount'] = pd.to_numeric(df['Open_Amount'], errors='coerce')
-        df = df.dropna(subset=['Vendor_Name', 'Open_Amount', 'Due_Date'])
+        df = df.dropna(subset=['Vendor_Name', 'Open_Amount/du', 'Due_Date'])
         df = df[df['Open_Amount'] > 0]
 
         if df.empty:
@@ -97,7 +97,7 @@ if uploaded_file:
         total_per_vendor = base_df.set_index('Vendor_Name')['Total'].to_dict()
         plot_df['Total'] = plot_df['Vendor_Name'].map(total_per_vendor)
 
-        # Bar chart — TOTAL ON TOP
+        # Bar chart — NO TEXT INSIDE
         fig = px.bar(
             plot_df,
             x='Amount',
@@ -109,23 +109,22 @@ if uploaded_file:
                 'Overdue': '#8B0000',      # Dark Red
                 'Not Overdue': '#4682B4'   # Steel Blue
             },
-            text='Amount',
             height=max(400, len(plot_df) * 50)
         )
 
         # ADD TOTAL AMOUNT ON TOP OF EACH VENDOR BAR
+        totals = plot_df.groupby('Vendor_Name')['Amount'].sum().reset_index()
         fig.add_scatter(
-            x=plot_df.groupby('Vendor_Name')['Amount'].sum(),
-            y=plot_df['Vendor_Name'].unique(),
+            x=totals['Amount'],
+            y=totals['Vendor_Name'],
             mode='text',
-            text=plot_df.groupby('Vendor_Name')['Total'].first().apply(lambda x: f'€{x:,.0f}'),
+            text=totals['Amount'].apply(lambda x: f'€{x:,.0f}'),
             textposition='top center',
-            textfont=dict(size=14, color='white', family='Arial Black'),
+            textfont=dict(size=14, color='white', family='Arial Black', bold=True),
             showlegend=False,
             hoverinfo='skip'
         )
 
-        fig.update_traces(texttemplate='€%{text:,.0f}', textposition='inside')
         fig.update_layout(
             xaxis_title="Amount (€)",
             yaxis_title="Vendor",
