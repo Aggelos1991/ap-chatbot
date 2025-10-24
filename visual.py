@@ -7,7 +7,7 @@ import xlsxwriter
 
 st.set_page_config(page_title="Overdue Invoices", layout="wide")
 st.title("Overdue Invoices Dashboard")
-st.markdown("**Click bar → Raw data | Export → Filtered Raw Data**")
+st.markdown("**Click bar → Raw data | Export → Raw Data Only (Graph = Excel)**")
 
 # Session state
 if 'clicked_vendor' not in st.session_state:
@@ -33,16 +33,15 @@ if uploaded_file:
 
         start_row = header_row[0] + 1
         df = df_raw.iloc[start_row:].copy().reset_index(drop=True)
-        if df.shape[1] < 56:
-            st.error("Need up to BD (column 56).")
+        if df.shape[1] < 31:
+            st.error("Need A to AE.")
             st.stop()
 
         # Map columns
-        df = df.iloc[:, [0, 1, 4, 6, 29, 30, 31, 33, 35, 37, 55]].copy()
-        df.columns = ['Vendor_Name', 'VAT_ID', 'Due_Date', 'Open_Amount', 'Vendor_Email', 'Account_Email',
-                      'AF_Filter', 'AH_Filter', 'AJ_Filter', 'AN_Filter', 'BD_Filter']
+        df = df.iloc[:, [0, 1, 4, 6, 29, 30]].copy()
+        df.columns = ['Vendor_Name', 'VAT_ID', 'Due_Date', 'Open_Amount', 'Vendor_Email', 'Account_Email']
 
-        # Clean
+        # Clean — FIXED TYPO
         df['Due_Date'] = pd.to_datetime(df['Due_Date'], errors='coerce')
         df['Open_Amount'] = pd.to_numeric(df['Open_Amount'], errors='coerce')
         df = df.dropna(subset=['Vendor_Name', 'Open_Amount', 'Due_Date'])
@@ -57,44 +56,7 @@ if uploaded_file:
         df['Overdue'] = df['Due_Date'] < today
         df['Status'] = df['Overdue'].map({True: 'Overdue', False: 'Not Overdue'})
 
-        # === YOUR EXACT FILTERS (ALL ON BY DEFAULT) ===
-        st.markdown("---")
-        st.subheader("Filters (All ON by default)")
-
-        col1, col2, col3, col4, col5 = st.columns(5)
-
-        # AF = YES only
-        with col1:
-            af_on = st.checkbox("AF = YES", value=True)
-            if af_on:
-                df = df[df['AF_Filter'] == 'YES']
-
-        # AH = YES only
-        with col2:
-            ah_on = st.checkbox("AH = YES", value=True)
-            if ah_on:
-                df = df[df['AH_Filter'] == 'YES']
-
-        # AJ = YES only
-        with col3:
-            aj_on = st.checkbox("AJ = YES", value=True)
-            if aj_on:
-                df = df[df['AJ_Filter'] == 'YES']
-
-        # AN = YES only
-        with col4:
-            an_on = st.checkbox("AN = YES", value=True)
-            if an_on:
-                df = df[df['AN_Filter'] == 'YES']
-
-        # BD = ENTERTAINMENT, PRIORITY VENDOR, PRIORITY VENDOR OS&E, REGULAR
-        with col5:
-            bd_on = st.checkbox("BD = ENTERTAINMENT / PRIORITY / REGULAR", value=True)
-            if bd_on:
-                allowed_bd = ['ENTERTAINMENT', 'PRIORITY VENDOR', 'PRIORITY VENDOR OS&E', 'REGULAR']
-                df = df[df['BD_Filter'].isin(allowed_bd)]
-
-        # === SUMMARY AFTER FILTERS ===
+        # FULL SUMMARY
         full_summary = df.groupby(['Vendor_Name', 'Status'])['Open_Amount'].sum().unstack(fill_value=0).reset_index()
         full_summary['Total'] = full_summary['Overdue'] + full_summary['Not Overdue']
 
@@ -135,7 +97,7 @@ if uploaded_file:
         total_per_vendor = base_df.set_index('Vendor_Name')['Total'].to_dict()
         plot_df['Total'] = plot_df['Vendor_Name'].map(total_per_vendor)
 
-        # Bar chart — MANLY COLORS
+        # Bar chart — NO TEXT INSIDE
         fig = px.bar(
             plot_df,
             x='Amount',
@@ -150,7 +112,7 @@ if uploaded_file:
             height=max(400, len(plot_df) * 50)
         )
 
-        # TOTAL ON TOP
+        # ADD TOTAL AMOUNT ON TOP OF EACH VENDOR BAR
         totals = plot_df.groupby('Vendor_Name')['Amount'].sum().reset_index()
         fig.add_scatter(
             x=totals['Amount'],
@@ -158,7 +120,7 @@ if uploaded_file:
             mode='text',
             text=totals['Amount'].apply(lambda x: f'€{x:,.0f}'),
             textposition='top center',
-            textfont=dict(size=14, color='white', family='Arial Black', weight=700),
+            textfont=dict(size=14, color='white', family='Arial Black', bold=True),
             showlegend=False,
             hoverinfo='skip'
         )
@@ -204,7 +166,7 @@ if uploaded_file:
 
         # EXPORT RAW DATA ONLY
         st.markdown("---")
-        st.subheader("Export Filtered Raw Data")
+        st.subheader("Export Raw Data Only")
 
         def export_raw(raw_df, filename):
             buffer = io.BytesIO()
@@ -245,4 +207,4 @@ if uploaded_file:
     except Exception as e:
         st.error(f"Error: {str(e)}")
 else:
-    st.info("Upload your Excel → Filters → Click bar → Export Raw")
+    st.info("Upload your Excel → Click bar → See raw data → Export Raw")
