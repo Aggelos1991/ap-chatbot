@@ -6,74 +6,78 @@ import io
 st.set_page_config(page_title="Overdue Invoices", layout="wide")
 st.title("Overdue Invoices Dashboard")
 
-# Session state
+# === Session State ===
 if 'clicked_vendor' not in st.session_state:
     st.session_state.clicked_vendor = None
 if 'top_n_option' not in st.session_state:
     st.session_state.top_n_option = "Top 30"
 
-# Upload
+# === File Upload ===
 uploaded_file = st.file_uploader("Upload your Excel file", type=['xlsx'])
+
 if uploaded_file:
     try:
-        # Read sheet - include BJ (column 61)
+        # Read specific columns including BJ (column 61 → index 60)
         with pd.ExcelFile(uploaded_file) as xls:
             if 'Outstanding Invoices IB' not in xls.sheet_names:
                 st.error("Sheet 'Outstanding Invoices IB' not found.")
                 st.stop()
-            keep_cols = [0, 1, 4, 6, 29, 30, 31, 33, 35, 39, 55, 61]  # BJ added
+            keep_cols = [0, 1, 4, 6, 29, 30, 31, 33, 35, 39, 55, 61]  # BJ = col 61
             df_raw = pd.read_excel(xls, sheet_name='Outstanding Invoices IB',
                                  header=None, usecols=keep_cols)
 
-        # Find header
+        # Find header row where column A contains "VENDOR"
         header_row = df_raw[df_raw.iloc[:, 0].astype(str).str.contains("VENDOR", case=False, na=False)].index
         if header_row.empty:
             st.error("Header 'VENDOR' not found in column A.")
             st.stop()
+
         start_row = header_row[0] + 1
         df = df_raw.iloc[start_row:].copy().reset_index(drop=True)
 
-        # Column names + BJ
+        # Assign column names
         df.columns = [
             'Vendor_Name', 'VAT_ID', 'Due_Date', 'Open_Amount',
             'Vendor_Email', 'Account_Email',
             'AF', 'AH', 'AJ', 'AN', 'BD', 'BJ_Alt_Invoice'
         ]
 
-        # === FILTER LOGIC ===
+        # === FILTER: All YES + BD keywords ===
         yes_mask = (
             (df['AF'].astype(str).str.strip().str.upper() == 'YES') &
             (df['AH'].astype(str).str.strip().str.upper() == 'YES') &
             (df['AJ'].astype(str).str.strip().str.upper() == 'YES') &
             (df['AN'].astype(str).str.strip().str.upper() == 'YES')
         )
+
         bd_keywords = ['ENTERTAINMENT', 'FALSE', 'REGULAR', 'PRIORITY VENDOR', 'PRIORITY VENDOR OS&E']
         bd_mask = df['BD'].astype(str).str.upper().apply(
             lambda x: any(k in x for k in bd_keywords)
         )
+
         df = df[yes_mask & bd_mask].reset_index(drop=True)
         df = df.drop(columns=['AF', 'AH', 'AJ', 'AN', 'BD'])
 
         if df.empty:
-0
-        st.warning("No invoices match the filter criteria.")
-        st.stop()
+            st.warning("No invoices match the filter criteria.")
+            st.stop()
 
-        # Clean data
+        # === Data Cleaning ===
         df['Due_Date'] = pd.to_datetime(df['Due_Date'], errors='coerce')
-        df['Open_Amount'] = pd.to_numeric(df['Open_Amount'], errors='cocoerce')
+        df['Open_Amount'] = pd.to_numeric(df['Open_Amount'], errors='coerce')  # Fixed: was 'cocoerce'
         df = df.dropna(subset=['Vendor_Name', 'Open_Amount', 'Due_Date'])
         df = df[df['Open_Amount'] > 0]
+
         if df.empty:
             st.warning("No open invoices found after cleaning.")
             st.stop()
 
-        # Overdue logic
+        # === Overdue Logic ===
         today = pd.Timestamp.today().normalize()
         df['Overdue'] = df['Due_Date'] < today
         df['Status'] = df['Overdue'].map({True: 'Overdue', False: 'Not Overdue'})
 
-        # Summary - ensure both columns exist
+        # === Summary by Vendor & Status ===
         full_summary = df.groupby(['Vendor_Name', 'Status'])['Open_Amount']\
                         .sum().unstack(fill_value=0).reset_index()
         for col in ['Overdue', 'Not Overdue']:
@@ -81,7 +85,7 @@ if uploaded_file:
                 full_summary[col] = 0
         full_summary['Total'] = full_summary['Overdue'] + full_summary['Not Overdue']
 
-        # === FILTERS ===
+        # === Filters ===
         col1, col2, col3 = st.columns([2, 2, 1])
         with col1:
             status_filter = st.selectbox("Show",
@@ -91,10 +95,11 @@ if uploaded_file:
             selected_vendor = st.selectbox("Select Vendor", vendor_list, key="vendor_select")
         with col3:
             st.session_state.top_n_option = st.selectbox(
-                "Show", ["Top 20", "Top 30", "All Vendors"], index=1
+                "Show", ["Top 20", "Top 30", "All Vendors"], 
+                index=["Top 20", "Top 30", "All Vendors"].index(st.session_state.top_n_option)
             )
 
-        # === DETERMINE TOP N OR ALL ===
+        # === Top N Logic ===
         if st.session_state.top_n_option == "Top 20":
             top_n = 20
             title_suffix = "Top 20"
@@ -105,7 +110,7 @@ if uploaded_file:
             top_n = len(full_summary)
             title_suffix = "All"
 
-        # === APPLY FILTER & TOP N ===
+        # === Apply Status Filter + Top N ===
         if status_filter == "All Open":
             top_df = full_summary.nlargest(top_n, 'Total')
             title = f"{title_suffix} Vendors (All Open)"
@@ -113,7 +118,7 @@ if uploaded_file:
             top_df = full_summary.nlargest(top_n, 'Overdue').copy()
             top_df['Not Overdue'] = 0
             title = f"{title_suffix} Vendors (Overdue Only)"
-        else:
+        else:  # Not Overdue Only
             if full_summary['Not Overdue'].sum() == 0:
                 st.warning("No 'Not Overdue' invoices.")
                 top_df = full_summary.head(0).copy()
@@ -124,11 +129,11 @@ if uploaded_file:
                 top_df['Overdue'] = 0
             title = f"{title_suffix} Vendors (Not Overdue Only)"
 
-        # Base data
+        # === Selected Vendor Override ===
         base_df = top_df if selected_vendor == "Top N" else \
                   full_summary[full_summary['Vendor_Name'] == selected_vendor]
 
-        # Melt
+        # === Prepare Plot Data ===
         plot_df = base_df.melt(
             id_vars='Vendor_Name',
             value_vars=['Overdue', 'Not Overdue'],
@@ -139,7 +144,7 @@ if uploaded_file:
         total_per_vendor = base_df.set_index('Vendor_Name')['Total'].to_dict()
         plot_df['Total'] = plot_df['Vendor_Name'].map(total_per_vendor)
 
-        # === BAR CHART (100% ORIGINAL) ===
+        # === Horizontal Stacked Bar Chart ===
         fig = px.bar(
             plot_df,
             x='Amount',
@@ -151,6 +156,8 @@ if uploaded_file:
             height=max(500, len(plot_df) * 45),
             text=None
         )
+
+        # Add total labels
         totals = plot_df.groupby('Vendor_Name')['Amount'].sum().reset_index()
         fig.add_scatter(
             x=totals['Amount'],
@@ -162,6 +169,7 @@ if uploaded_file:
             showlegend=False,
             hoverinfo='skip'
         )
+
         fig.update_layout(
             xaxis_title="Amount (€)",
             yaxis_title="Vendor",
@@ -175,19 +183,18 @@ if uploaded_file:
         chart = st.plotly_chart(fig, use_container_width=True,
                                 key="vendor_chart", on_select="rerun")
 
-        # === CLICK → SHOW ONLY VISIBLE DATA ===
+        # === Click Handler: Show Raw Invoices ===
         if chart.selection and chart.selection['points']:
             point = chart.selection['points'][0]
             st.session_state.clicked_vendor = point['y']
 
         show_vendor = st.session_state.clicked_vendor
+
         if show_vendor:
             st.subheader(f"Raw Invoices: {show_vendor}")
 
-            # Visible vendors in current chart
+            # Respect current status filter
             visible_vendors = base_df['Vendor_Name'].tolist()
-
-            # Apply same status filter
             if status_filter == "Overdue Only":
                 status_mask = df['Overdue']
             elif status_filter == "Not Overdue Only":
@@ -197,16 +204,18 @@ if uploaded_file:
 
             filtered = df[df['Vendor_Name'].isin(visible_vendors) & status_mask]
             raw_details = filtered[filtered['Vendor_Name'] == show_vendor].copy()
+
             raw_details = raw_details[[
                 'VAT_ID', 'Due_Date', 'Open_Amount',
                 'BJ_Alt_Invoice', 'Status', 'Vendor_Email', 'Account_Email'
             ]]
+
             raw_details['Due_Date'] = raw_details['Due_Date'].dt.strftime('%Y-%m-%d')
             raw_details['Open_Amount'] = raw_details['Open_Amount'].map('€{:,.2f}'.format)
 
             st.dataframe(raw_details, use_container_width=True)
 
-            # Download
+            # Download button for this vendor
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
                 raw_details.to_excel(writer, index=False, sheet_name='Raw_Data')
@@ -220,11 +229,12 @@ if uploaded_file:
         else:
             st.info("**Click any bar** to see raw invoice lines.")
 
-        # === EXPORT RAW DATA ===
+        # === Export All Raw Data ===
         st.markdown("---")
         st.subheader("Export Raw Data Only")
 
-        def export_raw(raw_df, filename):
+        def export_raw(raw_df  # Fixed indentation
+            raw_df, filename):
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
                 raw_df.to_excel(writer, sheet_name='Raw_Data', index=False,
