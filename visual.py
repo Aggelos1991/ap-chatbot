@@ -26,8 +26,8 @@ if uploaded_file:
                 st.error("Sheet 'Outstanding Invoices IB' not found.")
                 st.stop()
 
-            # READ COLUMNS: A(0), B(1), E(4), G(6), BK(60), AD(29), AE(30), AF(31), AH(33), AJ(35), AN(39), BD(55)
-            keep_cols = [0, 1, 4, 6, 60, 29, 30, 31, 33, 35, 39, 55]
+            # READ COLUMNS: A(0), B(1), E(4), G(6), K(10), AD(29), AE(30), AF(31), AH(33), AJ(35), AN(39), BD(55)
+            keep_cols = [0, 1, 4, 6, 10, 29, 30, 31, 33, 35, 39, 55]
             df_raw = pd.read_excel(xls, sheet_name='Outstanding Invoices IB', header=None, usecols=keep_cols)
 
         # Find header row
