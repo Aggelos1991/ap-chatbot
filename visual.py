@@ -6,6 +6,7 @@ import io
 
 st.set_page_config(page_title="Overdue Invoices", layout="wide")
 st.title("Overdue Invoices – Priority Vendors Dashboard")
+st.markdown("**Click a bar segment → See only that data | Export → Filtered Excel**")
 
 # Session state
 if 'clicked_vendor' not in st.session_state:
@@ -23,11 +24,11 @@ if uploaded_file:
                 st.error("Sheet 'Outstanding Invoices IB' not found.")
                 st.stop()
 
-            # READ COLUMNS: A,B,E,G,R,AD,AE,AF,AH,AJ,AN,BD
+            # READ COLUMNS: A(0), B(1), E(4), G(6), R(17), AD(29), AE(30), AF(31), AH(33), AJ(35), AN(39), BD(55)
             keep_cols = [0, 1, 4, 6, 17, 29, 30, 31, 33, 35, 39, 55]
             df_raw = pd.read_excel(xls, sheet_name='Outstanding Invoices IB', header=None, usecols=keep_cols)
 
-        # Find header
+        # Find header row
         header_row = df_raw[df_raw.iloc[:, 0].astype(str).str.contains("VENDOR", case=False, na=False)].index
         if header_row.empty:
             st.error("Header 'VENDOR' not found in column A.")
@@ -36,7 +37,7 @@ if uploaded_file:
         start_row = header_row[0] + 1
         df = df_raw.iloc[start_row:].copy().reset_index(drop=True)
 
-        # Assign columns
+        # Assign column names
         df.columns = [
             'Vendor_Name', 'VAT_ID', 'Due_Date', 'Open_Amount',
             'Alt_Document', 'Vendor_Email', 'Account_Email',
@@ -47,10 +48,10 @@ if uploaded_file:
         yes_mask = (
             (df['AF'].astype(str).str.strip().str.upper() == 'YES') &
             (df['AH'].astype(str).str.strip().str.upper() == 'YES') &
-            (df['AJ'].astype(str).str.strip().str.upper() == 'YES') &
+            (df['AJ'].astype(str)..str.strip().str.upper() == 'YES') &
             (df['AN'].astype(str).str.strip().str.upper() == 'YES')
         )
-        bd_keywords = ['ENTERTAINMENT', 'FALSE', 'REGULAR', 'PRIORITY VENDOR', 'PRIORITY VENDOR OS&E']
+        bd_keywords = ['ENTERTAINMENT', 'FALSE', ' | 'REGULAR', 'PRIORITY VENDOR', 'PRIORITY VENDOR OS&E']
         bd_mask = df['BD'].astype(str).str.upper().apply(
             lambda x: any(k in x for k in bd_keywords)
         )
@@ -90,30 +91,36 @@ if uploaded_file:
         full_summary = summary
 
         # === FILTERS ===
-        col1, col2, col3 = st.columns(3)
+        col1, col2 = st.columns(2)
         with col1:
             status_filter = st.selectbox("Show", ["All Open", "Overdue Only", "Not Overdue Only"], key="status")
         with col2:
-            top_n = st.selectbox("Top N", ["Top 20", "Top 30"], key="top_n")
-        with col3:
-            vendor_list = [top_n] + sorted(df['Vendor_Name'].unique().tolist())
-            selected_vendor = st.selectbox("Select Vendor", vendor_list, key="vendor_select")
+            top_n_option = st.selectbox("Top N", ["Top 20", "Top 30"], key="top_n")
+
+        n = 30 if top_n_option == "Top 30" else 20
 
         # === TOP N LOGIC ===
-        n = 30 if "30" in top_n else 20
         if status_filter == "All Open":
             top_df = full_summary.nlargest(n, 'Total').copy()
-            title = f"{top_n} Vendors (All Open)"
+            title = f"{top_n_option} Vendors (All Open)"
         elif status_filter == "Overdue Only":
             top_df = full_summary.nlargest(n, 'Overdue').copy()
             top_df['Not Overdue'] = 0
-            title = f"{top_n} Vendors (Overdue Only)"
+            title = f"{top_n_option} Vendors (Overdue Only)"
         else:
             top_df = full_summary.nlargest(n, 'Not Overdue').copy()
             top_df['Overdue'] = 0
-            title = f"{top_n} Vendors (Not Overdue Only)"
+            title = f"{top_n_option} Vendors (Not Overdue Only)"
 
-        base_df = top_df if selected_vendor == top_n else full_summary[full_summary['Vendor_Name'] == selected_vendor]
+        # === VENDOR SELECT (NO TOP 20/30 HERE) ===
+        vendor_list = sorted(df['Vendor_Name'].unique().tolist())
+        selected_vendor = st.selectbox("Or Select Vendor", [""] + vendor_list, key="vendor_select")
+
+        # Use selected vendor or top N
+        if selected_vendor and selected_vendor != "":
+            base_df = full_summary[full_summary['Vendor_Name'] == selected_vendor]
+        else:
+            base_df = top_df
 
         # === PLOT DATA ===
         plot_df = base_df.melt(
@@ -124,6 +131,9 @@ if uploaded_file:
         )
         plot_df = plot_df[plot_df['Amount'] > 0].copy()
 
+        # Add customdata for click detection
+        plot_df['Status_Label'] = plot_df['Type']
+
         # === BAR CHART ===
         fig = px.bar(
             plot_df,
@@ -133,7 +143,8 @@ if uploaded_file:
             orientation='h',
             title=title,
             color_discrete_map={'Overdue': '#8B0000', 'Not Overdue': '#4682B4'},
-            height=max(500, len(plot_df) * 45)
+            height=max(500, len(plot_df) * 45),
+            custom_data=['Status_Label']
         )
 
         # Add total labels
@@ -162,21 +173,25 @@ if uploaded_file:
         # === INTERACTIVE CHART ===
         chart = st.plotly_chart(fig, use_container_width=True, key="vendor_chart", on_select="rerun")
 
-        # === CAPTURE CLICK (Vendor + Status) ===
-        if chart.selection and chart.selection['points']:
-            point = chart.selection['points'][0]
-            vendor = point['y']
-            status = point['customdata'][0] if 'customdata' in point else point.get('text', '').split()[-1]
-            status = 'Overdue' if 'Overdue' in status else 'Not Overdue'
-            st.session_state.clicked_vendor = vendor
-            st.session_state.clicked_status = status
-        else:
-            if (st.session_state.clicked_vendor and 
-                st.session_state.clicked_vendor not in plot_df['Vendor_Name'].values):
-                st.session_state.clicked_vendor = None
-                st.session_state.clicked_status = None
+        # === CAPTURE CLICK SAFELY ===
+        clicked_vendor = None
+        clicked_status = None
 
-        # === SHOW RAW DATA — ONLY FROM CLICKED BAR ===
+        if chart.selection and 'points' in chart.selection and chart.selection['points']:
+            point = chart.selection['points'][0]
+            if 'y' in point and 'customdata' in point and point['customdata']:
+                clicked_vendor = point['y']
+                clicked_status = point['customdata'][0]  # From Status_Label
+            elif 'y' in point:
+                clicked_vendor = point['y']
+                # Fallback: infer from color (not perfect, but safe)
+                clicked_status = 'Overdue' if point.get('x', 0) > 0 and point.get('marker.color') == '#8B0000' else 'Not Overdue'
+
+        # Update session state
+        st.session_state.clicked_vendor = clicked_vendor
+        st.session_state.clicked_status = clicked_status
+
+        # === SHOW RAW DATA — ONLY FROM CLICKED SEGMENT ===
         show_vendor = st.session_state.clicked_vendor
         show_status = st.session_state.clicked_status
 
@@ -184,7 +199,6 @@ if uploaded_file:
             st.markdown("---")
             st.subheader(f"Raw Data: **{show_vendor}** → **{show_status}**")
 
-            # FILTER: Only this vendor + this status
             mask = (df['Vendor_Name'] == show_vendor) & (df['Status'] == show_status)
             raw_details = df[mask].copy()
 
