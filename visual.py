@@ -5,7 +5,7 @@ import plotly.express as px
 import io
 
 st.set_page_config(page_title="Overdue Invoices", layout="wide")
-st.title("Overdue Invoices Dashboard")
+st.title("Age Invoicer Pro")
 # REMOVED: Click bar → Raw data | Export → Raw Data Only (Graph = Excel)
 
 # Session state
