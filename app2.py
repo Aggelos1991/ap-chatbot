@@ -174,7 +174,7 @@ def match_invoices(erp_df, ven_df):
         return pd.DataFrame(merged)
 
     erp_use = merge_inv_cn(erp_use, "invoice_erp")
-    ven_use = merge_inv_cnt(ven_use, "invoice_ven")
+    ven_use = merge_inv_cn(ven_use, "invoice_ven")
 
     for e_idx, e in erp_use.iterrows():
         e_inv = str(e.get("invoice_erp", "")).strip()
