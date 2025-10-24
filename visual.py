@@ -56,7 +56,7 @@ if uploaded_file:
         df['Overdue'] = df['Due_Date'] < today
         df['Status'] = df['Overdue'].map({True: 'Overdue', False: 'Not Overdue'})
 
-        # FULL SUMMARY (ALL VENDORS)
+        # FULL SUMMARY
         full_summary = df.groupby(['Vendor_Name', 'Status'])['Open_Amount'].sum().unstack(fill_value=0).reset_index()
         full_summary['Total'] = full_summary['Overdue'] + full_summary['Not Overdue']
 
@@ -76,7 +76,7 @@ if uploaded_file:
             top_df = full_summary.nlargest(20, 'Overdue')
             top_df['Not Overdue'] = 0
             title = "Top 20 Vendors (Overdue Only)"
-        else:  # Not Overdue Only
+        else:
             top_df = full_summary.nlargest(20, 'Not Overdue')
             top_df['Overdue'] = 0
             title = "Top 20 Vendors (Not Overdue Only)"
@@ -93,7 +93,11 @@ if uploaded_file:
         )
         plot_df = plot_df[plot_df['Amount'] > 0]
 
-        # Bar chart — MANLY COLORS
+        # Add Total per Vendor
+        total_per_vendor = base_df.set_index('Vendor_Name')['Total'].to_dict()
+        plot_df['Total'] = plot_df['Vendor_Name'].map(total_per_vendor)
+
+        # Bar chart — TOTAL ON TOP
         fig = px.bar(
             plot_df,
             x='Amount',
@@ -106,10 +110,28 @@ if uploaded_file:
                 'Not Overdue': '#4682B4'   # Steel Blue
             },
             text='Amount',
-            height=max(400, len(plot_df) * 45)
+            height=max(400, len(plot_df) * 50)
         )
+
+        # ADD TOTAL AMOUNT ON TOP OF EACH VENDOR BAR
+        fig.add_scatter(
+            x=plot_df.groupby('Vendor_Name')['Amount'].sum(),
+            y=plot_df['Vendor_Name'].unique(),
+            mode='text',
+            text=plot_df.groupby('Vendor_Name')['Total'].first().apply(lambda x: f'€{x:,.0f}'),
+            textposition='top center',
+            textfont=dict(size=14, color='white', family='Arial Black'),
+            showlegend=False,
+            hoverinfo='skip'
+        )
+
         fig.update_traces(texttemplate='€%{text:,.0f}', textposition='inside')
-        fig.update_layout(xaxis_title="Amount (€)", yaxis_title="Vendor", legend_title="Status")
+        fig.update_layout(
+            xaxis_title="Amount (€)",
+            yaxis_title="Vendor",
+            legend_title="Status",
+            barmode='stack'
+        )
 
         # Plotly chart
         chart = st.plotly_chart(fig, use_container_width=True, key="vendor_chart", on_select="rerun")
@@ -126,7 +148,7 @@ if uploaded_file:
             st.subheader(f"Raw Invoices: {show_vendor}")
             raw_details = df[df['Vendor_Name'] == show_vendor].copy()
             raw_details = raw_details[['VAT_ID', 'Due_Date', 'Open_Amount', 'Status', 'Vendor_Email', 'Account_Email']]
-            raw_details['Due_Date'] = raw_details['Due_Date'].dt.strftime('%Y-%m%d')
+            raw_details['Due_Date'] = raw_details['Due_Date'].dt.strftime('%Y-%m-%d')
             raw_details['Open_Amount'] = raw_details['Open_Amount'].map('€{:,.2f}'.format)
             st.dataframe(raw_details, use_container_width=True)
 
