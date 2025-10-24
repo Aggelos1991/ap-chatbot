@@ -36,8 +36,8 @@ if uploaded_file:
         df = df.iloc[:, [0, 1, 4, 6, 29, 30]].copy()
         df.columns = ['Vendor_Name', 'VAT_ID', 'Due_Date', 'Open_Amount', 'Vendor_Email', 'Account_Email']
 
-        # Clean data
-        df['Due_Date']8] = pd.to_datetime(df['Due_Date'], errors='coerce')
+        # Convert types — FIXED LINE!
+        df['Due_Date'] = pd.to_datetime(df['Due_Date'], errors='coerce')
         df['Open_Amount'] = pd.to_numeric(df['Open_Amount'], errors='coerce')
         df = df.dropna(subset=['Vendor_Name', 'Open_Amount', 'Due_Date'])
         df = df[df['Open_Amount'] > 0]
@@ -51,7 +51,7 @@ if uploaded_file:
         df['Overdue'] = df['Due_Date'] < today
         df['Status'] = df['Overdue'].map({True: 'Overdue', False: 'Not Overdue'})
 
-        # --- FIXED: Safe aggregation using .apply() ---
+        # Safe aggregation
         def agg_vendor(group):
             total = group['Open_Amount'].sum()
             overdue = group[group['Overdue']]['Open_Amount'].sum()
