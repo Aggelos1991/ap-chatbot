@@ -1,5 +1,5 @@
 # overdue_app.py
-import streamлит as st
+import streamlit as st   # CORRECT — Latin letters!
 import pandas as pd
 import plotly.express as px
 from datetime import datetime
