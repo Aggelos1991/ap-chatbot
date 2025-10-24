@@ -6,11 +6,17 @@ import io
 
 st.set_page_config(page_title="Overdue Invoices", layout="wide")
 st.title("Overdue Invoices Dashboard")
-st.markdown("**Uses PivotTable13 from sheet 'Outstanding Invoices IB'**")
+st.markdown("**Uses PivotTable13 from sheet 'Outstanding Invoices IB' — Currency: €**")
 
+# Session state
+if 'selected_vendor' not in st.session_state:
+    st.session_state.selected_vendor = None
+
+# Upload
 uploaded_file = st.file_uploader("Upload your Excel file", type=['xlsx'])
 
 if uploaded_file:
+    try = True
     try:
         # Read sheet
         with pd.ExcelFile(uploaded_file) as xls:
@@ -19,7 +25,7 @@ if uploaded_file:
                 st.stop()
             df_raw = pd.read_excel(xls, sheet_name='Outstanding Invoices IB', header=None)
 
-        # Find header row with "VENDOR"
+        # Find header "VENDOR"
         header_row = df_raw[df_raw.iloc[:, 0].astype(str).str.contains("VENDOR", case=False, na=False)].index
         if header_row.empty:
             st.error("Header 'VENDOR' not found in column A.")
@@ -37,9 +43,9 @@ if uploaded_file:
 
         # Clean
         df['Due_Date'] = pd.to_datetime(df['Due_Date'], errors='coerce')
-        df['Open_Amount'] = pd.to_numeric(df['Open_Amount'], errors='coerce')
+        df['Open_Amount'] = pd.to_numeric(df['Open_A Reference', errors='coerce')
         df = df.dropna(subset=['Vendor_Name', 'Open_Amount', 'Due_Date'])
-        df = df[df['Open_Amount'] >0]
+        df = df[df['Open_Amount'] > 0]
 
         if df.empty:
             st.warning("No open invoices.")
@@ -63,38 +69,37 @@ if uploaded_file:
         col1, col2 = st.columns(2)
         with col1:
             status_filter = st.selectbox("Show", ["All Open", "Overdue Only", "Not Overdue Only"], key="status")
-        with col2:
-            vendor_list = ["Top 10"] + sorted(df['Vendor_Name'].unique().tolist())
-            selected_vendor = st.selectbox("Select Vendor", vendor_list, key="vendor")
+        vendor_list = ["Top 10"] + sorted(df['Vendor_Name'].unique().tolist())
+        selected_vendor = st.selectbox("Select Vendor", vendor_list, key="vendor_select")
 
-        # Select base data
+        # Update session state
+        if selected_vendor != "Top 10":
+            st.session_state.selected_vendor = selected_vendor
+        else:
+            st.session_state.selected_vendor = None
+
+        # Base data
         base_df = top10 if selected_vendor == "Top 10" else summary[summary['Vendor_Name'] == selected_vendor]
 
-        # Apply status filter to data BEFORE melting
+        # Apply filter
         if status_filter == "Overdue Only":
             base_df['Not_Overdue_Amount'] = 0
         elif status_filter == "Not Overdue Only":
             base_df['Overdue_Amount'] = 0
 
-        # Melt AFTER filtering
+        # Melt
         plot_df = base_df.melt(
             id_vars='Vendor_Name',
             value_vars=['Overdue_Amount', 'Not_Overdue_Amount'],
             var_name='Type',
             value_name='Amount'
-        )
-        plot_df['Type'] = plot_df['Type'].replace({
-            'Overdue_Amount': 'Overdue',
-            'Not_Overdue_Amount': 'Not Overdue'
-        })
-
-        # Remove zero bars
+        ).replace({'Overdue_Amount': 'Overdue', 'Not_Overdue_Amount': 'Not Overdue'})
         plot_df = plot_df[plot_df['Amount'] > 0]
 
         # Title
         title = "Top 10 Vendors by Open Amount" if selected_vendor == "Top 10" else f"{selected_vendor}"
 
-        # Bar chart
+        # Bar chart with € and click
         fig = px.bar(
             plot_df,
             x='Amount',
@@ -106,27 +111,30 @@ if uploaded_file:
             text='Amount',
             height=max(400, len(plot_df) * 50)
         )
-        fig.update_traces(texttemplate='$%{text:,.0f}', textposition='inside')
+        fig.update_traces(texttemplate='€%{text:,.0f}', textposition='inside')
         fig.update_layout(
-            xaxis_title="Amount ($)",
+            xaxis_title="Amount (€)",
             yaxis_title="Vendor",
             legend_title="Status",
             hovermode="y unified"
         )
 
-        chart = st.plotly_chart(fig, use_container_width=True, key="main_chart")
-        click_data = st.session_state.get("main_chart", {}).get("clickData")
+        # Click handler
+        def handle_click(trace, points, state):
+            if points.point_inds:
+                vendor = plot_df.iloc[points.point_inds[0]]['Vendor_Name']
+                st.session_state.selected_vendor = vendor
 
-        show_vendor = selected_vendor if selected_vendor != "Top 10" else None
-        if click_data and 'points' in click_data:
-            show_vendor = click_data['points'][0]['y']
+        st.plotly_chart(fig, use_container_width=True, on_select="rerun", selection_mode="points", key="chart")
 
+        # Show details
+        show_vendor = st.session_state.selected_vendor
         if show_vendor:
             st.subheader(f"Details: {show_vendor}")
             details = df[df['Vendor_Name'] == show_vendor].copy()
             details = details[['VAT_ID', 'Due_Date', 'Open_Amount', 'Status', 'Vendor_Email', 'Account_Email']]
             details['Due_Date'] = details['Due_Date'].dt.strftime('%Y-%m-%d')
-            details['Open_Amount'] = details['Open_Amount'].map('${:,.2f}'.format)
+            details['Open_Amount'] = details['Open_Amount'].map('€{:,.2f}'.format)
             st.dataframe(details, use_container_width=True)
 
             buffer = io.BytesIO()
@@ -140,7 +148,7 @@ if uploaded_file:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
         else:
-            st.info("Click a bar or select a vendor to view details.")
+            st.info("**Click a bar** or **select a vendor** to view details.")
 
     except Exception as e:
         st.error(f"Error: {str(e)}")
