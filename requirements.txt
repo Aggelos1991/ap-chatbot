@@ -8,5 +8,5 @@ fuzzywuzzy
 python-Levenshtein
 pdfplumber
 xlsxwriter
-
+plotly
 
