@@ -1,12 +1,12 @@
 # overdue_app.py
 import streamlit as st
-import pandas as pd
+import pandas as st
 import plotly.express as px
 import io
 
 st.set_page_config(page_title="Overdue Invoices", layout="wide")
 st.title("Overdue Invoices – Priority Vendors Dashboard")
-st.markdown("**Click a bar segment → See only that data | Export → Filtered Excel**")
+st.markdown("**Click a bar segment to see only that data | Export to Filtered Excel**")
 
 # Session state
 if 'clicked_vendor' not in st.session_state:
@@ -48,10 +48,11 @@ if uploaded_file:
         yes_mask = (
             (df['AF'].astype(str).str.strip().str.upper() == 'YES') &
             (df['AH'].astype(str).str.strip().str.upper() == 'YES') &
-            (df['AJ'].astype(str)..str.strip().str.upper() == 'YES') &
+            (df['AJ'].astype(str).str.strip().str.upper() == 'YES') &
             (df['AN'].astype(str).str.strip().str.upper() == 'YES')
         )
-        bd_keywords = ['ENTERTAINMENT', 'FALSE', ' | 'REGULAR', 'PRIORITY VENDOR', 'PRIORITY VENDOR OS&E']
+        # FIXED LINE: Removed invalid ' | '
+        bd_keywords = ['ENTERTAINMENT', 'FALSE', 'REGULAR', 'PRIORITY VENDOR', 'PRIORITY VENDOR OS&E']
         bd_mask = df['BD'].astype(str).str.upper().apply(
             lambda x: any(k in x for k in bd_keywords)
         )
@@ -184,8 +185,7 @@ if uploaded_file:
                 clicked_status = point['customdata'][0]  # From Status_Label
             elif 'y' in point:
                 clicked_vendor = point['y']
-                # Fallback: infer from color (not perfect, but safe)
-                clicked_status = 'Overdue' if point.get('x', 0) > 0 and point.get('marker.color') == '#8B0000' else 'Not Overdue'
+                clicked_status = 'Overdue' if point.get('marker.color') == '#8B0000' else 'Not Overdue'
 
         # Update session state
         st.session_state.clicked_vendor = clicked_vendor
@@ -197,7 +197,7 @@ if uploaded_file:
 
         if show_vendor and show_status:
             st.markdown("---")
-            st.subheader(f"Raw Data: **{show_vendor}** → **{show_status}**")
+            st.subheader(f"Raw Data: **{show_vendor}** to **{show_status}**")
 
             mask = (df['Vendor_Name'] == show_vendor) & (df['Status'] == show_status)
             raw_details = df[mask].copy()
@@ -270,4 +270,4 @@ if uploaded_file:
         st.error(f"Error: {str(e)}")
         st.stop()
 else:
-    st.info("Upload Excel → Click bar segment → See only that data → Export")
+    st.info("Upload Excel to Click bar segment to See only that data to Export")
