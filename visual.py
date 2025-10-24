@@ -89,11 +89,16 @@ if uploaded_file:
                 allowed_bd = ['ENTERTAINMENT', 'PRIORITY VENDOR', 'PRIORITY VENDOR OS&E', 'REGULAR']
                 df = df[df['BD_Filter'].isin(allowed_bd)]
 
-        # === FILTERED DATA ONLY FROM NOW ON ===
-        filtered_df = df.copy()  # ALL SUBSEQUENT LOGIC USES THIS
+        # === FILTERED DATA ONLY ===
+        filtered_df = df.copy()
 
         # Summary from filtered data
         summary = filtered_df.groupby(['Vendor_Name', 'Status'])['Open_Amount'].sum().unstack(fill_value=0).reset_index()
+        # Ensure both columns exist
+        if 'Overdue' not in summary.columns:
+            summary['Overdue'] = 0
+        if 'Not Overdue' not in summary.columns:
+            summary['Not Overdue'] = 0
         summary['Total'] = summary['Overdue'] + summary['Not Overdue']
 
         # Filters
@@ -106,16 +111,16 @@ if uploaded_file:
 
         # GET TOP 20 FROM FILTERED DATA
         if status_filter == "All Open":
-            top_df = summary.nlargest(20, 'Total')
-            title = "Top 20 Vendors ( Filtered )"
+            top_df = summary.nlargest(20, 'Total').copy()
+            title = "Top 20 Vendors (Filtered)"
         elif status_filter == "Overdue Only":
-            top_df = summary.nlargest(20, 'Overdue')
+            top_df = summary.nlargest(20, 'Overdue').copy()
             top_df['Not Overdue'] = 0
-            title = "Top 20 Overdue ( Filtered )"
+            title = "Top 20 Overdue (Filtered)"
         else:
-            top_df = summary.nlargest(20, 'Not Overdue')
+            top_df = summary.nlargest(20, 'Not Overdue').copy()
             top_df['Overdue'] = 0
-            title = "Top 20 Not Overdue ( Filtered )"
+            title = "Top 20 Not Overdue (Filtered)"
 
         # Base data
         base_df = top_df if selected_vendor == "Top 20" else summary[summary['Vendor_Name'] == selected_vendor]
