@@ -1,5 +1,5 @@
 # --------------------------------------------------------------
-# ReconRaptor – Vendor Reconciliation (FINAL + FIXED MATCHING)
+# ReconRaptor – Vendor Reconciliation (FINAL + FLOW SUMMARY)
 # --------------------------------------------------------------
 import streamlit as st
 import pandas as pd
@@ -46,6 +46,9 @@ st.markdown(
     .missing-erp {background:#C62828;color:#fff;font-weight:bold;}
     .missing-vendor {background:#AD1457;color:#fff;font-weight:bold;}
     .payment-match {background:#004D40;color:#fff;font-weight:bold;}
+    .flow-total {background:#E3F2FD;color:#1565C0;font-weight:bold;}
+    .flow-match {background:#E8F5E9;color:#2E7D32;font-weight:bold;}
+    .flow-miss {background:#FFEBEE;color:#C62828;font-weight:bold;}
 </style>
 """,
     unsafe_allow_html=True,
@@ -143,10 +146,8 @@ def style(df, css):
 
 # ==================== MATCHING (FIXED) ==========================
 def match_invoices(erp_df, ven_df):
-    # Add normalized invoice keys early
     erp_df["__norm_inv"] = erp_df["invoice_erp"].astype(str).apply(clean_invoice_code)
     ven_df["__norm_inv"] = ven_df["invoice_ven"].astype(str).apply(clean_invoice_code)
-
     matched = []
     used_vendor = set()
 
@@ -190,21 +191,17 @@ def match_invoices(erp_df, ven_df):
 
     for e_idx, e in erp_use.iterrows():
         e_inv_raw = str(e.get("invoice_erp", "")).strip()
-        v_inv_raw_match = None
         e_amt = round(float(e["__amt"]), 2)
         e_typ = e["__type"]
         e_norm = e["__norm_inv"]
-
         for v_idx, v in ven_use.iterrows():
             if v_idx in used_vendor: continue
             v_inv_raw = str(v.get("invoice_ven", "")).strip()
             v_amt = round(float(v["__amt"]), 2)
             v_typ = v["__type"]
             v_norm = v["__norm_inv"]
-
             if e_typ != v_typ or e_norm != v_norm:
                 continue
-
             diff = abs(e_amt - v_amt)
             status = "Perfect Match" if diff <= 0.01 else "Difference Match" if diff < 1.0 else None
             if status:
@@ -217,47 +214,38 @@ def match_invoices(erp_df, ven_df):
                     "Status": status
                 })
                 used_vendor.add(v_idx)
-                v_inv_raw_match = v_inv_raw
                 break
 
     matched_df = pd.DataFrame(matched)
-
-    # Build normalized matched sets
     matched_erp_norm = set(clean_invoice_code(x) for x in matched_df["ERP Invoice"])
     matched_ven_norm = set(clean_invoice_code(x) for x in matched_df["Vendor Invoice"])
 
     date_cols_erp = ["date_erp"] if "date_erp" in erp_use.columns else []
     date_cols_ven = ["date_ven"] if "date_ven" in ven_use.columns else []
-
     miss_erp = erp_use[~erp_use["__norm_inv"].isin(matched_ven_norm)][["invoice_erp", "__amt"] + date_cols_erp] \
         .rename(columns={"invoice_erp": "Invoice", "__amt": "Amount", "date_erp": "Date"})
     miss_ven = ven_use[~ven_use["__norm_inv"].isin(matched_erp_norm)][["invoice_ven", "__amt"] + date_cols_ven] \
         .rename(columns={"invoice_ven": "Invoice", "__amt": "Amount", "date_ven": "Date"})
-
-    return matched_df, miss_erp, miss_ven, matched_erp_norm, matched_ven_norm
+    return matched_df, miss_erp, miss_ven, matched_erp_norm, matched_ven_norm, erp_use, ven_use
 
 def tier2_match(erp_miss, ven_miss, exclude_erp_norm=set(), exclude_ven_norm=set()):
     if erp_miss.empty or ven_miss.empty:
         return pd.DataFrame(), set(), set(), erp_miss.copy(), ven_miss.copy()
-
     e = erp_miss.copy()
     v = ven_miss.copy()
     matches, used_e, used_v = [], set(), set()
-
     for ei, er in e.iterrows():
         if ei in used_e: continue
         e_inv_raw = str(er["Invoice"])
         e_amt = round(float(er["Amount"]), 2)
         e_code = clean_invoice_code(e_inv_raw)
         if e_code in exclude_erp_norm: continue
-
         for vi, vr in v.iterrows():
             if vi in used_v: continue
             v_inv_raw = str(vr["Invoice"])
             v_amt = round(float(vr["Amount"]), 2)
             v_code = clean_invoice_code(v_inv_raw)
             if v_code in exclude_ven_norm: continue
-
             diff = abs(e_amt - v_amt)
             sim = fuzzy_ratio(e_code, v_code)
             if diff < 0.05 and sim >= 0.80:
@@ -273,7 +261,6 @@ def tier2_match(erp_miss, ven_miss, exclude_erp_norm=set(), exclude_ven_norm=set
                 used_e.add(ei)
                 used_v.add(vi)
                 break
-
     mdf = pd.DataFrame(matches)
     rem_e = e[~e.index.isin(used_e)].copy()
     rem_v = v[~v.index.isin(used_v)].copy()
@@ -282,27 +269,23 @@ def tier2_match(erp_miss, ven_miss, exclude_erp_norm=set(), exclude_ven_norm=set
 def tier3_match(erp_miss, ven_miss, exclude_erp_norm=set(), exclude_ven_norm=set()):
     if erp_miss.empty or ven_miss.empty:
         return pd.DataFrame(), set(), set(), erp_miss.copy(), ven_miss.copy()
-
     e = erp_miss.copy()
     v = ven_miss.copy()
     e["d"] = e["Date"].apply(normalize_date) if "Date" in e.columns else ""
     v["d"] = v["Date"].apply(normalize_date) if "Date" in v.columns else ""
     matches, used_e, used_v = [], set(), set()
-
     for ei, er in e.iterrows():
         if ei in used_e or not er["d"]: continue
         e_inv_raw = str(er["Invoice"])
         e_amt = round(float(er["Amount"]), 2)
         e_code = clean_invoice_code(e_inv_raw)
         if e_code in exclude_erp_norm: continue
-
         for vi, vr in v.iterrows():
             if vi in used_v or not vr["d"]: continue
             v_inv_raw = str(vr["Invoice"])
             v_amt = round(float(vr["Amount"]), 2)
             v_code = clean_invoice_code(v_inv_raw)
             if v_code in exclude_ven_norm: continue
-
             if er["d"] == vr["d"] and fuzzy_ratio(e_code, v_code) >= 0.90:
                 diff = abs(e_amt - v_amt)
                 matches.append({
@@ -318,7 +301,6 @@ def tier3_match(erp_miss, ven_miss, exclude_erp_norm=set(), exclude_ven_norm=set
                 used_e.add(ei)
                 used_v.add(vi)
                 break
-
     mdf = pd.DataFrame(matches)
     rem_e = e[~e.index.isin(used_e)].copy()
     rem_v = v[~v.index.isin(used_v)].copy()
@@ -327,21 +309,17 @@ def tier3_match(erp_miss, ven_miss, exclude_erp_norm=set(), exclude_ven_norm=set
 def extract_payments(erp_df, ven_df):
     pay_kw = ["πληρωμή", "payment", "bank transfer", "transferencia", "trf", "remesa", "pago", "deposit", "μεταφορά", "έμβασμα", "εξοφληση", "pagado", "paid"]
     excl_kw = ["invoice of expenses", "expense invoice", "τιμολόγιο εξόδων", "διόρθωση", "correction", "reclass", "adjustment", "μεταφορά υπολοίπου"]
-
     def is_pay(row, tag):
         txt = str(row.get(f"reason_{tag}", "")).lower()
         return any(k in txt for k in pay_kw) and not any(b in txt for b in excl_kw) \
                and ((tag == "erp" and normalize_number(row.get("debit_erp", 0)) > 0) or
                     (tag == "ven" and normalize_number(row.get("credit_ven", 0)) > 0))
-
     erp_pay = erp_df[erp_df.apply(lambda r: is_pay(r, "erp"), axis=1)].copy() if "reason_erp" in erp_df.columns else pd.DataFrame()
     ven_pay = ven_df[ven_df.apply(lambda r: is_pay(r, "ven"), axis=1)].copy() if "reason_ven" in ven_df.columns else pd.DataFrame()
-
     if not erp_pay.empty:
         erp_pay["Amount"] = erp_pay.apply(lambda r: abs(normalize_number(r["debit_erp"]) - normalize_number(r["credit_erp"])), axis=1)
     if not ven_pay.empty:
         ven_pay["Amount"] = ven_pay.apply(lambda r: abs(normalize_number(r["debit_ven"]) - normalize_number(r["credit_ven"])), axis=1)
-
     matched = []
     used = set()
     for _, e in erp_pay.iterrows():
@@ -367,26 +345,22 @@ def export_excel(t1, t2, t3, miss_erp, miss_ven, pay_match):
             c.fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
             c.font = Font(color="FFFFFF", bold=True)
             c.alignment = Alignment(horizontal="center", vertical="center")
-
     ws1 = wb.active
     ws1.title = "Tier1"
     if not t1.empty:
         for r in dataframe_to_rows(t1, index=False, header=True):
             ws1.append(r)
         hdr(ws1, 1, "1E88E5")
-
     ws2 = wb.create_sheet("Tier2")
     if not t2.empty:
         for r in dataframe_to_rows(t2, index=False, header=True):
             ws2.append(r)
         hdr(ws2, 1, "26A69A")
-
     ws3 = wb.create_sheet("Tier3")
     if not t3.empty:
         for r in dataframe_to_rows(t3, index=False, header=True):
             ws3.append(r)
         hdr(ws3, 1, "7E57C2")
-
     ws4 = wb.create_sheet("Missing")
     cur = 1
     if not miss_erp.empty:
@@ -404,18 +378,15 @@ def export_excel(t1, t2, t3, miss_erp, miss_ven, pay_match):
         for r in dataframe_to_rows(miss_ven, index=False, header=True):
             ws4.append(r)
         hdr(ws4, cur, "AD1457")
-
     ws5 = wb.create_sheet("Payments")
     if not pay_match.empty:
         for r in dataframe_to_rows(pay_match, index=False, header=True):
             ws5.append(r)
         hdr(ws5, 1, "004D40")
-
     for ws in wb.worksheets:
         for col in ws.columns:
             max_len = max(len(str(c.value)) if c.value else 0 for c in col)
             ws.column_dimensions[get_column_letter(col[0].column)].width = max_len + 3
-
     buf = BytesIO()
     wb.save(buf)
     buf.seek(0)
@@ -434,10 +405,13 @@ if uploaded_erp and uploaded_vendor:
         ven_df = normalize_columns(ven_raw, "ven")
 
         with st.spinner("Analyzing invoices..."):
-            tier1, miss_erp, miss_ven, tier1_erp_norm, tier1_ven_norm = match_invoices(erp_df, ven_df)
+            tier1, miss_erp, miss_ven, tier1_erp_norm, tier1_ven_norm, erp_use, ven_use = match_invoices(erp_df, ven_df)
             tier2, _, _, miss_erp2, miss_ven2 = tier2_match(miss_erp, miss_ven, tier1_erp_norm, tier1_ven_norm)
-            tier3, _, _, final_erp_miss, final_ven_miss = tier3_match(miss_erp2, miss_ven2, tier1_erp_norm | {clean_invoice_code(x) for x in tier2["ERP Invoice"]}, 
-                                                                    tier1_ven_norm | {clean_invoice_code(x) for x in tier2["Vendor Invoice"]})
+            tier3, _, _, final_erp_miss, final_ven_miss = tier3_match(
+                miss_erp2, miss_ven2,
+                tier1_erp_norm | {clean_invoice_code(x) for x in tier2["ERP Invoice"]},
+                tier1_ven_norm | {clean_invoice_code(x) for x in tier2["Vendor Invoice"]}
+            )
             erp_pay, ven_pay, pay_match = extract_payments(erp_df, ven_df)
 
         st.success("Reconciliation Complete!")
@@ -482,6 +456,53 @@ if uploaded_erp and uploaded_vendor:
             st.markdown(f"**Total:** {final_ven_miss['Amount'].sum():,.2f}", unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
 
+        # ---------- RECONCILIATION FLOW SUMMARY ----------
+        st.markdown('<h2 class="section-title">Reconciliation Flow</h2>', unsafe_allow_html=True)
+        flow_data = {
+            "Stage": [
+                "Total ERP Invoices", "Total Vendor Invoices",
+                "Tier-1 Perfect Match", "Tier-1 Difference Match",
+                "Tier-2 Fuzzy + Amount", "Tier-3 Date + Fuzzy",
+                "Unmatched ERP", "Unmatched Vendor"
+            ],
+            "Count": [
+                len(erp_use), len(ven_use),
+                len(perf), len(diff),
+                len(tier2), len(tier3),
+                len(final_erp_miss), len(final_ven_miss)
+            ],
+            "ERP Amount": [
+                erp_use["__amt"].sum() if not erp_use.empty else 0,
+                0,
+                safe_sum(perf, 'ERP Amount'), safe_sum(diff, 'ERP Amount'),
+                safe_sum(tier2, 'ERP Amount'), safe_sum(tier3, 'ERP Amount'),
+                final_erp_miss['Amount'].sum() if not final_erp_miss.empty else 0,
+                0
+            ],
+            "Vendor Amount": [
+                0, ven_use["__amt"].sum() if not ven_use.empty else 0,
+                safe_sum(perf, 'Vendor Amount'), safe_sum(diff, 'Vendor Amount'),
+                safe_sum(tier2, 'Vendor Amount'), safe_sum(tier3, 'Vendor Amount'),
+                0, final_ven_miss['Amount'].sum() if not final_ven_miss.empty else 0
+            ]
+        }
+        flow_df = pd.DataFrame(flow_data)
+        flow_df["ERP Amount"] = flow_df["ERP Amount"].apply(lambda x: f"{x:,.2f}")
+        flow_df["Vendor Amount"] = flow_df["Vendor Amount"].apply(lambda x: f"{x:,.2f}")
+
+        def style_flow(row):
+            stage = row["Stage"]
+            if "Total" in stage:
+                return ["flow-total"] * len(row)
+            if "Match" in stage or "Tier-" in stage:
+                return ["flow-match"] * len(row)
+            if "Unmatched" in stage:
+                return ["flow-miss"] * len(row)
+            return [""] * len(row)
+
+        styled_flow = flow_df.style.apply(style_flow, axis=1).format({"Count": "{:,}"})
+        st.dataframe(styled_flow, use_container_width=True)
+
         st.markdown("---")
 
         # ---------- DISPLAY ----------
@@ -514,14 +535,14 @@ if uploaded_erp and uploaded_vendor:
 
         col_m1, col_m2 = st.columns(2)
         with col_m1:
-            st.markdown('<h2 class="section-title">Missing in ERP</h2>', unsafe_allow_html=True)
+            st.markdown('<h2 class="section-title">Missing in ERP (Not in Vendor Statement)</h2>', unsafe_allow_html=True)
             if not final_ven_miss.empty:
                 st.dataframe(style(final_ven_miss, "background:#AD1457;color:#fff;font-weight:bold;"), use_container_width=True)
                 st.error(f"{len(final_ven_miss)} vendor invoices missing – {final_ven_miss['Amount'].sum():,.2f}")
             else:
                 st.success("All vendor invoices found in ERP.")
         with col_m2:
-            st.markdown('<h2 class="section-title">Missing in Vendor</h2>', unsafe_allow_html=True)
+            st.markdown('<h2 class="section-title">Missing in Vendor (Not in ERP)</h2>', unsafe_allow_html=True)
             if not final_erp_miss.empty:
                 st.dataframe(style(final_erp_miss, "background:#C62828;color:#fff;font-weight:bold;"), use_container_width=True)
                 st.error(f"{len(final_erp_miss)} ERP invoices missing – {final_erp_miss['Amount'].sum():,.2f}")
