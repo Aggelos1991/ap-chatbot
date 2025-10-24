@@ -93,8 +93,21 @@ if uploaded_file:
         df['Overdue'] = df['Due_Date'] < today
         df['Status'] = df['Overdue'].map({True: 'Overdue', False: 'Not Overdue'})
 
-        # Full summary by vendor
-        full_summary = df.groupby(['Vendor_Name', 'Status'])['Open_Amount'].sum().unstack(fill_value=0).reset_index()
+       # Safe unstack: ensure both columns exist
+        full_summary = (
+            df.groupby(['Vendor_Name', 'Status'])['Open_Amount']
+            .sum()
+            .unstack(fill_value=0)
+            .reset_index()
+        )
+        
+        # Ensure both 'Overdue' and 'Not Overdue' columns exist
+        if 'Overdue' not in full_summary.columns:
+            full_summary['Overdue'] = 0
+        if 'Not Overdue' not in full_summary.columns:
+            full_summary['Not Overdue'] = 0
+        
+        # Now safe to sum
         full_summary['Total'] = full_summary['Overdue'] + full_summary['Not Overdue']
 
         # Filters
