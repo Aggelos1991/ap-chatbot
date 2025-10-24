@@ -7,11 +7,11 @@ from openpyxl.utils.dataframe import dataframe_to_rows
 from openpyxl.utils import get_column_letter
 from openpyxl.styles import PatternFill, Font, Alignment
 from difflib import SequenceMatcher
-
 # ======================================
 # CONFIGURATION WITH CUSTOM CSS COLORS
 # ======================================
 st.set_page_config(page_title="🦖 ReconRaptor — Vendor Reconciliation", layout="wide")
+# Custom CSS for beautiful color styling
 st.markdown("""
 <style>
     .perfect-match { background-color: #2E7D32 !important; color: white !important; font-weight: bold !important; }
@@ -28,7 +28,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 st.title("🦖 ReconRaptor — Vendor Reconciliation")
-
 # ======================================
 # HELPERS
 # ======================================
@@ -51,7 +50,6 @@ def normalize_number(v):
         return float(s)
     except:
         return 0.0
-
 def normalize_date(v):
     """Normalize date strings to YYYY-MM-DD format, handling various formats."""
     if pd.isna(v) or str(v).strip() == "":
@@ -61,7 +59,7 @@ def normalize_date(v):
         "%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y",
         "%m/%d/%Y", "%m-%d-%Y",
         "%Y/%m/%d", "%Y-%m-%d",
-        "%d/%m/%y", "%d-%m/%y", "%d.%m.%y",
+        "%d/%m/%y", "%d-%m-%y", "%d.%m.%y",
         "%m/%d/%y", "%m-%d/%y",
         "%Y.%m.%d"
     ]
@@ -81,18 +79,16 @@ def normalize_date(v):
         return d.strftime("%Y-%m-%d")
     except:
         return ""
-
 def clean_invoice_code_strict(v):
     """Clean invoice code strictly by removing special characters, years, slashes, spaces, and non-numeric parts."""
     if not v:
         return ""
     s = str(v).strip().lower()
-    s = re.sub(r"[^a-z0-9]", "", s)  # Keep only alphanumeric
-    s = re.sub(r"20\d{2}", "", s)    # Remove year patterns like 2023
-    s = re.sub(r"^\D+", "", s)       # Remove leading non-numeric characters
-    s = re.sub(r"^0+", "", s)        # Remove leading zeros
+    s = re.sub(r"[^a-z0-9]", "", s) # Keep only alphanumeric
+    s = re.sub(r"20\d{2}", "", s) # Remove year patterns like 2023
+    s = re.sub(r"^\D+", "", s) # Remove leading non-numeric characters
+    s = re.sub(r"^0+", "", s) # Remove leading zeros
     return s or "0"
-
 def normalize_columns(df, tag):
     """Map multilingual headers to unified names."""
     mapping = {
@@ -134,6 +130,11 @@ def normalize_columns(df, tag):
             "ημερομηνία τιμολογίου", "ημερομηνία έκδοσης τιμολογίου", "ημερομηνία καταχώρισης",
             "ημερ. έκδοσης", "ημερ. παραστατικού", "ημερομηνία έκδοσης παραστατικού"
         ],
+        "due_date": [
+            "due date", "fecha vencimiento", "vencimiento", "due", "payable by",
+            "ημερομηνία λήξης", "λήξη", "ημ/νία λήξης", "due date",
+            "payment due", "expiration date"
+        ],
     }
     rename_map = {}
     cols_lower = {c: str(c).strip().lower() for c in df.columns}
@@ -146,12 +147,10 @@ def normalize_columns(df, tag):
         cname = f"{required}_{tag}"
         if cname not in out.columns:
             out[cname] = 0.0
-    if f"date_{tag}" in out.columns:
-        out[f"date_{tag}"] = out[f"date_{tag}"].apply(normalize_date)
-    else:
-        out[f"date_{tag}"] = ""  # Add empty date column if not found
+    for date_col in [f"date_{tag}", f"due_date_{tag}"]:
+        if date_col in out.columns:
+            out[date_col] = out[date_col].apply(normalize_date)
     return out
-
 # ======================================
 # MISSING FUNCTIONS IMPLEMENTED
 # ======================================
@@ -164,7 +163,7 @@ def extract_payments(erp_df, ven_df):
             r"trf", r"remesa", r"pago", r"pagado", r"transferencia",
             r"εξοφληση", r"paid", r"settled", r"clearing"
         ]
-     
+    
         for idx, row in df.iterrows():
             reason = str(row.get(f"reason_{tag}", "")).lower()
             if any(re.search(p, reason) for p in payment_patterns):
@@ -175,13 +174,10 @@ def extract_payments(erp_df, ven_df):
                     "date": row.get(f"date_{tag}", "")
                 })
         return pd.DataFrame(payments)
- 
     erp_payments = detect_payments(erp_df, "erp")
     ven_payments = detect_payments(ven_df, "ven")
- 
     matched_payments = pd.DataFrame()
     return erp_payments, ven_payments, matched_payments
-
 def export_reconciliation_excel(matched, erp_missing, ven_missing, matched_payments, tier2_matches, tier2_amount_diff):
     """Export complete reconciliation report to Excel."""
     output = BytesIO()
@@ -206,7 +202,6 @@ def export_reconciliation_excel(matched, erp_missing, ven_missing, matched_payme
         summary_df.to_excel(writer, sheet_name='Summary', index=False)
     output.seek(0)
     return output.getvalue()
-
 # ======================================
 # SUMMARY TABLE WITH TOTALS
 # ======================================
@@ -246,7 +241,6 @@ def create_summary_table_with_totals(matched_df, tier2_matches, tier2_amount_dif
         ]
     }
     return pd.DataFrame(summary_data)
-
 def style_summary_table(df):
     """Style the summary table with colors."""
     def highlight_totals(row):
@@ -264,7 +258,6 @@ def style_summary_table(df):
         else:
             return [''] * len(row)
     return df.style.apply(highlight_totals, axis=1)
-
 # ======================================
 # CORE FUNCTIONS
 # ======================================
@@ -335,10 +328,10 @@ def match_invoices(erp_df, ven_df):
             if group.empty: continue
             if len(group) >= 3:
                 group = group.tail(2)
-        
+       
             inv_rows = group[group["__doctype"] == "INV"]
             cn_rows = group[group["__doctype"] == "CN"]
-        
+       
             if not inv_rows.empty and not cn_rows.empty:
                 total_inv = inv_rows["__amt"].sum()
                 total_cn = cn_rows["__amt"].sum()
@@ -357,32 +350,32 @@ def match_invoices(erp_df, ven_df):
         e_inv = str(e.get("invoice_erp", "")).strip()
         e_amt = round(float(e["__amt"]), 2)
         e_type = e["__doctype"]
-    
+   
         for v_idx, v in ven_use.iterrows():
             if v_idx in used_vendor_rows:
                 continue
-            
+           
             v_inv = str(v.get("invoice_ven", "")).strip()
             v_amt = round(float(v["__amt"]), 2)
             v_type = v["__doctype"]
-        
+       
             diff = abs(e_amt - v_amt)
-        
+       
             if e_type != v_type:
                 continue
-            
+           
             exact_match = (e_inv == v_inv)
             numerical_match = False
-        
+       
             e_nums = re.findall(r'(\d{4,})$', e_inv)
             v_nums = re.findall(r'(\d{4,})$', v_inv)
-        
+       
             if e_nums and v_nums and len(e_nums[0]) == len(v_nums[0]):
                 numerical_match = (e_nums[0] == v_nums[0])
-        
+       
             amt_tolerance = 0.01
             amt_close = diff <= amt_tolerance
-        
+       
             if exact_match or numerical_match:
                 if amt_close:
                     status = "Perfect Match"
@@ -390,7 +383,7 @@ def match_invoices(erp_df, ven_df):
                     status = "Difference Match"
                 else:
                     continue
-            
+           
                 matched.append({
                     "ERP Invoice": e_inv,
                     "Vendor Invoice": v_inv,
@@ -404,31 +397,30 @@ def match_invoices(erp_df, ven_df):
     matched_df = pd.DataFrame(matched)
     matched_erp = {m["ERP Invoice"] for _, m in matched_df.iterrows()}
     matched_ven = {m["Vendor Invoice"] for _, m in matched_df.iterrows()}
-    erp_columns = ["invoice_erp", "__amt"] + (["date_erp"] if "date_erp" in erp_use.columns else [])
-    ven_columns = ["invoice_ven", "__amt"] + (["date_ven"] if "date_ven" in ven_use.columns else [])
+    erp_columns = ["invoice_erp", "__amt"] + (["date_erp"] if "date_erp" in erp_use.columns else []) + (["due_date_erp"] if "due_date_erp" in erp_use.columns else [])
+    ven_columns = ["invoice_ven", "__amt"] + (["date_ven"] if "date_ven" in ven_use.columns else []) + (["due_date_ven"] if "due_date_ven" in ven_use.columns else [])
     missing_in_erp = erp_use[~erp_use["invoice_erp"].isin(matched_ven)][erp_columns]
     missing_in_vendor = ven_use[~ven_use["invoice_ven"].isin(matched_erp)][ven_columns]
-    missing_in_erp = missing_in_erp.rename(columns={"invoice_erp": "Invoice", "__amt": "Amount", "date_erp": "Date"})
-    missing_in_vendor = missing_in_vendor.rename(columns={"invoice_ven": "Invoice", "__amt": "Amount", "date_ven": "Date"})
+    missing_in_erp = missing_in_erp.rename(columns={"invoice_erp": "Invoice", "__amt": "Amount", "date_erp": "Date", "due_date_erp": "Due Date"})
+    missing_in_vendor = missing_in_vendor.rename(columns={"invoice_ven": "Invoice", "__amt": "Amount", "date_ven": "Date", "due_date_ven": "Due Date"})
     return matched_df, missing_in_erp, missing_in_vendor
-
 def strict_match_unmatched(erp_missing, ven_missing):
-    """Match unmatched invoices strictly based on cleaned invoice numbers, ignoring amounts."""
+    """Match unmatched invoices strictly by cleaned invoice numbers, ignoring amounts."""
     if erp_missing.empty or ven_missing.empty:
         return pd.DataFrame(), erp_missing.copy(), ven_missing.copy()
-    
+   
     # Clean invoice numbers strictly
     erp_missing['Cleaned_Invoice'] = erp_missing['Invoice'].apply(clean_invoice_code_strict)
     ven_missing['Cleaned_Invoice'] = ven_missing['Invoice'].apply(clean_invoice_code_strict)
-    
+   
     # Create dictionaries mapping cleaned invoices to their indices
     erp_dict = dict(zip(erp_missing['Cleaned_Invoice'], erp_missing.index))
     ven_dict = dict(zip(ven_missing['Cleaned_Invoice'], ven_missing.index))
-    
+   
     matches = []
     used_erp_indices = set()
     used_ven_indices = set()
-    
+   
     for idx_erp, cleaned_erp in enumerate(erp_missing['Cleaned_Invoice']):
         if idx_erp in used_erp_indices:
             continue
@@ -448,21 +440,21 @@ def strict_match_unmatched(erp_missing, ven_missing):
                 })
                 used_erp_indices.add(idx_erp)
                 used_ven_indices.add(idx_ven)
-    
+   
     strict_matches = pd.DataFrame(matches)
-    
+   
     # Remove matched rows from missing datasets
     remaining_erp_missing = erp_missing.drop(used_erp_indices).drop(columns=['Cleaned_Invoice'])
     remaining_ven_missing = ven_missing.drop(used_ven_indices).drop(columns=['Cleaned_Invoice'])
-    
-    # Ensure Date column exists, even if empty
-    if 'Date' not in remaining_erp_missing.columns:
-        remaining_erp_missing['Date'] = ""
-    if 'Date' not in remaining_ven_missing.columns:
-        remaining_ven_missing['Date'] = ""
-    
+   
+    # Ensure Date and Due Date columns exist, even if empty
+    for col in ['Date', 'Due Date']:
+        if col not in remaining_erp_missing.columns:
+            remaining_erp_missing[col] = ""
+        if col not in remaining_ven_missing.columns:
+            remaining_ven_missing[col] = ""
+   
     return strict_matches, remaining_erp_missing, remaining_ven_missing
-
 def levenshtein(a, b):
     """Calculate the Levenshtein distance between two strings."""
     if len(a) < len(b):
@@ -479,42 +471,48 @@ def levenshtein(a, b):
             current_row.append(min(insertions, deletions, substitutions))
         previous_row = current_row
     return previous_row[-1]
-
 def tier2_match(erp_missing, ven_missing):
-    """Match unmatched invoices with fuzzy logic and Levenshtein distance."""
+    """Match unmatched invoices with fuzzy logic and Levenshtein distance, using due date as alternative condition, ignoring amount for matching."""
     if erp_missing.empty or ven_missing.empty:
         return pd.DataFrame(), pd.DataFrame(), set(), set(), erp_missing.copy(), ven_missing.copy()
-    
-    e_df = erp_missing.rename(columns={"Invoice": "invoice_erp", "Amount": "__amt", "Date": "date_erp"}).copy()
-    v_df = ven_missing.rename(columns={"Invoice": "invoice_ven", "Amount": "__amt", "Date": "date_ven"}).copy()
-    
-    # Ensure date columns exist
-    if "date_erp" not in e_df.columns:
-        e_df["date_erp"] = ""
-    if "date_ven" not in v_df.columns:
-        v_df["date_ven"] = ""
-    
+   
+    e_df = erp_missing.rename(columns={"Invoice": "invoice_erp", "Amount": "__amt", "Date": "date_erp", "Due Date": "due_date_erp"}).copy()
+    v_df = ven_missing.rename(columns={"Invoice": "invoice_ven", "Amount": "__amt", "Date": "date_ven", "Due Date": "due_date_ven"}).copy()
+   
+    # Ensure date and due date columns exist
+    for col in ["date_erp", "due_date_erp"]:
+        if col not in e_df.columns:
+            e_df[col] = ""
+    for col in ["date_ven", "due_date_ven"]:
+        if col not in v_df.columns:
+            v_df[col] = ""
+   
     e_df["date_norm"] = e_df["date_erp"].apply(normalize_date)
     v_df["date_norm"] = v_df["date_ven"].apply(normalize_date)
-    
+    e_df["due_date_norm"] = e_df["due_date_erp"].apply(normalize_date)
+    v_df["due_date_norm"] = v_df["due_date_ven"].apply(normalize_date)
+   
     matches, amount_diff_matches, used_e, used_v = [], [], set(), set()
     for e_idx, e in e_df.iterrows():
         if e_idx in used_e: continue
         e_inv = str(e.get("invoice_erp", "")).strip()
         e_amt = round(float(e.get("__amt", 0)), 2)
         e_date = e.get("date_norm", "")
+        e_due = e.get("due_date_norm", "")
         e_code = clean_invoice_code_strict(e_inv)
         for v_idx, v in v_df.iterrows():
             if v_idx in used_v: continue
             v_inv = str(v.get("invoice_ven", "")).strip()
             v_amt = round(float(v.get("__amt", 0)), 2)
             v_date = v.get("date_norm", "")
+            v_due = v.get("due_date_norm", "")
             v_code = clean_invoice_code_strict(v_inv)
             diff = abs(e_amt - v_amt)
             dist = levenshtein(e_code, v_code)
             max_len = max(len(e_code), len(v_code))
             sim = 1 - (dist / max_len) if max_len > 0 else 0
-            if sim >= 0.8:
+            date_match = (e_date == v_date) or (e_due == v_due)
+            if sim >= 0.8 and date_match:
                 match_info = {
                     "ERP Invoice": e_inv,
                     "Vendor Invoice": v_inv,
@@ -523,6 +521,7 @@ def tier2_match(erp_missing, ven_missing):
                     "Difference": diff,
                     "Fuzzy Score": round(sim, 2),
                     "Date": e_date or v_date or "N/A",
+                    "Due Date": e_due or v_due or "N/A",
                     "Match Type": "Tier-2"
                 }
                 if diff < 0.05:
@@ -533,21 +532,20 @@ def tier2_match(erp_missing, ven_missing):
                 used_e.add(e_idx)
                 used_v.add(v_idx)
                 break
-    
+   
     tier2_matches = pd.DataFrame(matches)
     tier2_amount_diff = pd.DataFrame(amount_diff_matches)
-    
-    erp_columns = ["invoice_erp", "__amt"] + (["date_erp"] if "date_erp" in e_df.columns else [])
-    ven_columns = ["invoice_ven", "__amt"] + (["date_ven"] if "date_ven" in v_df.columns else [])
+   
+    erp_columns = ["invoice_erp", "__amt"] + (["date_erp"] if "date_erp" in e_df.columns else []) + (["due_date_erp"] if "due_date_erp" in e_df.columns else [])
+    ven_columns = ["invoice_ven", "__amt"] + (["date_ven"] if "date_ven" in v_df.columns else []) + (["due_date_ven"] if "due_date_ven" in v_df.columns else [])
     remaining_erp_missing = e_df[~e_df.index.isin(used_e)][erp_columns].rename(
-        columns={"invoice_erp": "Invoice", "__amt": "Amount", "date_erp": "Date"}
+        columns={"invoice_erp": "Invoice", "__amt": "Amount", "date_erp": "Date", "due_date_erp": "Due Date"}
     )
     remaining_ven_missing = v_df[~v_df.index.isin(used_v)][ven_columns].rename(
-        columns={"invoice_ven": "Invoice", "__amt": "Amount", "date_ven": "Date"}
+        columns={"invoice_ven": "Invoice", "__amt": "Amount", "date_ven": "Date", "due_date_ven": "Due Date"}
     )
-    
+   
     return tier2_matches, tier2_amount_diff, used_e, used_v, remaining_erp_missing, remaining_ven_missing
-
 # ======================================
 # MAIN STREAMLIT UI
 # ======================================
@@ -568,7 +566,7 @@ if uploaded_erp and uploaded_vendor:
             erp_missing = final_erp_missing
             ven_missing = final_ven_missing
         st.success("✅ Reconciliation complete!")
-        
+       
         # ======================================
         # EXECUTIVE SUMMARY WITH TOTALS
         # ======================================
@@ -579,7 +577,7 @@ if uploaded_erp and uploaded_vendor:
             use_container_width=True,
             hide_index=True
         )
-        
+       
         # ======================================
         # ENHANCED METRICS
         # ======================================
@@ -621,7 +619,7 @@ if uploaded_erp and uploaded_vendor:
             st.metric("❌ ERP Unmatched", erp_unmatched)
             st.markdown('</div>', unsafe_allow_html=True)
         st.markdown("---")
-        
+       
         # ======================================
         # MATCHED INVOICES TABLE
         # ======================================
@@ -640,7 +638,7 @@ if uploaded_erp and uploaded_vendor:
             st.dataframe(matched_with_totals, use_container_width=True, height=400)
         else:
             st.info("❌ No Tier-1 matches/differences found.")
-        
+       
         # ======================================
         # STRICT MATCHES TABLE
         # ======================================
@@ -657,7 +655,7 @@ if uploaded_erp and uploaded_vendor:
             })
             strict_with_totals = pd.concat([strict_display, total_row_strict], ignore_index=True)
             st.dataframe(strict_with_totals, use_container_width=True, height=400)
-        
+       
         # ======================================
         # UNMATCHED INVOICES
         # ======================================
@@ -691,7 +689,7 @@ if uploaded_erp and uploaded_vendor:
                 st.error(f"**{len(erp_missing)} UNMATCHED | €{erp_missing['Amount'].sum():,.2f}**")
             else:
                 st.success("✅ No unmatched ERP invoices!")
-        
+       
         # ======================================
         # TIER-2 MATCHES
         # ======================================
@@ -708,7 +706,7 @@ if uploaded_erp and uploaded_vendor:
             })
             tier2_with_total = pd.concat([tier2_display, total_row_tier2], ignore_index=True)
             st.dataframe(tier2_with_total, use_container_width=True)
-        
+       
         # ======================================
         # TIER-2 AMOUNT DIFF MATCHES
         # ======================================
@@ -725,7 +723,7 @@ if uploaded_erp and uploaded_vendor:
             })
             tier2_diff_with_total = pd.concat([tier2_diff_display, total_row_diff], ignore_index=True)
             st.dataframe(tier2_diff_with_total, use_container_width=True)
-        
+       
         # ======================================
         # DOWNLOAD
         # ======================================
@@ -744,7 +742,7 @@ if uploaded_erp and uploaded_vendor:
             file_name="ReconRaptor_Reconciliation.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
-    
+   
     except Exception as e:
         st.error(f"❌ Error processing files: {str(e)}")
         st.info("Please check that your Excel files have the expected columns (invoice, amount, date, etc.)")
