@@ -8,7 +8,7 @@ from io import BytesIO
 from openpyxl import Workbook
 from openpyxl.utils.dataframe import dataframe_to_rows
 from openpyxl.utils import get_column_letter
-from openpyxl styles import PatternFill, Font, Alignment
+from openpyxl.styles import PatternFill, Font, Alignment
 from difflib import SequenceMatcher
 
 # ==================== PAGE CONFIG & CSS ======================
