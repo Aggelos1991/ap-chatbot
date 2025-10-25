@@ -1,5 +1,5 @@
 # --------------------------------------------------------------
-# ReconRaptor – Vendor Reconciliation (FINAL + FULL NETTING)
+# ReconRaptor – Vendor Reconciliation (FINAL + FULL NETTING + SAFE NUMBERS)
 # --------------------------------------------------------------
 import streamlit as st
 import pandas as pd
@@ -8,7 +8,7 @@ from io import BytesIO
 from openpyxl import Workbook
 from openpyxl.utils.dataframe import dataframe_to_rows
 from openpyxl.utils import get_column_letter
-from openpyxl.styles import PatternFill, Font, Alignment
+from openpyxl styles import PatternFill, Font, Alignment
 from difflib import SequenceMatcher
 
 # ==================== PAGE CONFIG & CSS ======================
@@ -16,29 +16,14 @@ st.set_page_config(page_title="ReconRaptor — Vendor Reconciliation", layout="w
 st.markdown(
     """
 <style>
-    .big-title {
-        font-size: 3rem !important;
-        font-weight: 700;
-        text-align: center;
-        background: linear-gradient(90deg, #1E88E5, #42A5F5);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        margin-bottom: 1rem;
-    }
-    .section-title {
-        font-size: 1.8rem !important;
-        font-weight: 600;
-        color: #1565C0;
-        border-bottom: 2px solid #42A5F5;
-        padding-bottom: 0.5rem;
-        margin-top: 2rem;
-    }
-    .metric-container {
-        padding: 1.2rem !important;
-        border-radius: 12px !important;
-        margin-bottom: 1rem;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-    }
+    .big-title {font-size: 3rem !important; font-weight: 700; text-align: center;
+                background: linear-gradient(90deg, #1E88E5, #42A5F5);
+                -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+                margin-bottom: 1rem;}
+    .section-title {font-size: 1.8rem !important; font-weight: 600; color: #1565C0;
+                    border-bottom: 2px solid #42A5F5; padding-bottom: 0.5rem; margin-top: 2rem;}
+    .metric-container {padding: 1.2rem !important; border-radius: 12px !important;
+                       margin-bottom: 1rem; box-shadow: 0 4px 6px rgba(0,0,0,0.1);}
     .perfect-match {background:#2E7D32;color:#fff;font-weight:bold;}
     .difference-match{background:#FF8F00;color:#fff;font-weight:bold;}
     .tier2-match {background:#26A69A;color:#fff;font-weight:bold;}
@@ -62,20 +47,11 @@ st.markdown("<p style='text-align: center; font-size: 1.3rem; color: #555;'>Inte
 def fuzzy_ratio(a, b):
     return SequenceMatcher(None, str(a), str(b)).ratio()
 
-def normalize_number(v):
-    if pd.isna(v) or str(v).strip() == "": return 0.0
-    s = re.sub(r"[^\d,.\-]", "", str(v).strip())
-    if s.count(",") == 1 and s.count(".") == 1:
-        if s.find(",") > s.find("."):
-            s = s.replace(".", "").replace(",", ".")
-        else:
-            s = s.replace(",", "")
-    elif s.count(",") == 1:
-        s = s.replace(",", ".")
-    elif s.count(".") > 1:
-        s = s.replace(".", "", s.count(".") - 1)
+def safe_float(x):
+    """Convert to float safely, return 0.0 on failure"""
+    if pd.isna(x): return 0.0
     try:
-        return float(s)
+        return float(str(x).replace(",", "").strip())
     except:
         return 0.0
 
@@ -132,19 +108,29 @@ def normalize_columns(df, tag):
             if any(a in low for a in aliases):
                 rename_map[col] = f"{key}_{tag}"
     out = df.rename(columns=rename_map)
-    for req in ["debit", "credit"]:
-        c = f"{req}_{tag}"
-        if c not in out.columns:
-            out[c] = 0.0
-    if f"date_{tag}" in out.columns:
+    
+    # SAFE: Create missing columns
+    for col in [f"debit_{tag}", f"credit_{tag}"]:
+        if col not in out.columns:
+            out[col] = 0.0
+        else:
+            out[col] = out[col].apply(safe_float)
+    
+    if f"date_{tag}" not in out.columns:
+        out[f"date_{tag}"] = ""
+    else:
         out[f"date_{tag}"] = out[f"date_{tag}"].apply(normalize_date)
+    
+    if f"reason_{tag}" not in out.columns:
+        out[f"reason_{tag}"] = ""
+    
     return out
 
 # ====================== STYLING =========================
 def style(df, css):
     return df.style.apply(lambda _: [css] * len(_), axis=1)
 
-# ==================== MATCHING (FULL NETTING + ZERO REMOVE) ==========================
+# ==================== MATCHING (FULL NETTING + SAFE NUMBERS) ==========================
 def match_invoices(erp_df, ven_df):
     # 1. Normalize invoice codes
     erp_df["__norm_inv"] = erp_df["invoice_erp"].astype(str).apply(clean_invoice_code)
@@ -153,8 +139,8 @@ def match_invoices(erp_df, ven_df):
     # 2. Document type
     def doc_type(row, tag):
         r = str(row.get(f"reason_{tag}", "")).lower()
-        debit = normalize_number(row.get(f"debit_{tag}", 0))
-        credit = normalize_number(row.get(f"credit_{tag}", 0))
+        debit = safe_float(row.get(f"debit_{tag}", 0))
+        credit = safe_float(row.get(f"credit_{tag}", 0))
         pay_pat = [r"^πληρωμ", r"^απόδειξη\s*πληρωμ", r"^payment", r"^bank\s*transfer",
                    r"^trf", r"^remesa", r"^pago", r"^pagado", r"^transferencia",
                    r"^εξοφληση", r"^paid"]
@@ -167,12 +153,6 @@ def match_invoices(erp_df, ven_df):
 
     erp_df["__type"] = erp_df.apply(lambda r: doc_type(r, "erp"), axis=1)
     ven_df["__type"] = ven_df.apply(lambda r: doc_type(r, "ven"), axis=1)
-
-    # 3. Net amount per line
-    erp_df["__amt"] = erp_df.apply(
-        lambda r: abs(normalize_number(r.get("debit_erp", 0)) - normalize_number(r.get("credit_erp", 0))), axis=1)
-    ven_df["__amt"] = ven_df.apply(
-        lambda r: abs(normalize_number(r.get("debit_ven", 0)) - normalize_number(r.get("credit_ven", 0))), axis=1)
 
     # 4. REMOVE PAYMENTS
     erp_use = erp_df[erp_df["__type"] != "IGNORE"].copy()
@@ -243,14 +223,12 @@ def match_invoices(erp_df, ven_df):
     matched_erp_norm = set(matched_df["ERP Invoice"].apply(clean_invoice_code))
     matched_ven_norm = set(matched_df["Vendor Invoice"].apply(clean_invoice_code))
 
-    # Missing in ERP = Vendor has it, ERP doesn't
     miss_erp = ven_use[~ven_use["__norm_inv"].isin(matched_erp_norm)]
     if not miss_erp.empty:
         cols = ["raw_inv", "__amt"]
         if "date" in miss_erp.columns: cols += ["date"]
         miss_erp = miss_erp[cols].rename(columns={"raw_inv": "Invoice", "__amt": "Amount", "date": "Date"})
 
-    # Missing in Vendor = ERP has it, Vendor doesn't
     miss_ven = erp_use[~erp_use["__norm_inv"].isin(matched_ven_norm)]
     if not miss_ven.empty:
         cols = ["raw_inv", "__amt"]
@@ -260,6 +238,9 @@ def match_invoices(erp_df, ven_df):
     return (matched_df, miss_erp, miss_ven,
             matched_erp_norm, matched_ven_norm,
             erp_use, ven_use)
+
+# === (tier2_match, tier3_match, extract_payments, export_excel, UI) ===
+# → Same as before, safe_float used in extract_payments too
 
 def tier2_match(erp_miss, ven_miss, exclude_erp_norm=set(), exclude_ven_norm=set()):
     if erp_miss.empty or ven_miss.empty:
@@ -344,15 +325,16 @@ def extract_payments(erp_df, ven_df):
     excl_kw = ["invoice of expenses", "expense invoice", "τιμολόγιο εξόδων", "διόρθωση", "correction", "reclass", "adjustment", "μεταφορά υπολοίπου"]
     def is_pay(row, tag):
         txt = str(row.get(f"reason_{tag}", "")).lower()
+        debit = safe_float(row.get(f"debit_{tag}", 0))
+        credit = safe_float(row.get(f"credit_{tag}", 0))
         return any(k in txt for k in pay_kw) and not any(b in txt for b in excl_kw) \
-               and ((tag == "erp" and normalize_number(row.get("debit_erp", 0)) > 0) or
-                    (tag == "ven" and normalize_number(row.get("credit_ven", 0)) > 0))
+               and ((tag == "erp" and debit > 0) or (tag == "ven" and credit > 0))
     erp_pay = erp_df[erp_df.apply(lambda r: is_pay(r, "erp"), axis=1)].copy() if "reason_erp" in erp_df.columns else pd.DataFrame()
     ven_pay = ven_df[ven_df.apply(lambda r: is_pay(r, "ven"), axis=1)].copy() if "reason_ven" in ven_df.columns else pd.DataFrame()
     if not erp_pay.empty:
-        erp_pay["Amount"] = erp_pay.apply(lambda r: abs(normalize_number(r["debit_erp"]) - normalize_number(r["credit_erp"])), axis=1)
+        erp_pay["Amount"] = erp_pay.apply(lambda r: abs(safe_float(r["debit_erp"]) - safe_float(r["credit_erp"])), axis=1)
     if not ven_pay.empty:
-        ven_pay["Amount"] = ven_pay.apply(lambda r: abs(normalize_number(r["debit_ven"]) - normalize_number(r["credit_ven"])), axis=1)
+        ven_pay["Amount"] = ven_pay.apply(lambda r: abs(safe_float(r["debit_ven"]) - safe_float(r["credit_ven"])), axis=1)
     matched = []
     used = set()
     for _, e in erp_pay.iterrows():
