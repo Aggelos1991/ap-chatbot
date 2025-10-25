@@ -1,5 +1,5 @@
 # --------------------------------------------------------------
-# ReconRaptor – Vendor Reconciliation (FINAL + NET-PER-INVOICE)
+# ReconRaptor – Vendor Reconciliation (FINAL + NET + SAFE COLUMNS)
 # --------------------------------------------------------------
 import streamlit as st
 import pandas as pd
@@ -119,7 +119,7 @@ def clean_invoice_code(v):
 
 def normalize_columns(df, tag):
     mapping = {
-        "invoice": ["invoice", "factura", "fact", "nº", "num", "numero", "número", "document", "doc", "ref", "referencia", "nº factura", "num factura", "alternative document", "document number", "αρ.", "αριθμός", "νουμερο", "νούμερο", "no", "παραστατικό", "αρ. τιμολογίου", "αρ. εγγράφου", "αριθμός τιμολογίου", "αριθμός παραστατικού", "κωδός τιμολογίου", "τιμολόγιο", "αρ. παραστατικού", "παραστατικό τιμολογίου", "κωδικός παραστατικού"],
+        "invoice": ["invoice", "factura", "fact", "nº", "num", "numero", "número", "document", "doc", "ref", "referencia", "nº factura", "num factura", "alternative document", "document number", "αρ.", "αριθμός", "νουμερο", "νούμερο", "no", "παραστατικό", "αρ. τιμολογίου", "αρ. εγγράφου", "αριθμός τιμολογίου", "αριθμός παραστατικού", "κωδικός τιμολογίου", "τιμολόγιο", "αρ. παραστατικού", "παραστατικό τιμολογίου", "κωδικός παραστατικού"],
         "credit": ["credit", "haber", "credito", "crédito", "nota de crédito", "nota crédito", "abono", "abonos", "importe haber", "valor haber", "πίστωση", "πιστωτικό", "πιστωτικό τιμολόγιο", "πίστωση ποσού", "ποσό πίστωσης", "πιστωτικό ποσό"],
         "debit": ["debit", "debe", "cargo", "importe", "importe total", "valor", "monto", "amount", "document value", "charge", "total", "totale", "totales", "totals", "base imponible", "importe factura", "importe neto", "χρέωση", "αξία", "αξία τιμολογίου", "ποσό χρέωσης", "συνολική αξία", "καθαρή αξία", "ποσό", "ποσό τιμολογίου"],
         "reason": ["reason", "motivo", "concepto", "descripcion", "descripción", "detalle", "detalles", "razon", "razón", "observaciones", "comentario", "comentarios", "explicacion", "αιτιολογία", "περιγραφή", "παρατηρήσεις", "σχόλια", "αναφορά", "αναλυτική περιγραφή", "description", "περιγραφή τιμολογίου", "αιτιολογία παραστατικού", "λεπτομέρειες"],
@@ -136,7 +136,13 @@ def normalize_columns(df, tag):
         c = f"{req}_{tag}"
         if c not in out.columns:
             out[c] = 0.0
-    if f"date_{tag}" in out.columns:
+    # SAFE: Only create date/reason if source exists
+    if f"date_{tag}" not in out.columns:
+        out[f"date_{tag}"] = ""
+    if f"reason_{tag}" not in out.columns:
+        out[f"reason_{tag}"] = ""
+    # Normalize date only if column exists
+    if out[f"date_{tag}"].dtype == 'object':
         out[f"date_{tag}"] = out[f"date_{tag}"].apply(normalize_date)
     return out
 
@@ -144,22 +150,26 @@ def normalize_columns(df, tag):
 def style(df, css):
     return df.style.apply(lambda _: [css] * len(_), axis=1)
 
-# ==================== MATCHING (NET-PER-INVOICE + ZERO-REMOVE) ==========================
+# ==================== MATCHING (NET-PER-INVOICE + ZERO-REMOVE + SAFE) ==========================
 def match_invoices(erp_df, ven_df):
     """Match ERP ↔ Vendor invoices.
-       1. Net all entries with the same invoice number.
+       1. Net all entries with same invoice number.
        2. Remove any invoice with net = 0.
-       3. Keep only one row per invoice with final net amount."""
+       3. Keep only one row per invoice with final net amount.
+       4. Safe column access."""
 
     # 1. Normalise invoice codes
     erp_df["__norm_inv"] = erp_df["invoice_erp"].astype(str).apply(clean_invoice_code)
     ven_df["__norm_inv"] = ven_df["invoice_ven"].astype(str).apply(clean_invoice_code)
 
-    # 2. Document type
+    # 2. Document type (safe access)
     def doc_type(row, tag):
-        r = str(row.get(f"reason_{tag}", "")).lower()
-        debit = normalize_number(row.get(f"debit_{tag}", 0))
-        credit = normalize_number(row.get(f"credit_{tag}", 0))
+        reason_col = f"reason_{tag}"
+        debit_col = f"debit_{tag}"
+        credit_col = f"credit_{tag}"
+        r = str(row.get(reason_col, "")).lower()
+        debit = normalize_number(row.get(debit_col, 0))
+        credit = normalize_number(row.get(credit_col, 0))
         pay_pat = [r"^πληρωμ", r"^απόδειξη\s*πληρωμ", r"^payment", r"^bank\s*transfer",
                    r"^trf", r"^remesa", r"^pago", r"^pagado", r"^transferencia",
                    r"^εξοφληση", r"^paid"]
@@ -185,27 +195,28 @@ def match_invoices(erp_df, ven_df):
                       normalize_number(r.get("credit_ven", 0))), axis=1)
 
     # 4. NET PER INVOICE + REMOVE ZERO NET
-    def net_per_invoice(df, inv_col, norm_col):
+    def net_per_invoice(df, inv_col, norm_col, tag):
+        date_col = f"date_{tag}"
+        reason_col = f"reason_{tag}"
         grouped = (
             df.groupby(norm_col, dropna=False)
               .agg(
                   total_amt=("__amt", "sum"),
                   raw_inv=(inv_col, "first"),
                   type=("__type", "first"),
-                  date=(f"date_{'erp' if 'erp' in inv_col else 'ven'}", "first"),
-                  reason=(f"reason_{'erp' if 'erp' in inv_col else 'ven'}", "first")
+                  date=(date_col, "first"),
+                  reason=(reason_col, "first")
               )
               .reset_index()
         )
-        # Keep only non-zero net
         grouped = grouped[grouped["total_amt"] > 0.01].copy()
         grouped["__amt"] = grouped["total_amt"]
         return grouped
 
-    erp_net = net_per_invoice(erp_df[erp_df["__type"] != "IGNORE"], "invoice_erp", "__norm_inv")
-    ven_net = net_per_invoice(ven_df[ven_df["__type"] != "IGNORE"], "invoice_ven", "__norm_inv")
+    erp_net = net_per_invoice(erp_df[erp_df["__type"] != "IGNORE"], "invoice_erp", "__norm_inv", "erp")
+    ven_net = net_per_invoice(ven_df[ven_df["__type"] != "IGNORE"], "invoice_ven", "__norm_inv", "ven")
 
-    # 5. Merge INV + CN per invoice (if needed)
+    # 5. Merge INV + CN per invoice
     def merge_inv_cn(df):
         out = []
         for _, g in df.groupby("raw_inv", dropna=False):
@@ -259,9 +270,9 @@ def match_invoices(erp_df, ven_df):
 
     matched_df = pd.DataFrame(matched)
 
-    # 7. Missing lists (never include net-zero)
-    matched_erp_norm = set(e["__norm_inv"] for _, e in erp_use.iterrows() if e["__norm_inv"] in matched_df["ERP Invoice"].apply(clean_invoice_code))
-    matched_ven_norm = set(v["__norm_inv"] for _, v in ven_use.iterrows() if v["__norm_inv"] in matched_df["Vendor Invoice"].apply(clean_invoice_code))
+    # 7. Missing lists (safe)
+    matched_erp_norm = set(e["__norm_inv"] for _, e in erp_use.iterrows())
+    matched_ven_norm = set(v["__norm_inv"] for _, v in ven_use.iterrows())
 
     miss_erp = erp_use[~erp_use["__norm_inv"].isin(matched_ven_norm)][["raw_inv", "__amt", "date"]].rename(
         columns={"raw_inv": "Invoice", "__amt": "Amount", "date": "Date"})
@@ -269,11 +280,11 @@ def match_invoices(erp_df, ven_df):
         columns={"raw_inv": "Invoice", "__amt": "Amount", "date": "Date"})
 
     return (matched_df, miss_erp, miss_ven,
-            set(erp_use["__norm_inv"]), set(ven_use["__norm_inv"]),
+            matched_erp_norm, matched_ven_norm,
             erp_use, ven_use)
 
 # === (tier2_match, tier3_match, extract_payments, export_excel, UI) ===
-# → Unchanged from your original code – pasted below for completeness
+# → Unchanged from previous version – pasted below
 
 def tier2_match(erp_miss, ven_miss, exclude_erp_norm=set(), exclude_ven_norm=set()):
     if erp_miss.empty or ven_miss.empty:
@@ -357,10 +368,12 @@ def extract_payments(erp_df, ven_df):
     pay_kw = ["πληρωμή", "payment", "bank transfer", "transferencia", "trf", "remesa", "pago", "deposit", "μεταφορά", "έμβασμα", "εξοφληση", "pagado", "paid"]
     excl_kw = ["invoice of expenses", "expense invoice", "τιμολόγιο εξόδων", "διόρθωση", "correction", "reclass", "adjustment", "μεταφορά υπολοίπου"]
     def is_pay(row, tag):
-        txt = str(row.get(f"reason_{tag}", "")).lower()
+        reason_col = f"reason_{tag}"
+        txt = str(row.get(reason_col, "")).lower()
+        debit = normalize_number(row.get(f"debit_{tag}", 0))
+        credit = normalize_number(row.get(f"credit_{tag}", 0))
         return any(k in txt for k in pay_kw) and not any(b in txt for b in excl_kw) \
-               and ((tag == "erp" and normalize_number(row.get("debit_erp", 0)) > 0) or
-                    (tag == "ven" and normalize_number(row.get("credit_ven", 0)) > 0))
+               and ((tag == "erp" and debit > 0) or (tag == "ven" and credit > 0))
     erp_pay = erp_df[erp_df.apply(lambda r: is_pay(r, "erp"), axis=1)].copy() if "reason_erp" in erp_df.columns else pd.DataFrame()
     ven_pay = ven_df[ven_df.apply(lambda r: is_pay(r, "ven"), axis=1)].copy() if "reason_ven" in ven_df.columns else pd.DataFrame()
     if not erp_pay.empty:
