@@ -1,5 +1,5 @@
 # --------------------------------------------------------------
-# ReconRaptor – Vendor Reconciliation (FINAL + AGGREGATE RAW DUPLICATES)
+# ReconRaptor – Vendor Reconciliation (FINAL + AGGREGATE INVOICES ONLY)
 # --------------------------------------------------------------
 import streamlit as st
 import pandas as pd
@@ -110,7 +110,7 @@ def clean_invoice_code(v):
         if re.fullmatch(r"\d{1,}", p) and not re.fullmatch(r"20[0-3]\d", p):
             s = p.lstrip("0")
             break
-    s = re.sub(r"^(αρ|τιμ|Pf|ab|inv|tim|cn|ar|pa|πφ|πα|apo|ref|doc|num|no|apd|vs)\W*", "", s)
+    s = re.sub(r"^(αρ|τιμ|pf|ab|inv|tim|cn|ar|pa|πφ|πα|apo|ref|doc|num|no|apd|vs)\W*", "", s)
     s = re.sub(r"20\d{2}", "", s)
     s = re.sub(r"[^a-z0-9]", "", s)
     s = re.sub(r"^0+", "", s)
@@ -121,7 +121,7 @@ def normalize_columns(df, tag):
     mapping = {
         "invoice": ["invoice", "factura", "fact", "nº", "num", "numero", "número", "document", "doc", "ref", "referencia", "nº factura", "num factura", "alternative document", "document number", "αρ.", "αριθμός", "νουμερο", "νούμερο", "no", "παραστατικό", "αρ. τιμολογίου", "αρ. εγγράφου", "αριθμός τιμολογίου", "αριθμός παραστατικού", "κωδικός τιμολογίου", "τιμολόγιο", "αρ. παραστατικού", "παραστατικό τιμολογίου", "κωδικός παραστατικού"],
         "credit": ["credit", "haber", "credito", "crédito", "nota de crédito", "nota crédito", "abono", "abonos", "importe haber", "valor haber", "πίστωση", "πιστωτικό", "πιστωτικό τιμολόγιο", "πίστωση ποσού", "ποσό πίστωσης", "πιστωτικό ποσό"],
-        "debit": ["debit", "debe", "cargo", "importe", "importe total", "valor", "monto", "amount", "document value", "charge", "total", "totale", "totales", "totals", "base imponible", "importe factura", "importe neto", "χρέωση", "αξία", "αξία τιμολογίου", "ποσό χρέωσης", "συνολική αξία", "καθαρή αξία", "ποσό", "ποσό τιμολογίου"],
+        "debit": ["debit", "debe", "cargo", "importe", "importe total", "valor", "monto", "amount", "document value", "charge", "total", "totale", "totales", "totals", "base imponible", "importe factura", ",de", "importe neto", "χρέωση", "αξία", "αξία τιμολογίου", "ποσό χρέωσης", "συνολική αξία", "καθαρή αξία", "ποσό", "ποσό τιμολογίου"],
         "reason": ["reason", "motivo", "concepto", "descripcion", "descripción", "detalle", "detalles", "razon", "razón", "observaciones", "comentario", "comentarios", "explicacion", "αιτιολογία", "περιγραφή", "παρατηρήσεις", "σχόλια", "αναφορά", "αναλυτική περιγραφή", "description", "περιγραφή τιμολογίου", "αιτιολογία παραστατικού", "λεπτομέρειες"],
         "date": ["date", "fecha", "fech", "data", "fecha factura", "fecha doc", "fecha documento", "ημερομηνία", "ημ/νία", "ημερομηνία έκδοσης", "ημερομηνία παραστατικού", "issue date", "transaction date", "emission date", "posting date", "ημερομηνία τιμολογίου", "ημερομηνία έκδοσης τιμολογίου", "ημερομηνία καταχώρισης", "ημερ. έκδοσης", "ημερ. παραστατικού", "ημερομηνία έκδοσης παραστατικού"]
     }
@@ -140,7 +140,7 @@ def normalize_columns(df, tag):
         out[f"date_{tag}"] = out[f"date_{tag}"].apply(normalize_date)
     return out
 
-# ==================== AGGREGATE DUPLICATE INVOICES IN RAW DATA ====================
+# ==================== AGGREGATE ONLY INVOICES & CNs (NOT PAYMENTS) ====================
 def aggregate_duplicate_invoices(df, tag):
     inv_col = f"invoice_{tag}"
     debit_col = f"debit_{tag}"
@@ -155,18 +155,30 @@ def aggregate_duplicate_invoices(df, tag):
     df[debit_col] = df[debit_col].apply(normalize_number)
     df[credit_col] = df[credit_col].apply(normalize_number)
 
-    # Create normalized invoice key
-    df["__norm_inv"] = df[inv_col].astype(str).apply(clean_invoice_code)
+    # Detect payment rows
+    pay_kw = ["πληρωμή", "payment", "bank transfer", "transferencia", "trf", "remesa", "pago", "deposit", "μεταφορά", "έμβασμα", "εξοφληση", "pagado", "paid"]
+    excl_kw = ["invoice of expenses", "expense invoice", "τιμολόγιο εξόδων", "διόρθωση", "correction", "reclass", "adjustment", "μεταφορά υπολοίπου"]
+    def is_payment(row):
+        txt = str(row.get(reason_col, "")).lower()
+        return any(k in txt for k in pay_kw) and not any(b in txt for b in excl_kw)
 
-    # Helper: first non-empty
+    # Split: payments vs non-payments
+    payments = df[df.apply(is_payment, axis=1)].copy() if reason_col else pd.DataFrame()
+    non_payments = df[~df.index.isin(payments.index)].copy() if not payments.empty else df.copy()
+
+    if non_payments.empty:
+        return df  # all are payments → no aggregation
+
+    # Only aggregate non-payments (invoices & CNs)
+    non_payments["__norm_inv"] = non_payments[inv_col].astype(str).apply(clean_invoice_code)
+
     def first_non_empty(s):
         for x in s:
             if pd.notna(x) and str(x).strip() != "":
                 return x
         return ""
 
-    # Group and aggregate
-    grouped = df.groupby("__norm_inv").agg(
+    grouped = non_payments.groupby("__norm_inv").agg(
         **{
             inv_col: (inv_col, "first"),
             debit_col: (debit_col, "sum"),
@@ -174,18 +186,19 @@ def aggregate_duplicate_invoices(df, tag):
         }
     ).reset_index()
 
-    # Add reason & date (first non-empty)
     if reason_col:
-        reason_agg = df.groupby("__norm_inv")[reason_col].apply(first_non_empty).reset_index()
+        reason_agg = non_payments.groupby("__norm_inv")[reason_col].apply(first_non_empty).reset_index()
         grouped = grouped.merge(reason_agg, on="__norm_inv", how="left")
     if date_col:
-        date_agg = df.groupby("__norm_inv")[date_col].apply(first_non_empty).reset_index()
+        date_agg = non_payments.groupby("__norm_inv")[date_col].apply(first_non_empty).reset_index()
         grouped = grouped.merge(date_agg, on="__norm_inv", how="left")
 
-    # Drop helper
     grouped = grouped.drop(columns=["__norm_inv"], errors="ignore")
 
-    return grouped
+    # Recombine with payments (payments remain as-is)
+    result = pd.concat([grouped, payments], ignore_index=True, sort=False)
+
+    return result
 
 # ====================== STYLING =========================
 def style(df, css):
@@ -450,7 +463,7 @@ if uploaded_erp and uploaded_vendor:
         erp_raw = pd.read_excel(uploaded_erp, dtype=str)
         ven_raw = pd.read_excel(uploaded_vendor, dtype=str)
 
-        # === NORMALIZE + AGGREGATE DUPLICATES IN RAW DATA ===
+        # === NORMALIZE + AGGREGATE INVOICES ONLY (NOT PAYMENTS) ===
         erp_df = normalize_columns(erp_raw, "erp")
         ven_df = normalize_columns(ven_raw, "ven")
         erp_df = aggregate_duplicate_invoices(erp_df, "erp")
