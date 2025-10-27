@@ -1,5 +1,5 @@
 # --------------------------------------------------------------
-# ReconRaptor – Vendor Reconciliation (FINAL + VENDOR PAYMENT FIX)
+# ReconRaptor – Vendor Reconciliation (FINAL + ABS MATCH + CN PARENTHESIS)
 # --------------------------------------------------------------
 import streamlit as st
 import pandas as pd
@@ -170,7 +170,7 @@ def normalize_columns(df, tag):
 def style(df, css):
     return df.style.apply(lambda _: [css] * len(_), axis=1)
 
-# ==================== MATCHING (NETTED CREDIT NOTES) ====================
+# ==================== MATCHING (ABS + CN PARENTHESIS) ====================
 def match_invoices(erp_df, ven_df):
     matched = []
     used_vendor = set()
@@ -183,9 +183,9 @@ def match_invoices(erp_df, ven_df):
                    r"^trf", r"^remesa", r"^pago", r"^pagado", r"^transferencia",
                    r"^εξοφληση", r"^paid"]
         if any(re.search(p, r) for p in pay_pat): return "IGNORE"
-        if any(k in r for k in ["credit","nota","abono","cn","πιστωτικό","πίστωση","ακυρωτικό"]): 
+        if any(k in r for k in ["credit","nota","abono","cn","πιστωτικό","πίστωση","ακυρωτικό"]):
             return "CN" if credit > 0 else "INV"
-        if any(k in r for k in ["factura","invoice","inv","τιμολόγιο","παραστατικό"]) or debit > 0: 
+        if any(k in r for k in ["factura","invoice","inv","τιμολόγιο","παραστατικό"]) or debit > 0:
             return "INV"
         return "UNKNOWN"
 
@@ -211,8 +211,7 @@ def match_invoices(erp_df, ven_df):
             net_amt = inv_rows["__amt"].sum() - cn_rows["__amt"].sum()
             net_amt = round(net_amt, 2)
             if abs(net_amt) < 0.01:
-                continue  # Skip zero-net invoices
-            # Use the INV row with highest debit, or first CN if no INV
+                continue
             base = inv_rows.loc[inv_rows["__amt"].idxmax()] if not inv_rows.empty else cn_rows.iloc[0]
             base = base.copy()
             base["__amt"] = net_amt
@@ -223,17 +222,19 @@ def match_invoices(erp_df, ven_df):
     erp_use = net_invoices(erp_use, "invoice_erp")
     ven_use = net_invoices(ven_use, "invoice_ven")
 
-    # === TIER-1: EXACT MATCH ===
+    # === TIER-1: EXACT MATCH (ABS VALUES) ===
     for e_idx, e in erp_use.iterrows():
-        e_inv = str(e.get("invoice_erp","")).strip()
+        e_inv_raw = str(e.get("invoice_erp","")).strip()
+        e_inv = f"({e_inv_raw})" if e["__type"] == "CN" else e_inv_raw
         e_amt = abs(round(float(e["__amt"]),2))
         e_typ = e["__type"]
         for v_idx, v in ven_use.iterrows():
             if v_idx in used_vendor: continue
-            v_inv = str(v.get("invoice_ven","")).strip()
+            v_inv_raw = str(v.get("invoice_ven","")).strip()
+            v_inv = f"({v_inv_raw})" if v["__type"] == "CN" else v_inv_raw
             v_amt = abs(round(float(v["__amt"]),2))
             v_typ = v["__type"]
-            if e_typ != v_typ or e_inv != v_inv: continue
+            if e_typ != v_typ or e_inv_raw != v_inv_raw: continue
             diff = abs(e_amt - v_amt)
             status = "Perfect Match" if diff <= 0.01 else "Difference Match" if diff < 1.0 else None
             if status:
@@ -252,22 +253,24 @@ def match_invoices(erp_df, ven_df):
     cols = ["ERP Invoice","Vendor Invoice","ERP Amount","Vendor Amount","Difference","Status"]
     matched_df = pd.DataFrame(matched, columns=cols) if matched else pd.DataFrame(columns=cols)
 
-    matched_erp = set(matched_df["ERP Invoice"])
-    matched_ven = set(matched_df["Vendor Invoice"])
+    matched_erp_raw = set(m["ERP Invoice"].strip("()") for m in matched if m["ERP Invoice"])
+    matched_ven_raw = set(m["Vendor Invoice"].strip("()") for m in matched if m["Vendor Invoice"])
 
     date_cols_erp = ["date_erp"] if "date_erp" in erp_use.columns else []
     date_cols_ven = ["date_ven"] if "date_ven" in ven_use.columns else []
 
-    miss_erp = erp_use[~erp_use["invoice_erp"].isin(matched_ven)].copy()
-    miss_ven = ven_use[~ven_use["invoice_ven"].isin(matched_erp)].copy()
+    miss_erp = erp_use[~erp_use["invoice_erp"].isin(matched_ven_raw)].copy()
+    miss_ven = ven_use[~ven_use["invoice_ven"].isin(matched_erp_raw)].copy()
 
-    # Select and rename
-    miss_erp = miss_erp[["invoice_erp", "__amt"] + date_cols_erp]
-    miss_erp = miss_erp.rename(columns={"invoice_erp":"Invoice","__amt":"Amount","date_erp":"Date"})
+    miss_erp["Display_Invoice"] = miss_erp.apply(lambda r: f"({r['invoice_erp']})" if r["__type"] == "CN" else r["invoice_erp"], axis=1)
+    miss_ven["Display_Invoice"] = miss_ven.apply(lambda r: f"({r['invoice_ven']})" if r["__type"] == "CN" else r["invoice_ven"], axis=1)
+
+    miss_erp = miss_erp[["Display_Invoice", "__amt"] + date_cols_erp]
+    miss_erp = miss_erp.rename(columns={"Display_Invoice":"Invoice","__amt":"Amount","date_erp":"Date"})
     if "Date" not in miss_erp.columns: miss_erp["Date"] = ""
 
-    miss_ven = miss_ven[["invoice_ven", "__amt"] + date_cols_ven]
-    miss_ven = miss_ven.rename(columns={"invoice_ven":"Invoice","__amt":"Amount","date_ven":"Date"})
+    miss_ven = miss_ven[["Display_Invoice", "__amt"] + date_cols_ven]
+    miss_ven = miss_ven.rename(columns={"Display_Invoice":"Invoice","__amt":"Amount","date_ven":"Date"})
     if "Date" not in miss_ven.columns: miss_ven["Date"] = ""
 
     miss_erp = miss_erp[["Invoice","Amount","Date"]].reset_index(drop=True)
@@ -285,17 +288,19 @@ def tier2_match(erp_miss, ven_miss):
 
     for ei, er in e.iterrows():
         if ei in used_e: continue
-        e_inv = str(er["Invoice"])
-        e_amt = round(float(er["Amount"]), 2)
-        e_code = clean_invoice_code(e_inv)
+        e_inv_raw = er["Invoice"].strip("()")
+        e_amt = abs(round(float(er["Amount"]), 2))
+        e_code = clean_invoice_code(e_inv_raw)
         for vi, vr in v.iterrows():
             if vi in used_v: continue
-            v_inv = str(vr["Invoice"])
-            v_amt = round(float(vr["Amount"]), 2)
-            v_code = clean_invoice_code(v_inv)
+            v_inv_raw = vr["Invoice"].strip("()")
+            v_amt = abs(round(float(vr["Amount"]), 2))
+            v_code = clean_invoice_code(v_inv_raw)
             diff = abs(e_amt - v_amt)
             sim = fuzzy_ratio(e_code, v_code)
             if diff < 0.05 and sim >= 0.80:
+                e_inv = f"({e_inv_raw})" if "CN" in er.get("__type", "") else e_inv_raw
+                v_inv = f"({v_inv_raw})" if "CN" in vr.get("__type", "") else v_inv_raw
                 matches.append({
                     "ERP Invoice": e_inv,
                     "Vendor Invoice": v_inv,
@@ -335,16 +340,18 @@ def tier3_match(erp_miss, ven_miss):
 
     for ei, er in e.iterrows():
         if ei in used_e or not er["d"]: continue
-        e_inv = str(er["Invoice"])
-        e_amt = round(float(er["Amount"]), 2)
-        e_code = clean_invoice_code(e_inv)
+        e_inv_raw = er["Invoice"].strip("()")
+        e_amt = abs(round(float(er["Amount"]), 2))
+        e_code = clean_invoice_code(e_inv_raw)
         for vi, vr in v.iterrows():
             if vi in used_v or not vr["d"]: continue
-            v_inv = str(vr["Invoice"])
-            v_amt = round(float(vr["Amount"]), 2)
-            v_code = clean_invoice_code(v_inv)
+            v_inv_raw = vr["Invoice"].strip("()")
+            v_amt = abs(round(float(vr["Amount"]), 2))
+            v_code = clean_invoice_code(v_inv_raw)
             if er["d"] == vr["d"] and fuzzy_ratio(e_code, v_code) >= 0.90:
                 diff = abs(e_amt - v_amt)
+                e_inv = f"({e_inv_raw})" if "CN" in er.get("__type", "") else e_inv_raw
+                v_inv = f"({v_inv_raw})" if "CN" in vr.get("__type", "") else v_inv_raw
                 matches.append({
                     "ERP Invoice": e_inv,
                     "Vendor Invoice": v_inv,
@@ -388,7 +395,6 @@ def extract_payments(erp_df, ven_df):
             payment_detected = (credit > 0) or (debit < 0)
         else:
             payment_detected = debit > 0
-
         return any(k in txt for k in pay_kw) and not any(b in txt for b in excl_kw) and payment_detected
 
     erp_pay = erp_df[erp_df.apply(lambda r: is_pay(r,"erp"),axis=1)].copy() \
