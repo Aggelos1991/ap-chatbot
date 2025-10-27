@@ -11,23 +11,15 @@ from openai import OpenAI
 from dotenv import load_dotenv
 
 # ==========================
-# LOAD ENVIRONMENT VARIABLES
+# ENV + OPENAI CLIENT
 # ==========================
-load_dotenv()  # loads your .env with the API key
+load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # ==========================
-# INIT APP
+# APP INITIALIZATION
 # ==========================
-app = FastAPI(
-    title="Vendor Reconciliation Analyzer",
-    description="Receives base64 file uploads from Power Automate and classifies vendor type.",
-    version="2.0"
-)
-
-# ==========================
-# ENABLE CORS (optional but useful)
-# ==========================
+app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -36,18 +28,14 @@ app.add_middleware(
 )
 
 # ==========================
-# FIX FOR CHUNKED REQUESTS (Power Automate compatibility)
+# FIX 411: CHUNKED REQUESTS
 # ==========================
 @app.middleware("http")
-async def allow_chunked_requests(request: Request, call_next):
-    """
-    Power Automate sends chunked HTTP requests (without Content-Length),
-    which FastAPI/Uvicorn normally rejects. This middleware reads the raw body
-    and injects it back into the request to allow parsing.
-    """
+async def fix_chunked(request: Request, call_next):
+    # Power Automate uses Transfer-Encoding: chunked (no Content-Length)
     if request.headers.get("transfer-encoding", "").lower() == "chunked":
         body = await request.body()
-        request._body = body  # inject raw body back for Pydantic parsing
+        request._body = body
     response = await call_next(request)
     return response
 
@@ -56,10 +44,10 @@ async def allow_chunked_requests(request: Request, call_next):
 # ==========================
 class FilePayload(BaseModel):
     filename: str
-    content: str  # base64-encoded file
+    content: str  # base64 content
 
 # ==========================
-# HELPER: Extract text from file
+# FILE TEXT EXTRACTOR
 # ==========================
 def extract_text_from_file(file_bytes: bytes, filename: str) -> str:
     filename = filename.lower()
@@ -67,7 +55,7 @@ def extract_text_from_file(file_bytes: bytes, filename: str) -> str:
     try:
         if filename.endswith(".pdf"):
             with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
-                for page in pdf.pages[:5]:  # only first 5 pages
+                for page in pdf.pages[:5]:
                     text += page.extract_text() or ""
         elif filename.endswith(".xlsx"):
             wb = openpyxl.load_workbook(io.BytesIO(file_bytes), read_only=True)
@@ -80,23 +68,27 @@ def extract_text_from_file(file_bytes: bytes, filename: str) -> str:
             text = file_bytes.decode(errors="ignore")
     except Exception as e:
         text = f"Error reading file: {e}"
-    return text[:4000]  # keep within GPT input limits
+    return text[:4000]
 
 # ==========================
 # ROUTE
 # ==========================
 @app.post("/analyze")
-async def analyze(payload: FilePayload):
-    """
-    Receives a file (base64 encoded), extracts readable text,
-    and classifies it as ANDALUSIA / PORTO PETRO / ISHM / OTHER.
-    """
+async def analyze(request: Request):
     try:
-        # Decode file content
-        file_bytes = base64.b64decode(payload.content)
-        text = extract_text_from_file(file_bytes, payload.filename)
+        # ✅ Manually read body to guarantee chunked payload is parsed
+        body = await request.body()
 
-        # Build prompt for classification
+        # Decode JSON manually instead of relying on Pydantic
+        import json
+        data = json.loads(body.decode("utf-8"))
+
+        filename = data.get("filename", "unknown.txt")
+        content = data.get("content", "")
+        file_bytes = base64.b64decode(content)
+
+        text = extract_text_from_file(file_bytes, filename)
+
         prompt = f"""
         You are a classifier. Identify which of these appears in the text:
         ANDALUSIA, PORTO PETRO, IKOS SPANISH HOTEL MANAGEMENT, or OTHER.
@@ -106,7 +98,6 @@ async def analyze(payload: FilePayload):
         {text}
         """
 
-        # GPT classification
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}]
@@ -114,7 +105,6 @@ async def analyze(payload: FilePayload):
 
         result = response.choices[0].message.content.strip().upper()
 
-        # Determine keyword
         if "ANDALUSIA" in result:
             keyword = "ANDALUSIA"
         elif "PORTO" in result:
@@ -130,14 +120,14 @@ async def analyze(payload: FilePayload):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 # ==========================
-# ROOT ROUTE
+# ROOT ENDPOINT
 # ==========================
 @app.get("/")
 def home():
-    return PlainTextResponse("✅ FastAPI Analyzer is running and ready to receive POST /analyze requests.")
+    return PlainTextResponse("✅ FastAPI Analyzer running — ready for Power Automate uploads.")
 
 # ==========================
-# ENTRY POINT (local run)
+# LOCAL ENTRYPOINT
 # ==========================
 if __name__ == "__main__":
     import uvicorn
