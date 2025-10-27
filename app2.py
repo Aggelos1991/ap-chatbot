@@ -4,7 +4,7 @@
 # --------------------------------------------------------------
 
 import streamlit as st
-import pandas as as pd
+import pandas as  pd
 import re
 from io import BytesIO
 from openpyxl import Workbook
