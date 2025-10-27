@@ -1,5 +1,5 @@
 # --------------------------------------------------------------
-# ReconRaptor – Vendor Reconciliation (NO ( ) ON CN + BUG-FIX)
+# ReconRaptor – Vendor Reconciliation (FINAL: Keyword-Only + Tier-1 Fix)
 # --------------------------------------------------------------
 import streamlit as st
 import pandas as pd
@@ -96,7 +96,7 @@ def clean_invoice_code(v):
     s = re.sub(r"[^\d]", "", s)
     return s or "0"
 
-# ==================== NORMALIZE COLUMNS ====================
+# ==================== NORMALIZE COLUMNS (KEYWORD-ONLY) ====================
 def normalize_columns(df, tag):
     mapping = {
         "invoice": ["invoice","factura","fact","nº","num","numero","número","document","doc",
@@ -124,26 +124,24 @@ def normalize_columns(df, tag):
                  "ημερομηνία τιμολογίου","ημερομηνία έκδοσης τιμολογίου","ημερομηνία καταχώρισης",
                  "ημερ. έκδοσης","ημερ. παραστατικού","ημερομηνία έκδοσης παραστατικού"]
     }
+
     rename_map = {}
     cols_lower = {c: str(c).strip().lower() for c in df.columns}
 
-    # ---- INVOICE (forced) ----
-    invoice_matched = False
+    # ---- INVOICE (keyword-only) ----
     for col, low in cols_lower.items():
         if any(a in low for a in mapping["invoice"]):
             rename_map[col] = f"invoice_{tag}"
-            invoice_matched = True
-            break
-    if not invoice_matched and len(df.columns) > 0:
-        df.rename(columns={df.columns[0]: f"invoice_{tag}"}, inplace=True)
+            break  # only one
 
-    # ---- OTHER COLUMNS ----
+    # ---- OTHER COLUMNS (except invoice) ----
     for key, aliases in mapping.items():
         if key == "invoice": continue
         for col, low in cols_lower.items():
             if col in rename_map: continue
             if any(a in low for a in aliases):
                 rename_map[col] = f"{key}_{tag}"
+                break  # one per type
 
     out = df.rename(columns=rename_map)
 
@@ -153,13 +151,11 @@ def normalize_columns(df, tag):
         if c not in out.columns:
             out[c] = 0.0
 
-    # ---- GUARANTEE date ----
-    if f"date_{tag}" not in out.columns:
-        out[f"date_{tag}"] = ""
-
-    # ---- NORMALIZE DATE ----
+    # ---- DATE: only if keyword found ----
     if f"date_{tag}" in out.columns:
         out[f"date_{tag}"] = out[f"date_{tag}"].apply(normalize_date)
+    else:
+        out[f"date_{tag}"] = ""  # placeholder
 
     return out
 
@@ -167,8 +163,13 @@ def normalize_columns(df, tag):
 def style(df, css):
     return df.style.apply(lambda _: [css] * len(_), axis=1)
 
-# ==================== MATCHING (TIER-1) ====================
+# ==================== MATCHING (TIER-1: TYPE-AGNOSTIC) ====================
 def match_invoices(erp_df, ven_df):
+    # Validate required columns
+    if "invoice_erp" not in erp_df.columns or "invoice_ven" not in ven_df.columns:
+        st.error("Missing invoice number column in one or both files. Check column names.")
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+
     matched = []
     used_vendor = set()
 
@@ -188,10 +189,11 @@ def match_invoices(erp_df, ven_df):
 
     erp_df["__type"] = erp_df.apply(lambda r: doc_type(r, "erp"), axis=1)
     ven_df["__type"] = ven_df.apply(lambda r: doc_type(r, "ven"), axis=1)
+
     erp_df["__amt"] = erp_df.apply(lambda r:
-        normalize_number(r.get("debit_erp",0)) - normalize_number(r.get("credit_erp",0)), axis=1)
+        normalize_number(r.get("debit_erp", 0)) - normalize_number(r.get("credit_erp", 0)), axis=1)
     ven_df["__amt"] = ven_df.apply(lambda r:
-        normalize_number(r.get("debit_ven",0)) - normalize_number(r.get("credit_ven",0)), axis=1)
+        normalize_number(r.get("debit_ven", 0)) - normalize_number(r.get("credit_ven", 0)), axis=1)
 
     erp_use = erp_df[erp_df["__type"] != "IGNORE"].copy()
     ven_use = ven_df[ven_df["__type"] != "IGNORE"].copy()
@@ -202,7 +204,7 @@ def match_invoices(erp_df, ven_df):
         for inv, g in df.groupby(inv_col, dropna=False):
             if g.empty: continue
             inv_rows = g[g["__type"] == "INV"]
-            cn_rows  = g[g["__type"] == "CN"]
+            cn_rows = g[g["__type"] == "CN"]
             net_amt = inv_rows["__amt"].sum() - cn_rows["__amt"].sum()
             net_amt = round(net_amt, 2)
             if abs(net_amt) < 0.01: continue
@@ -216,31 +218,30 @@ def match_invoices(erp_df, ven_df):
     erp_use = net_invoices(erp_use, "invoice_erp")
     ven_use = net_invoices(ven_use, "invoice_ven")
 
-    # === NORMALIZE INVOICE FOR MATCHING ===
+    # === NORMALIZE INVOICE ===
     def normalize_invoice(v):
         return re.sub(r'\s+', '', str(v)).strip().upper()
 
-    # === TIER-1 EXACT MATCH ===
+    # === TIER-1: EXACT MATCH (TYPE-AGNOSTIC) ===
     for e_idx, e in erp_use.iterrows():
-        e_inv_raw = str(e.get("invoice_erp","")).strip()
+        e_inv_raw = str(e.get("invoice_erp", "")).strip()
         e_inv_norm = normalize_invoice(e_inv_raw)
-        e_inv_display = e_inv_raw                     # NO ( )
         e_amt = abs(round(float(e["__amt"]), 2))
-        e_typ = e["__type"]
+
         for v_idx, v in ven_use.iterrows():
             if v_idx in used_vendor: continue
-            v_inv_raw = str(v.get("invoice_ven","")).strip()
+            v_inv_raw = str(v.get("invoice_ven", "")).strip()
             v_inv_norm = normalize_invoice(v_inv_raw)
-            v_inv_display = v_inv_raw                 # NO ( )
             v_amt = abs(round(float(v["__amt"]), 2))
-            v_typ = v["__type"]
-            if e_typ != v_typ or e_inv_norm != v_inv_norm:
+
+            if e_inv_norm != v_inv_norm:
                 continue
             if abs(e_amt - v_amt) > 0.01:
                 continue
+
             matched.append({
-                "ERP Invoice": e_inv_display,
-                "Vendor Invoice": v_inv_display,
+                "ERP Invoice": e_inv_raw,
+                "Vendor Invoice": v_inv_raw,
                 "ERP Amount": e_amt,
                 "Vendor Amount": v_amt,
                 "Difference": 0.0,
@@ -261,7 +262,6 @@ def match_invoices(erp_df, ven_df):
     miss_erp = erp_use[~erp_use["invoice_erp"].map(normalize_invoice).isin(matched_ven_norm)].copy()
     miss_ven = ven_use[~ven_use["invoice_ven"].map(normalize_invoice).isin(matched_erp_norm)].copy()
 
-    # NO ( ) wrapper
     miss_erp["Invoice"] = miss_erp["invoice_erp"]
     miss_ven["Invoice"] = miss_ven["invoice_ven"]
 
@@ -476,7 +476,6 @@ if uploaded_erp and uploaded_vendor:
         # ---- METRICS ----
         st.markdown('<h2 class="section-title">Reconciliation Summary</h2>', unsafe_allow_html=True)
         c1,c2,c3,c4,c5,c6,c7 = st.columns(7)
-
         def safe_sum(df, col):
             return df[col].sum() if not df.empty and col in df.columns else 0.0
 
