@@ -10,8 +10,8 @@ from openai import OpenAI
 # ==========================
 # CONFIG
 # ==========================
-st.set_page_config(page_title="Vendor Statement Extractor", layout="wide")
-st.title("Vendor Statement → Excel (Spanish • English • Greek)")
+st.set_page_config(page_title="ABONO = CREDIT", layout="wide")
+st.title("Vendor Statement → Excel (ABONO = CREDIT)")
 
 API_KEY = os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY")
 if not API_KEY:
@@ -76,83 +76,74 @@ def to_excel_bytes(records):
 # ==========================
 # UI
 # ==========================
-uploaded = st.file_uploader("Upload Vendor Statement (PDF)", type="pdf")
+uploaded = st.file_uploader("Upload PDF", type="pdf")
 
 if uploaded:
-    with st.spinner("Extracting text from PDF..."):
+    with st.spinner("Reading PDF..."):
         text = clean_text(extract_text_from_pdf(uploaded))
 
     st.text_area("Text Preview", text[:2000], height=150, disabled=True)
 
-    if st.button("Extract to Excel", type="primary"):
-        with st.spinner("Analyzing with GPT..."):
-            try:
-                data = extract_with_llm(text)
-            except Exception as e:
-                st.error(f"LLM failed: {e}")
-                st.stop()
+    if st.button("EXTRACT → ABONO = CREDIT", type="primary"):
+        with st.spinner("GPT is working..."):
+            data = extract_with_llm(text)
 
         # =============================================
-        # FINAL LOGIC: PAYMENTS → CREDIT | RETENCIONES → SKIP
+        # ABONO = CREDIT. PAGO = CREDIT. NO EXCEPTIONS.
         # =============================================
-        PAYMENT_TRIGGERS = [
-            # Spanish
-            r"\bcobro\b", r"\bpago\b", r"\babono\b", r"\bingreso\b", r"\brecibido\b",
-            r"\bpago\s+recibido\b", r"\bcn\b", r"\breason\b",
-            # English
-            r"\bpayment\b", r"\breceipt\b", r"\breceived\b", r"\bcredit\b", r"\bcredited\b",
-            # Greek
-            r"\bπληρωμ[ήη]\b", r"\bπληρωμη\b", r"\bείσπραξ[ηη]\b", r"\bεισπραξη\b",
-            r"\bκατάθεσ[ηη]\b", r"\bκαταθεση\b", r"\bπίστωσ[ηη]\b", r"\bπιστωση\b"
+        CREDIT_TRIGGERS = [
+            "abono", "pago", "cobro", "transference", "transferencia",
+            "ingreso", "recibido", "pago recibido", "cn", "nota de crédito",
+            "credit note", "credit", "credited", "payment", "receipt",
+            "πληρωμή", "πληρωμη", "είσπραξη", "εισπραξη", "κατάθεση",
+            "μεταφορά", "πιστωτικό", "επιστροφή"
         ]
 
         IGNORE_TRIGGERS = [
-            r"\bretenci[óo]n\b", r"\bwithholding\b",
-            r"\bπαρακράτησ[ηη]\b", r"\bπαρακρατηση\b"
+            "retención", "retencion", "withholding",
+            "παρακράτηση", "παρακρατηση"
         ]
 
-        cleaned_data = []
+        final_data = []
         for row in data:
-            desc = " " + str(row.get("Description", "")).lower() + " "
+            desc = str(row.get("Description", "")).lower()
 
-            # 1. SKIP retenciones / withholdings
-            if any(re.search(p, desc, re.IGNORECASE) for p in IGNORE_TRIGGERS):
-                continue
-
-            # 2. DETECT PAYMENT → FORCE TO CREDIT
-            if any(re.search(p, desc, re.IGNORECASE) for p in PAYMENT_TRIGGERS):
-                credit_val = float(row.get("Debit", 0) or row.get("Credit", 0))
-                row["Credit"] = credit_val
+            # 1. ABONO / PAGO / etc → FORCE CREDIT
+            if any(trigger in desc for trigger in CREDIT_TRIGGERS):
+                row["Credit"] = float(row.get("Debit", 0) or row.get("Credit", 0))
                 row["Debit"] = 0
             else:
                 row["Debit"] = float(row.get("Debit", 0))
                 row["Credit"] = float(row.get("Credit", 0))
 
-            cleaned_data.append(row)
+            # 2. DELETE RETENCIÓN
+            if any(ignore in desc for ignore in IGNORE_TRIGGERS):
+                continue
 
-        data = cleaned_data
+            final_data.append(row)
+
+        data = final_data
         # =============================================
 
-        # 1. Show Raw JSON
-        st.subheader("Raw JSON from LLM")
+        # Show JSON
+        st.subheader("Raw JSON")
         st.json(data, expanded=False)
 
-        # 2. Show Clean Table
+        # Show Table
         df = pd.DataFrame(data)
         for col in ["Debit", "Credit", "Balance"]:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
 
-        st.subheader("Final Extracted Table")
+        st.subheader("ABONO = CREDIT → FINAL TABLE")
         st.dataframe(df, use_container_width=True)
 
-        # 3. Download Excel
-        excel_data = to_excel_bytes(data)
+        # Download
         st.download_button(
-            label="Download Excel File",
-            data=excel_data,
-            file_name="vendor_statement_clean.xlsx",
+            label="DOWNLOAD EXCEL – ABONO IS CREDIT",
+            data=to_excel_bytes(data),
+            file_name="ABONO_IS_CREDIT.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
-        st.success("Done! Payments → Credit | Retenciones → Removed")
+        st.success("ABONO = CREDIT. PAGO = CREDIT. DONE.")
