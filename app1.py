@@ -1,5 +1,6 @@
 import os
 import json
+import re
 from io import BytesIO
 import fitz  # PyMuPDF
 import pandas as pd
@@ -92,41 +93,38 @@ if uploaded:
                 st.stop()
 
         # =============================================
-        # FINAL LOGIC: IGNORE RETENCIONES + FORCE PAYMENTS TO CREDIT
+        # FINAL LOGIC: PAYMENTS → CREDIT | RETENCIONES → SKIP
         # =============================================
-        import re
-
-        PAYMENT_PATTERNS = [
+        PAYMENT_TRIGGERS = [
             # Spanish
-            r"\bcobro\b", r"\bpago\b", r"\babono\b", r"\bingreso\b", r"\brecibido\b", r"\bpago recibido\b",
+            r"\bcobro\b", r"\bpago\b", r"\babono\b", r"\bingreso\b", r"\brecibido\b",
+            r"\bpago\s+recibido\b", r"\bcn\b", r"\breason\b",
             # English
             r"\bpayment\b", r"\breceipt\b", r"\breceived\b", r"\bcredit\b", r"\bcredited\b",
             # Greek
-            r"\bπληρωμή\b", r"\bπληρωμη\b", r"\bείσπραξη\b", r"\bεισπραξη\b",
-            r"\bκατάθεση\b", r"\bκαταθεση\b", r"\bπίστωση\b", r"\bπιστωση\b",
-            r"\bεισπράχθηκε\b", r"\bκαταβλήθηκε\b"
+            r"\bπληρωμ[ήη]\b", r"\bπληρωμη\b", r"\bείσπραξ[ηη]\b", r"\bεισπραξη\b",
+            r"\bκατάθεσ[ηη]\b", r"\bκαταθεση\b", r"\bπίστωσ[ηη]\b", r"\bπιστωση\b"
         ]
 
-        IGNORE_PATTERNS = [
+        IGNORE_TRIGGERS = [
             r"\bretenci[óo]n\b", r"\bwithholding\b",
-            r"\bπαρακράτηση\b", r"\bπαρακρατηση\b", r"\bπαρακρατήθηκε\b"
+            r"\bπαρακράτησ[ηη]\b", r"\bπαρακρατηση\b"
         ]
 
         cleaned_data = []
         for row in data:
             desc = " " + str(row.get("Description", "")).lower() + " "
 
-            # 1. IGNORE: retención / withholding / παρακράτηση
-            if any(re.search(p, desc) for p in IGNORE_PATTERNS):
-                continue  # SKIP ENTIRE ROW
+            # 1. SKIP retenciones / withholdings
+            if any(re.search(p, desc, re.IGNORECASE) for p in IGNORE_TRIGGERS):
+                continue
 
-            # 2. FORCE: payment → Credit (even if in Debit)
-            if any(re.search(p, desc) for p in PAYMENT_PATTERNS):
+            # 2. DETECT PAYMENT → FORCE TO CREDIT
+            if any(re.search(p, desc, re.IGNORECASE) for p in PAYMENT_TRIGGERS):
                 credit_val = float(row.get("Debit", 0) or row.get("Credit", 0))
                 row["Credit"] = credit_val
                 row["Debit"] = 0
             else:
-                # Ensure Debit/Credit are numbers
                 row["Debit"] = float(row.get("Debit", 0))
                 row["Credit"] = float(row.get("Credit", 0))
 
@@ -157,4 +155,4 @@ if uploaded:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
-        st.success("Done! Retenciones removed. Payments → Credit. Ready for accounting.")
+        st.success("Done! Payments → Credit | Retenciones → Removed")
