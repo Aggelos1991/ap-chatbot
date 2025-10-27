@@ -1,205 +1,233 @@
-import os
-import json
-import re
+import os, json, re
 from io import BytesIO
-import fitz                     # PyMuPDF
+import fitz  # PyMuPDF
 import pandas as pd
 import streamlit as st
 from openai import OpenAI
 
-# ==========================
-# CONFIG
-# ==========================
-st.set_page_config(page_title="DataFalcon Pro — Vendor Statement Parser", layout="wide")
-st.markdown(
-    """
-    <h1 style='text-align:center; font-size:3rem; font-weight:700;
-    background: linear-gradient(90deg,#0D47A1,#42A5F5);
-    -webkit-background-clip:text; -webkit-text-fill-color:transparent;'>DataFalcon Pro</h1>
-    <h3 style='text-align:center; color:#1565C0;'>Vendor Statement to Excel (ABONO = CREDIT + REASON)</h3>
-    """,
-    unsafe_allow_html=True,
-)
+# =============================================
+# ENVIRONMENT SETUP
+# =============================================
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ModuleNotFoundError:
+    st.warning("⚠️ 'python-dotenv' not installed — continuing without .env support.")
 
-API_KEY = os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY")
-if not API_KEY:
-    st.error("OpenAI API key missing.")
+api_key = os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY")
+if not api_key:
+    st.error("❌ No OpenAI API key found. Add it to .env or Streamlit Secrets.")
     st.stop()
 
-client = OpenAI(api_key=API_KEY)
+client = OpenAI(api_key=api_key)
 MODEL = "gpt-4o-mini"
 
-# ==========================
+# =============================================
+# STREAMLIT CONFIG
+# =============================================
+st.set_page_config(page_title="🦅 DataFalcon — Vendor Statement Extractor", layout="wide")
+st.title("🦅 DataFalcon — Vendor Statement Extractor (Stable Version)")
+
+# =============================================
 # HELPERS
-# ==========================
+# =============================================
 def extract_text_from_pdf(file):
-    """Extract raw text from uploaded PDF (PyMuPDF)."""
+    """Safely extract text from uploaded PDF."""
+    file_bytes = file.getvalue()
+    if not file_bytes:
+        raise ValueError("Uploaded file is empty or unreadable.")
+
     text = ""
-    with fitz.open(stream=file.read(), filetype="pdf") as doc:
+    with fitz.open(stream=file_bytes, filetype="pdf") as doc:
         for page in doc:
             text += page.get_text("text") + "\n"
     return text
 
 
-def clean_text(text: str) -> str:
-    """Normalize whitespace & currency symbols."""
+def clean_text(text):
+    """Clean extracted text."""
     return " ".join(text.replace("\xa0", " ").replace("€", " EUR").split())
 
 
-def extract_with_llm(raw_text: str):
-    """Ask GPT for a clean JSON array of transaction lines."""
-    prompt = f"""
-    Extract **all** transaction lines from the vendor statement.
-    Return **ONLY** a valid JSON array of objects with the keys:
-      - Invoice_Number (string)
-      - Date (string, DD/MM/YYYY or YYYY-MM-DD)
-      - Description (string)
-      - Debit (number, 0 if empty)
-      - Credit (number, 0 if empty)
+def normalize_number(value):
+    """Normalize European/US number formats, handle negatives."""
+    if not value:
+        return ""
+    s = str(value).strip()
+    is_negative = s.startswith('-') or 'HABER' in s.upper()  # Assume HABER implies credit (negative)
+    s = re.sub(r"[^\d.,-]", "", s)  # Remove non-numeric except , . -
+    if re.match(r"^\d{1,3}(\.\d{3})*,\d{2}$", s):  # 1.234,56
+        s = s.replace(".", "").replace(",", ".")
+    elif re.match(r"^\d{1,3}(,\d{3})*\.\d{2}$", s):  # 1,234.56
+        s = s.replace(",", "")
+    elif re.match(r"^\d+,\d{2}$", s):  # 150,00
+        s = s.replace(",", ".")
+    else:
+        s = re.sub(r"[^\d.-]", "", s)
+    try:
+        num = float(s)
+        return -num if is_negative else num
+    except ValueError:
+        return ""
 
-    Text (max 12,000 chars):
+
+def extract_tax_id(raw_text):
+    """Detect CIF/NIF/VAT from text."""
+    patterns = [
+        r"\b[A-Z]{1}\d{7}[A-Z0-9]{1}\b",
+        r"\bES\d{9}\b",
+        r"\bEL\d{9}\b",
+        r"\b[A-Z]{2}\d{8,12}\b",
+    ]
+    for pat in patterns:
+        match = re.search(pat, raw_text)
+        if match:
+            return match.group(0)
+    return None
+
+
+# =============================================
+# CORE EXTRACTION (STABLE + FILTERING)
+# =============================================
+def extract_with_llm(raw_text):
+    """
+    Extract structured invoice data from Spanish vendor statement.
+    - Handles DEBE for invoices (positive amounts).
+    - Handles HABER only for credit notes (negative amounts), not payments.
+    - Captures invoice numbers with Spanish prefixes (e.g., Factura, Nº Factura).
+    - Strict filtering for payments/balances.
+    """
+
+    prompt = f"""
+    You are an expert accountant AI.
+
+    Extract all *invoice* or *credit note* lines from the following Spanish vendor statement.
+    Each line must include:
+    - Invoice Number: Full number with Spanish prefixes (e.g., "Factura 6--483", "Nº Documento ABC-123", "Num Factura 456")
+    - Date: Fecha in DD/MM/YY or similar
+    - Type: "Invoice" if it's a factura/debit, "Credit Note" if it's a nota de crédito/abono
+    - Amount: From DEBE/IMPORTE/VALOR/TOTAL/TOTALE/AMOUNT for invoices (positive). From HABER only if it's a credit note (make negative, e.g., -123.45). Normalize to US format (e.g., 123.45).
+
+    ⚠️ Rules:
+    - ONLY include lines that are explicitly invoices (factura) or credit notes (nota de crédito, abono).
+    - For credit notes, use HABER as amount (negative), but ONLY if the line mentions "Nota de Crédito", "Abono", or similar — NOT for payments.
+    - Do NOT include any payments, credits that are not notes, or balances: Ignore SALDO, BALANCE, ACUMULADO, RESTANTE, HABER (unless credit note), CRÉDITO (unless credit note), PAGO, BANCO, REMESA, COBRO, DOMICILIACIÓN, "Cobro Efecto", "Banco Santander".
+    - Ignore any line with payment-related terms.
+
+    Output as JSON array like:
+    [
+      {{
+        "Invoice Number": "Factura 6--483",
+        "Date": "24/01/25",
+        "Type": "Invoice",
+        "Amount": 322.27
+      }},
+      {{
+        "Invoice Number": "Nota de Crédito 789",
+        "Date": "15/02/25",
+        "Type": "Credit Note",
+        "Amount": -150.00
+      }}
+    ]
+
+    Text:
     \"\"\"{raw_text[:12000]}\"\"\"
     """
-    resp = client.chat.completions.create(
-        model=MODEL,
-        messages=[
-            {"role": "system", "content": "Return ONLY valid JSON. No markdown, no explanations."},
-            {"role": "user", "content": prompt}
-        ],
-        temperature=0,
-        max_tokens=1500,
-    )
-    json_str = resp.choices[0].message.content.strip()
-
-    # Strip possible markdown fences
-    if "```" in json_str:
-        json_str = re.search(r"```(?:json)?\s*(.*?)\s*```", json_str, re.S)
-        json_str = json_str.group(1) if json_str else json_str
 
     try:
-        return json.loads(json_str)
-    except Exception:
-        st.warning("GPT output not valid JSON – trying a quick sanitise.")
-        json_str = re.sub(r"[^{}\[\]:,0-9A-Za-z.\-\"'/ ]", "", json_str)
-        return json.loads(json_str)
+        response = client.chat.completions.create(
+            model=MODEL,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        content = response.choices[0].message.content.strip()
+        # Improved parsing: Strip code blocks if present
+        content = re.sub(r"^```json|```$", "", content).strip()
+        json_match = re.search(r"\[.*\]", content, re.DOTALL)
+        content = json_match.group(0) if json_match else content
+        data = json.loads(content)
+    except json.JSONDecodeError as e:
+        st.error(f"⚠️ Could not parse JSON from GPT: {e}")
+        st.text_area("🔍 Raw GPT Output", content[:2000], height=200)
+        return []
+    except Exception as e:
+        st.error(f"⚠️ GPT API error: {e}")
+        return []
 
-
-def to_excel_bytes(records):
-    """Return Excel file as bytes for download."""
-    out = BytesIO()
-    pd.DataFrame(records).to_excel(out, index=False, engine="openpyxl")
-    out.seek(0)
-    return out
-
-
-# ==========================
-# UI
-# ==========================
-uploaded = st.file_uploader("Upload Vendor Statement (PDF)", type="pdf")
-
-if uploaded:
-    with st.spinner("Reading PDF…"):
-        raw_text = clean_text(extract_text_from_pdf(uploaded))
-
-    st.text_area("Preview (first 2000 chars)", raw_text[:2000], height=150, disabled=True)
-
-    with st.spinner("Extracting with GPT…"):
-        data = extract_with_llm(raw_text)
-
-    # ------------------------------------------------------------------
-    #  SMART REASON / ABONO LOGIC (the version you had yesterday)
-    # ------------------------------------------------------------------
-    PAYMENT_TRIGGERS = [
-        "pago", "transferencia", "transference", "transfer", "remittance",
-        "ingreso", "depósito", "deposito", "deposit", "bank", "payment",
-        "paid", "pagado", "paid to", "bank transfer", "transferencia bancaria",
-        "έμβασμα", "εμβασμα", "πληρωμή", "πληρωμη", "κατάθεση", "μεταφορά",
-        "receipt", "received", "recibido", "transfered", "wire", "cash receipt"
-    ]
-    CREDIT_NOTE_TRIGGERS = [
-        "nota de crédito", "nota credito", "credit note", "credit", "cn",
-        "πιστωτικό", "πιστωτικο", "refund", "creditmemo", "credit memo", "credito"
-    ]
-    ABONO_TRIGGERS = ["abono", "abonos"]          # <-- the missing piece
-    IGNORE_TRIGGERS = [
-        "retención", "retencion", "withholding", "παρακράτηση", "παρακρατηση"
-    ]
-
-    final_rows = []
-    raw_lower = raw_text.lower()
-
+    # Post-correction logic
     for row in data:
-        desc = str(row.get("Description", "")).lower()
-        inv  = str(row.get("Invoice_Number", "")).lower()
+        # Normalize amount (handle legacy "Document Value" if GPT uses it)
+        amt_key = "Amount" if "Amount" in row else "Document Value"
+        if amt_key in row:
+            row["Amount"] = normalize_number(row[amt_key])
+            if amt_key != "Amount":
+                del row[amt_key]
+        # If GPT extracted separate Debit/Credit, merge into Amount
+        if "Debit" in row:
+            row["Amount"] = normalize_number(row["Debit"])
+            del row["Debit"]
+        if "Credit" in row:
+            row["Amount"] = normalize_number(row["Credit"]) * -1  # Make negative
+            del row["Credit"]
+        # Remove unwanted
+        if "Balance" in row:
+            del row["Balance"]
+        # Infer Type if missing
+        if "Type" not in row or not row["Type"]:
+            row["Type"] = "Credit Note" if row.get("Amount", 0) < 0 else "Invoice"
 
-        # ---- 1. Skip rows we never want ----
-        if any(t in desc for t in IGNORE_TRIGGERS):
-            continue
+    # Filter out any zero/empty amounts or suspicious entries
+    data = [row for row in data if row.get("Amount") and abs(row["Amount"]) > 0]
 
-        debit  = float(row.get("Debit", 0) or 0)
-        credit = float(row.get("Credit", 0) or 0)
+    return data
 
-        # ---- 2. Reason cascade (exact order you used yesterday) ----
-        reason = "INVOICE"
 
-        # a) Credit-Note
-        if any(t in desc for t in CREDIT_NOTE_TRIGGERS):
-            reason = "CREDIT NOTE"
-            credit = credit if credit else debit
-            debit  = 0
+# =============================================
+# EXPORT TO EXCEL
+# =============================================
+def to_excel_bytes(records):
+    df = pd.DataFrame(records)
+    buf = BytesIO()
+    df.to_excel(buf, index=False)
+    buf.seek(0)
+    return buf
 
-        # b) Payment
-        elif any(t in desc for t in PAYMENT_TRIGGERS) or any(
-            t in raw_lower and inv in raw_lower for t in PAYMENT_TRIGGERS
-        ):
-            reason = "PAYMENT"
-            credit = credit if credit else debit
-            debit  = 0
 
-        # c) ABONO (fallback – any line that contains the word “abono”)
-        elif any(t in desc for t in ABONO_TRIGGERS):
-            reason = "ABONO"
-            credit = credit if credit else debit
-            debit  = 0
+# =============================================
+# STREAMLIT UI
+# =============================================
+uploaded_pdf = st.file_uploader("📂 Upload Vendor Statement (PDF)", type=["pdf"])
 
-        # d) Default → regular invoice
+if uploaded_pdf:
+    with st.spinner("📄 Extracting text from PDF..."):
+        try:
+            text = clean_text(extract_text_from_pdf(uploaded_pdf))
+        except Exception as e:
+            st.error(f"❌ Failed to read PDF: {e}")
+            st.stop()
+
+    st.text_area("🔍 Extracted Text (first 2000 chars)", text[:2000], height=200)
+
+    if st.button("🤖 Extract Data to Excel"):
+        with st.spinner("Analyzing with GPT..."):
+            data = extract_with_llm(text)
+
+        if data:
+            tax_id = extract_tax_id(text)
+            for row in data:
+                row["Tax ID"] = tax_id if tax_id else "Missing TAX ID"
+
+            df = pd.DataFrame(data)
+            st.success("✅ Extraction complete!")
+            st.dataframe(df, use_container_width=True)
+
+            excel_bytes = to_excel_bytes(data)
+            st.download_button(
+                "⬇️ Download Excel (Vendor Statement)",
+                data=excel_bytes,
+                file_name="vendor_statement_output.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
         else:
-            debit  = debit
-            credit = credit
-
-        # ---- 3. Assemble final row ----
-        row.update({
-            "Debit":  debit,
-            "Credit": credit,
-            "Reason": reason
-        })
-        final_rows.append(row)
-
-    # ------------------------------------------------------------------
-    #  DISPLAY & DOWNLOAD
-    # ------------------------------------------------------------------
-    df = pd.DataFrame(final_rows)
-
-    # Drop any stray “Balance” column that sometimes appears
-    if "Balance" in df.columns:
-        df = df.drop(columns=["Balance"])
-
-    # Force numeric
-    for c in ["Debit", "Credit"]:
-        df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
-
-    # Reason first, then the rest
-    cols = ["Reason"] + [c for c in df.columns if c != "Reason"]
-    df = df[cols]
-
-    st.subheader("Parsed Data (ABONO = CREDIT + REASON)")
-    st.dataframe(df, use_container_width=True)
-
-    st.download_button(
-        label="DOWNLOAD EXCEL",
-        data=to_excel_bytes(df.to_dict(orient="records")),
-        file_name="DataFalcon_Pro_Statement.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
-
-    st.success("Extraction complete — every **ABONO** is now a **Credit** with a clear **Reason**.")
+            st.warning("⚠️ No valid document data found. Try with a different PDF or check formatting.")
+else:
+    st.info("Please upload a vendor statement PDF to begin.")
