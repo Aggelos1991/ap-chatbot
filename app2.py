@@ -147,7 +147,7 @@ def normalize_columns(df, tag):
     rename_map = {}
     cols_lower = {c: str(c).strip().lower() for c in df.columns}
 
-    # ---- INVOICE (forced) ----
+      # ---- SMART INVOICE DETECTION FIX ----
     invoice_matched = False
     for col, low in cols_lower.items():
         if any(a in low for a in mapping["invoice"]):
@@ -156,10 +156,17 @@ def normalize_columns(df, tag):
             break
 
     if not invoice_matched:
-        # use first column as fallback or create empty one
+        # try "factura" or "code" explicitly if not found
+        for alt in df.columns:
+            low = str(alt).lower()
+            if any(k in low for k in ["factura", "code", "document"]):
+                rename_map[alt] = f"invoice_{tag}"
+                invoice_matched = True
+                break
+
+    if not invoice_matched:
         if len(df.columns) > 0:
-            first = df.columns[0]
-            df.rename(columns={first: f"invoice_{tag}"}, inplace=True)
+            df.rename(columns={df.columns[0]: f"invoice_{tag}"}, inplace=True)
         else:
             df[f"invoice_{tag}"] = ""
 
