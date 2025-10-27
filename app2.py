@@ -392,7 +392,7 @@ def extract_payments(erp_df, ven_df):
             payment_detected = (credit > 0) or (debit < 0)
         else:
             payment_detected = debit > 0
-        return any(kw in txt for kw in pay_keywords) and not any(b in txt for b in excl_kw) and payment5_detected
+        return any(kw in txt for kw in pay_keywords) and not any(b in txt for b in excl_kw) and payment_detected
 
     erp_pay = erp_df[erp_df.apply(lambda r: is_pay(r,"erp"),axis=1)].copy() \
         if "reason_erp" in erp_df.columns else pd.DataFrame()
