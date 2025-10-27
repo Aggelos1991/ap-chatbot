@@ -13,7 +13,8 @@ from openai import OpenAI
 st.set_page_config(page_title="🦅 DataFalcon Pro — Vendor Statement Parser", layout="wide")
 st.markdown(
     """
-    <h1 style='text-align:center; font-size:3rem; font-weight:700; background: linear-gradient(90deg,#0D47A1,#42A5F5);
+    <h1 style='text-align:center; font-size:3rem; font-weight:700;
+    background: linear-gradient(90deg,#0D47A1,#42A5F5);
     -webkit-background-clip:text; -webkit-text-fill-color:transparent;'>🦅 DataFalcon Pro</h1>
     <h3 style='text-align:center; color:#1565C0;'>Vendor Statement → Excel (ABONO = CREDIT + REASON)</h3>
     """,
@@ -46,14 +47,13 @@ def clean_text(text):
 def extract_with_llm(raw_text):
     """Ask GPT to extract invoice lines into JSON"""
     prompt = f"""
-    Extract every invoice line from this vendor statement.
-    Return **ONLY** a JSON array with these keys:
+    Extract all transaction lines (invoices, payments, credits) from this vendor statement.
+    Return ONLY a valid JSON array of objects with:
     - Invoice_Number (string)
     - Date (string, DD/MM/YYYY or YYYY-MM-DD)
     - Description (string)
     - Debit (number, 0 if empty)
     - Credit (number, 0 if empty)
-    - Balance (number, 0 if empty)
 
     Text (max 12,000 chars):
     \"\"\"{raw_text[:12000]}\"\"\"
@@ -75,7 +75,12 @@ def extract_with_llm(raw_text):
         if json_str.lower().startswith("json"):
             json_str = json_str[4:].strip()
 
-    return json.loads(json_str)
+    try:
+        return json.loads(json_str)
+    except Exception:
+        st.warning("⚠️ GPT output not valid JSON, attempting auto-fix.")
+        json_str = re.sub(r"[^{}\[\]:,0-9A-Za-z.\-\"'/ ]", "", json_str)
+        return json.loads(json_str)
 
 def to_excel_bytes(records):
     """Convert records to Excel bytes for download"""
@@ -99,19 +104,19 @@ if uploaded:
         data = extract_with_llm(text)
 
     # ==========================
-    # DETECTION LOGIC
+    # SMART DETECTION LOGIC
     # ==========================
     PAYMENT_TRIGGERS = [
         "pago", "transferencia", "transference", "transfer", "remittance",
         "ingreso", "depósito", "deposito", "deposit", "bank", "payment",
         "paid", "pagado", "paid to", "bank transfer", "transferencia bancaria",
         "έμβασμα", "εμβασμα", "πληρωμή", "πληρωμη", "κατάθεση", "μεταφορά",
-        "receipt", "received", "recibido", "transfered", "wire"
+        "receipt", "received", "recibido", "transfered", "wire", "cash receipt"
     ]
 
     CREDIT_NOTE_TRIGGERS = [
         "nota de crédito", "nota credito", "credit note", "credit", "cn",
-        "πιστωτικό", "πιστωτικο", "refund", "creditmemo", "credit memo"
+        "πιστωτικό", "πιστωτικο", "refund", "creditmemo", "credit memo", "credito"
     ]
 
     IGNORE_TRIGGERS = [
@@ -119,29 +124,33 @@ if uploaded:
     ]
 
     final_data = []
+    raw_lower = text.lower()
+
     for row in data:
         desc = str(row.get("Description", "")).lower()
         debit = float(row.get("Debit", 0) or 0)
         credit = float(row.get("Credit", 0) or 0)
         reason = "INVOICE"
 
-        # Ignore retenções
+        # Ignore retentions
         if any(ignore in desc for ignore in IGNORE_TRIGGERS):
             continue
 
-        # Credit Note logic
+        # --- Credit Notes ---
         if any(k in desc for k in CREDIT_NOTE_TRIGGERS):
             row["Credit"] = credit if credit != 0 else debit
             row["Debit"] = 0
             reason = "CREDIT NOTE"
 
-        # Payment logic
-        elif any(k in desc for k in PAYMENT_TRIGGERS):
+        # --- Payments (detected in desc or in raw text if desc vague) ---
+        elif any(k in desc for k in PAYMENT_TRIGGERS) or any(
+            k in raw_lower for k in PAYMENT_TRIGGERS if str(row.get("Invoice_Number", "")).lower() in raw_lower
+        ):
             row["Credit"] = credit if credit != 0 else debit
             row["Debit"] = 0
             reason = "PAYMENT"
 
-        # Invoice default
+        # --- Invoice Default ---
         else:
             row["Debit"] = debit
             row["Credit"] = credit
@@ -151,21 +160,28 @@ if uploaded:
         final_data.append(row)
 
     # ==========================
-    # TABLE + DOWNLOAD
+    # CLEAN + DISPLAY
     # ==========================
     df = pd.DataFrame(final_data)
-    for col in ["Debit", "Credit", "Balance"]:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+    # drop Balance if present
+    if "Balance" in df.columns:
+        df = df.drop(columns=["Balance"])
 
-    st.subheader("🧾 Parsed Data")
+    for col in ["Debit", "Credit"]:
+        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+
+    # Reorder columns: Reason first
+    cols = ["Reason"] + [c for c in df.columns if c != "Reason"]
+    df = df[cols]
+
+    st.subheader("🧾 Parsed Data (ABONO = CREDIT + REASON)")
     st.dataframe(df, use_container_width=True)
 
     st.download_button(
         label="📥 DOWNLOAD EXCEL",
-        data=to_excel_bytes(final_data),
+        data=to_excel_bytes(df.to_dict(orient="records")),
         file_name="DataFalcon_Pro_Statement.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
-    st.success("✅ Extraction complete")
+    st.success("✅ Extraction complete — ABONO = CREDIT. Reason column active (Invoice / Payment / Credit Note).")
