@@ -1,6 +1,6 @@
 def match_invoices(erp_df, ven_df):
     matched = []
-    used_vendor = = set()
+    used_vendor = set()
 
     def doc_type(row, tag):
         r = str(row.get(f"reason_{tag}", "")).lower()
