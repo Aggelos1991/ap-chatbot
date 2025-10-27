@@ -14,3 +14,4 @@ uvicorn
 requests
 aiofiles
 python-multipart
+streamlit_plotly_events
