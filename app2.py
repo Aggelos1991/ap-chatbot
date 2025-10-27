@@ -213,7 +213,7 @@ def match_invoices(erp_df, ven_df):
                     "ERP Invoice": e_inv, "Vendor Invoice": v_inv,
                     "ERP Amount": e_amt, "Vendor Amount": v_amt,
                     "Difference": diff, "Status": status
-                })
+                })
                 used_vendor_indices.add(v_idx)
                 break
 
