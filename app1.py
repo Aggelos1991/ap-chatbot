@@ -158,7 +158,7 @@ if uploaded:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
 
-    st.subheader("🧾 Parsed Data (ABONO = CREDIT + REASON)")
+    st.subheader("🧾 Parsed Data)
     st.dataframe(df, use_container_width=True)
 
     st.download_button(
@@ -168,4 +168,4 @@ if uploaded:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
-    st.success("✅ Extraction complete — ABONO = CREDIT. Reason column added (Invoice / Payment / Credit Note).")
+    st.success("✅ Extraction complete")
