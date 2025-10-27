@@ -1,5 +1,5 @@
 # --------------------------------------------------------------
-# ReconRaptor – FINAL, PAYMENTS SHOW REAL VALUES
+# ReconRaptor – FINAL, CORRECT, NO SIDE EFFECTS, PAYMENTS FIXED
 # --------------------------------------------------------------
 import streamlit as st
 import pandas as pd
@@ -45,16 +45,16 @@ def normalize_number(v):
     if pd.isna(v) or str(v).strip() == "": return 0.0
     s = str(v).strip()
     s = re.sub(r"[^\d,.\-]", "", s)
-    # Handle 1.065,00 → 1065.00
+    # 1.065,00 → 1065.00
     if "," in s and "." in s and s.find(".") < s.find(","):
         s = s.replace(".", "").replace(",", ".")
-    # Handle 1,065.00
+    # 1,065.00
     elif "," in s and "." in s and s.find(",") < s.find("."):
         s = s.replace(",", "")
-    # Single comma = decimal
+    # 1065,00
     elif "," in s:
         s = s.replace(",", ".")
-    # Multiple dots → last is decimal
+    # 1.065.00 → 1065.00
     elif s.count(".") > 1:
         parts = s.split(".")
         s = "".join(parts[:-1]) + "." + parts[-1]
@@ -85,12 +85,12 @@ def clean_invoice_code(v):
     s = re.sub(r"^0+", "", s)
     return s or "0"
 
-# ==================== NORMALIZE COLUMNS (FIXED FOR Charg/Credit) ====================
+# ==================== NORMALIZE COLUMNS (SAFE: Charg → debit_erp) ====================
 def normalize_columns(df, tag):
     mapping = {
         "invoice": ["invoice","factura","document","nº","αρ.","παραστατικό","τιμολόγιο","no","fac","bill","code"],
         "credit": ["credit","haber","abono","πιστωτικό","crédito"],
-        "debit": ["debit","debe","importe","amount","ποσό","αξία","débito","charg"],
+        "debit": ["debit","debe","importe","amount","ποσό","αξία","débito","charg"],  # ← Charg added
         "reason": ["reason","motivo","concepto","descripcion","αιτιολογία","περιγραφή","descripción"],
         "date": ["date","fecha","ημερομηνία","issue date","posting date","fecha emisión"]
     }
@@ -108,6 +108,7 @@ def normalize_columns(df, tag):
             if col in rename_map: continue
             if any(a in low for a in aliases):
                 rename_map[col] = f"{key}_{tag}"
+                break  # ← Only map once
     out = df.rename(columns=rename_map)
     for req in ["debit","credit"]:
         c=f"{req}_{tag}"
