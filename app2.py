@@ -383,7 +383,7 @@ def extract_payments(erp_df, ven_df):
     def is_pay(row, tag):
         txt = str(row.get(f"reason_{tag}", "")).lower()
         debit = normalize_number(row.get(f"debit_{tag}", 0))
-        credit = normalize_number(row from row.get(f"credit_{tag}", 0)
+        credit = normalize_number(row.get(f"credit_{tag}", 0))
         if tag == "ven":
             payment_detected = (credit > 0) or (debit < 0)
         else:
