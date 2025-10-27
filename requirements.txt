@@ -9,3 +9,6 @@ python-Levenshtein
 pdfplumber
 xlsxwriter
 plotly
+fastapi
+uvicorn
+
