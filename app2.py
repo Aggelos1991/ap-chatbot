@@ -1,5 +1,5 @@
 # --------------------------------------------------------------
-# ReconRaptor – Vendor Reconciliation (FINAL + NETTED CREDIT NOTES)
+# ReconRaptor – Vendor Reconciliation (FINAL + VENDOR PAYMENT FIX)
 # --------------------------------------------------------------
 import streamlit as st
 import pandas as pd
@@ -372,7 +372,7 @@ def tier3_match(erp_miss, ven_miss):
 
     return mdf, used_e, used_v, rem_e, rem_v
 
-# ==================== PAYMENT EXTRACTION ====================
+# ==================== PAYMENT EXTRACTION (VENDOR: DEBIT NEG OR CREDIT POS) ====================
 def extract_payments(erp_df, ven_df):
     pay_kw = ["πληρωμή","payment","bank transfer","transferencia","trf","remesa",
               "pago","pagado","pagos","deposit","μεταφορά","έμβασμα","εξοφληση","paid"]
@@ -381,9 +381,15 @@ def extract_payments(erp_df, ven_df):
 
     def is_pay(row, tag):
         txt = str(row.get(f"reason_{tag}", "")).lower()
-        return any(k in txt for k in pay_kw) and not any(b in txt for b in excl_kw) \
-               and ((tag=="erp" and normalize_number(row.get("debit_erp",0))>0) or
-                    (tag=="ven" and normalize_number(row.get("credit_ven",0))>0))
+        debit = normalize_number(row.get(f"debit_{tag}", 0))
+        credit = normalize_number(row.get(f"credit_{tag}", 0))
+        
+        if tag == "ven":
+            payment_detected = (credit > 0) or (debit < 0)
+        else:
+            payment_detected = debit > 0
+
+        return any(k in txt for k in pay_kw) and not any(b in txt for b in excl_kw) and payment_detected
 
     erp_pay = erp_df[erp_df.apply(lambda r: is_pay(r,"erp"),axis=1)].copy() \
         if "reason_erp" in erp_df.columns else pd.DataFrame()
@@ -391,11 +397,13 @@ def extract_payments(erp_df, ven_df):
         if "reason_ven" in ven_df.columns else pd.DataFrame()
 
     if not erp_pay.empty:
-        erp_pay["Amount"] = erp_pay.apply(lambda r: abs(normalize_number(r["debit_erp"]) -
-                                                       normalize_number(r["credit_erp"])), axis=1)
+        erp_pay["Amount"] = erp_pay.apply(lambda r: abs(
+            normalize_number(r.get("debit_erp", 0)) - normalize_number(r.get("credit_erp", 0))
+        ), axis=1)
     if not ven_pay.empty:
-        ven_pay["Amount"] = ven_pay.apply(lambda r: abs(normalize_number(r["debit_ven"]) -
-                                                       normalize_number(r["credit_ven"])), axis=1)
+        ven_pay["Amount"] = ven_pay.apply(lambda r: abs(
+            normalize_number(r.get("debit_ven", 0)) - normalize_number(r.get("credit_ven", 0))
+        ), axis=1)
 
     matched = []
     used = set()
@@ -493,7 +501,7 @@ if uploaded_erp and uploaded_vendor:
         perf = tier1[tier1["Status"] == "Perfect Match"] if not tier1.empty and "Status" in tier1.columns else pd.DataFrame()
         diff = tier1[tier1["Status"] == "Difference Match"] if not tier1.empty and "Status" in tier1.columns else pd.DataFrame()
 
-        # ---- METRICS ----
+        # ---- METRICS --
         st.markdown('<h2 class="section-title">Reconciliation Summary</h2>', unsafe_allow_html=True)
         c1,c2,c3,c4,c5,c6,c7 = st.columns(7)
 
