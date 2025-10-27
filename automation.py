@@ -63,7 +63,6 @@ def extract_text_from_file(file_bytes: bytes, filename: str) -> str:
 @app.post("/analyze")
 async def analyze(request: Request):
     try:
-        # 🔍 Debug log
         print("🔵 Received POST /analyze")
 
         data = await request.json()
@@ -72,12 +71,13 @@ async def analyze(request: Request):
 
         if not content_b64:
             print("⚠️ No content provided")
-            return JSONResponse({"keyword": "OTHER", "error": "Empty content"})
+            return JSONResponse(content={"keyword": "OTHER", "error": "Empty content"})
 
+        # Decode file
         file_bytes = base64.b64decode(content_b64)
         text = extract_text_from_file(file_bytes, filename)
 
-        # GPT classification
+        # Prepare prompt
         prompt = f"""
         You are a classifier. Identify which of these appears in the text:
         ANDALUSIA, PORTO PETRO, IKOS SPANISH HOTEL MANAGEMENT, or OTHER.
@@ -87,25 +87,43 @@ async def analyze(request: Request):
         {text}
         """
 
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}]
-        )
+        # GPT classification
+        try:
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}]
+            )
+            result = response.choices[0].message.content.strip().upper()
+        except Exception as gpt_error:
+            print(f"⚠️ GPT error: {gpt_error}")
+            result = ""
 
-        result = response.choices[0].message.content.strip().upper()
-
+        # Simple rule-based fallback
         if "ANDALUSIA" in result:
             keyword = "ANDALUSIA"
         elif "PORTO" in result:
             keyword = "PORTO PETRO"
         elif "SPANISH" in result:
             keyword = "IKOS SPANISH HOTEL MANAGEMENT"
+        elif "ANDALUSIA" in text.upper():
+            keyword = "ANDALUSIA"
+        elif "PORTO" in text.upper():
+            keyword = "PORTO PETRO"
+        elif "SPANISH" in text.upper():
+            keyword = "IKOS SPANISH HOTEL MANAGEMENT"
         else:
             keyword = "OTHER"
 
         print(f"✅ Classification result: {keyword}")
-        return JSONResponse({"keyword": keyword})
+        return JSONResponse(content={"keyword": keyword})
 
     except Exception as e:
         print(f"❌ Error: {e}")
-        return JSONResponse({"keyword": "OTHER", "error": str(e)})
+        return JSONResponse(content={"keyword": "OTHER", "error": str(e)})
+
+# ==========================
+# PING (optional test endpoint)
+# ==========================
+@app.get("/ping")
+async def ping():
+    return JSONResponse(content={"status": "ok", "message": "Server reachable"})
