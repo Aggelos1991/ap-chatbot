@@ -1,91 +1,14 @@
-from fastapi import FastAPI
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel
-import base64
-import io
-import os
-import pdfplumber
-import openpyxl
-from openai import OpenAI
-from dotenv import load_dotenv  # 👈 add this line
+from fastapi import Request
+from fastapi.responses import PlainTextResponse
 
-# ==========================
-# LOAD ENVIRONMENT VARIABLES
-# ==========================
-load_dotenv()  # 👈 this loads .env from your directory
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-# ==========================
-# INIT APP
-# ==========================
-app = FastAPI()
-
-# ==========================
-# HELPER: Extract text from file
-# ==========================
-def extract_text_from_file(file_bytes: bytes, filename: str) -> str:
-    filename = filename.lower()
-    text = ""
-    try:
-        if filename.endswith(".pdf"):
-            with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
-                for page in pdf.pages[:5]:  # limit to first 5 pages
-                    text += page.extract_text() or ""
-        elif filename.endswith(".xlsx"):
-            wb = openpyxl.load_workbook(io.BytesIO(file_bytes), read_only=True)
-            for sheet in wb.sheetnames:
-                ws = wb[sheet]
-                for row in ws.iter_rows(values_only=True):
-                    row_text = " ".join([str(cell) for cell in row if cell])
-                    text += row_text + "\n"
-        else:
-            text = file_bytes.decode(errors="ignore")
-    except Exception as e:
-        text = f"Error reading file: {e}"
-    return text[:4000]  # keep it short for GPT
-
-# ==========================
-# MODEL
-# ==========================
-class FilePayload(BaseModel):
-    filename: str
-    content: str  # base64 content
-
-# ==========================
-# ROUTE
-# ==========================
-@app.post("/analyze")
-async def analyze(payload: FilePayload):
-    file_bytes = base64.b64decode(payload.content)
-    text = extract_text_from_file(file_bytes, payload.filename)
-
-    prompt = f"""
-    You are a classifier. Identify which of these appears in the text:
-    ANDALUSIA, PORTO PETRO, IKOS SPANISH HOTEL MANAGEMENT, or OTHER.
-    Return only one of those words. No explanations.
-
-    Text:
-    {text}
-    """
-
-    try:
-        # Use the official client (safer and future-proof)
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}]
-        )
-
-        result = response.choices[0].message.content.strip().upper()
-
-        if "ANDALUSIA" in result:
-            keyword = "ANDALUSIA"
-        elif "PORTO" in result:
-            keyword = "PORTO PETRO"
-        elif "SPANISH" in result:
-            keyword = "IKOS SPANISH HOTEL MANAGEMENT"
-        else:
-            keyword = "OTHER"
-
-        return JSONResponse({"keyword": keyword})
-    except Exception as e:
-        return JSONResponse({"error": str(e)})
+@app.middleware("http")
+async def allow_chunked_requests(request: Request, call_next):
+    # If the client uses Transfer-Encoding: chunked (Power Automate does),
+    # FastAPI/Uvicorn won't compute content length automatically.
+    # This ensures the body is still properly read.
+    if request.headers.get("transfer-encoding", "").lower() == "chunked":
+        # Force reading the raw body manually
+        body = await request.body()
+        request._body = body  # inject the raw body back for downstream parsing
+    response = await call_next(request)
+    return response
