@@ -10,7 +10,7 @@ from openai import OpenAI
 # CONFIG
 # ==========================
 st.set_page_config(page_title="Vendor Statement Extractor", layout="wide")
-st.title("Vendor Statement → Excel (Spanish, English, Greek PDFs)")
+st.title("Vendor Statement → Excel (Spanish • English • Greek)")
 
 API_KEY = os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY")
 if not API_KEY:
@@ -58,7 +58,6 @@ def extract_with_llm(raw_text):
     )
     json_str = resp.choices[0].message.content.strip()
 
-    # Strip markdown if present
     if "```" in json_str:
         parts = json_str.split("```")
         json_str = parts[1] if len(parts) > 1 else parts[0]
@@ -93,36 +92,43 @@ if uploaded:
                 st.stop()
 
         # =============================================
-        # SUPERIOR LOGIC: Multi-Language + Smart Fix
+        # FINAL LOGIC: IGNORE RETENCIONES + FORCE PAYMENTS TO CREDIT
         # =============================================
-        PAYMENT_KEYWORDS = {
+        import re
+
+        PAYMENT_PATTERNS = [
             # Spanish
-            "cobro", "pago", "abono", "ingreso", "recibido", "entrada", "pago recibido",
+            r"\bcobro\b", r"\bpago\b", r"\babono\b", r"\bingreso\b", r"\brecibido\b", r"\bpago recibido\b",
             # English
-            "payment", "receipt", "received", "credit", "deposit", "credited",
+            r"\bpayment\b", r"\breceipt\b", r"\breceived\b", r"\bcredit\b", r"\bcredited\b",
             # Greek
-            "πληρωμή", "πληρωμη", "είσπραξη", "εισπραξη", "κατάθεση", "καταθεση",
-            "πίστωση", "πιστωση", "πιστωση", "εισπράχθηκε", "καταβλήθηκε"
-        }
-        IGNORE_KEYWORDS = {
-            # Spanish / English
-            "retención", "retencion", "withholding", "retencion",
-            # Greek
-            "παρακράτηση", "παρακρατηση", "παρακρατήθηκε"
-        }
+            r"\bπληρωμή\b", r"\bπληρωμη\b", r"\bείσπραξη\b", r"\bεισπραξη\b",
+            r"\bκατάθεση\b", r"\bκαταθεση\b", r"\bπίστωση\b", r"\bπιστωση\b",
+            r"\bεισπράχθηκε\b", r"\bκαταβλήθηκε\b"
+        ]
+
+        IGNORE_PATTERNS = [
+            r"\bretenci[óo]n\b", r"\bwithholding\b",
+            r"\bπαρακράτηση\b", r"\bπαρακρατηση\b", r"\bπαρακρατήθηκε\b"
+        ]
 
         cleaned_data = []
         for row in data:
-            desc = str(row.get("Description", "")).lower()
+            desc = " " + str(row.get("Description", "")).lower() + " "
 
-            # 1. Ignore withholdings
-            if any(k in desc for k in IGNORE_KEYWORDS):
-                continue
+            # 1. IGNORE: retención / withholding / παρακράτηση
+            if any(re.search(p, desc) for p in IGNORE_PATTERNS):
+                continue  # SKIP ENTIRE ROW
 
-            # 2. Force payments to Credit
-            if any(k in desc for k in PAYMENT_KEYWORDS):
-                row["Credit"] = float(row.get("Debit", 0) or row.get("Credit", 0))
+            # 2. FORCE: payment → Credit (even if in Debit)
+            if any(re.search(p, desc) for p in PAYMENT_PATTERNS):
+                credit_val = float(row.get("Debit", 0) or row.get("Credit", 0))
+                row["Credit"] = credit_val
                 row["Debit"] = 0
+            else:
+                # Ensure Debit/Credit are numbers
+                row["Debit"] = float(row.get("Debit", 0))
+                row["Credit"] = float(row.get("Credit", 0))
 
             cleaned_data.append(row)
 
@@ -139,7 +145,7 @@ if uploaded:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
 
-        st.subheader("Extracted Table")
+        st.subheader("Final Extracted Table")
         st.dataframe(df, use_container_width=True)
 
         # 3. Download Excel
@@ -147,8 +153,8 @@ if uploaded:
         st.download_button(
             label="Download Excel File",
             data=excel_data,
-            file_name="vendor_statement_extracted.xlsx",
+            file_name="vendor_statement_clean.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
-        st.success("Done! JSON → Table → Excel")
+        st.success("Done! Retenciones removed. Payments → Credit. Ready for accounting.")
