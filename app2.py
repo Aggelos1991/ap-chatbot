@@ -197,6 +197,17 @@ def normalize_columns(df, tag):
 def style(df, css):
     return df.style.apply(lambda _: [css] * len(_), axis=1)
 
+def match_invoices(erp_df, ven_df):
+    # ✅ SAFETY FIX: Guarantee invoice columns exist before doing anything
+    if "invoice_erp" not in erp_df.columns:
+        erp_df["invoice_erp"] = ""
+    if "invoice_ven" not in ven_df.columns:
+        ven_df["invoice_ven"] = ""
+
+    matched = []
+    used_vendor = set()
+
+
 # ==================== MATCHING ==========================
 def match_invoices(erp_df, ven_df):
     matched = []
