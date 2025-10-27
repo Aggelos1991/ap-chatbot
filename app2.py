@@ -11,7 +11,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.styles import PatternFill, Font, Alignment
 from difflib import SequenceMatcher
 import plotly.express as px
-from streamlit.plotly_events import plotly_events
+from streamlit_plotly_events import plotly_events
 
 # ==================== PAGE CONFIG & CSS ======================
 st.set_page_config(page_title="ReconRaptor — Vendor Reconciliation", layout="wide")
