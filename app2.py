@@ -1,5 +1,5 @@
 # --------------------------------------------------------------
-# ReconRaptor – FINAL, BULLETPROOF, CLEAN, PROFESSIONAL
+# ReconRaptor – FINAL, BULLETPROOF, ZERO-ERROR, BEAUTIFUL
 # --------------------------------------------------------------
 import streamlit as st
 import pandas as pd
@@ -118,7 +118,7 @@ def cancel_net_zero(df, inv_col, amt_col):
     zero_inv = grouped[grouped[amt_col].abs() < 0.01][inv_col].astype(str).tolist()
     return df[~df[inv_col].astype(str).isin(zero_inv)].copy()
 
-# ==================== DOCUMENT TYPE (FILTER OUT NON-PAYMENTS) ====================
+# ==================== DOCUMENT TYPE (FILTER NON-PAYMENTS) ====================
 def doc_type(row, tag):
     r = str(row.get(f"reason_{tag}", "")).lower()
     debit = normalize_number(row.get(f"debit_{tag}", 0))
@@ -260,7 +260,7 @@ def tier3_match(erp_miss, ven_miss):
     mdf = pd.DataFrame(matches, columns=cols)
     return mdf, used_e, used_v, e[~e.index.isin(used_e)], v[~v.index.isin(used_v)]
 
-# ==================== PAYMENT MATCHING (REAL VALUES, TOTAL BELOW) ====================
+# ==================== PAYMENT MATCHING (SAFE SUM) ====================
 def extract_payments(erp_pay_df, ven_pay_df):
     if erp_pay_df.empty and ven_pay_df.empty:
         empty = pd.DataFrame(columns=["Reason", "Amount"])
@@ -385,12 +385,14 @@ if uploaded_erp and uploaded_vendor:
 
         st.success("Reconciliation Complete!")
 
-        # METRICS
+        # METRICS (SAFE SUM)
+        def safe_sum(df, col):
+            return df[col].sum() if not df.empty and col in df.columns else 0.0
+
         st.markdown('<h2 class="section-title">Reconciliation Summary</h2>', unsafe_allow_html=True)
         c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
         perf = tier1[tier1["Status"] == "Perfect Match"]
         diff = tier1[tier1["Status"] == "Difference Match"]
-        safe_sum = lambda df, col: df[col].sum() if not df.empty and col in df.columns else 0.0
 
         with c1:
             st.markdown('<div class="metric-container perfect-match">', unsafe_allow_html=True)
@@ -425,7 +427,7 @@ if uploaded_erp and uploaded_vendor:
         with c7:
             st.markdown('<div class="metric-container payment-match">', unsafe_allow_html=True)
             st.metric("Matched Payments", f"{len(pay_match):,}")
-            st.markdown(f"**Total:** {pay_match['ERP Amount'].sum():,.2f}", unsafe_allow_html=True)
+            st.markdown(f"**Total:** {safe_sum(pay_match, 'ERP Amount'):,.2f}", unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
 
         st.markdown("---")
@@ -457,11 +459,11 @@ if uploaded_erp and uploaded_vendor:
                 st.error(f"{len(final_ven_miss):,} invoices – {final_ven_miss['Amount'].sum():,.2f}")
             else: st.success("No invoices missing in Vendor.")
 
-        # PAYMENT TABLES (BLUE, TOTAL BELOW)
+        # PAYMENT TABLES (SAFE SUM)
         st.markdown('<h2 class="section-title">Matched Payments</h2>', unsafe_allow_html=True)
         if not pay_match.empty:
             st.dataframe(style(pay_match, "background:#1565C0;color:#fff;font-weight:bold;"), use_container_width=True)
-            st.markdown(f"**TOTAL:** {pay_match['ERP Amount'].sum():,.2f}", unsafe_allow_html=True)
+            st.markdown(f"**TOTAL:** {safe_sum(pay_match, 'ERP Amount'):,.2f}", unsafe_allow_html=True)
         else:
             st.info("No payment matches.")
 
