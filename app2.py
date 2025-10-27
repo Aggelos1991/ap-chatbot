@@ -6,7 +6,7 @@ import pandas as pd
 import re
 from io import BytesIO
 from openpyxl import Workbook
-from openpyxl.utilsισε import dataframe_to_rows
+from openpyxl.utils import dataframe_to_rows
 from openpyxl.utils import get_column_letter
 from openpyxl.styles import PatternFill, Font, Alignment
 from difflib import SequenceMatcher
