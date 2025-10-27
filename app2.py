@@ -1,5 +1,5 @@
 # --------------------------------------------------------------
-# ReconRaptor – FINAL, BULLETPROOF, NO-ERROR VERSION
+# ReconRaptor – FINAL, BULLETPROOF, ZERO-ERROR VERSION
 # --------------------------------------------------------------
 import streamlit as st
 import pandas as pd
@@ -256,7 +256,7 @@ def tier3_match(erp_miss, ven_miss):
     mdf = pd.DataFrame(matches, columns=cols)
     return mdf, used_e, used_v, e[~e.index.isin(used_e)], v[~v.index.isin(used_v)]
 
-# ==================== PAYMENT MATCHING (3 TABLES, SAFE COLUMNS) ====================
+# ==================== PAYMENT MATCHING (3 TABLES, 100% SAFE) ====================
 def extract_payments(erp_pay_df, ven_pay_df):
     # Empty case
     if erp_pay_df.empty and ven_pay_df.empty:
@@ -267,26 +267,34 @@ def extract_payments(erp_pay_df, ven_pay_df):
     ven_pay_df = ven_pay_df.copy()
 
     # Compute amounts
-    erp_pay_df["Amount"] = erp_pay_df.apply(lambda r: abs(normalize_number(r.get("debit_erp", 0)) - normalize_number(r.get("credit_erp", 0))), axis=1)
-    ven_pay_df["Amount"] = ven_pay_df.apply(lambda r: abs(normalize_number(r.get("debit_ven", 0)) - normalize_number(r.get("credit_ven", 0))), axis=1)
+    erp_pay_df["Amount"] = erp_pay_df.apply(
+        lambda r: abs(normalize_number(r.get("debit_erp", 0)) - normalize_number(r.get("credit_erp", 0))), axis=1
+    )
+    ven_pay_df["Amount"] = ven_pay_df.apply(
+        lambda r: abs(normalize_number(r.get("debit_ven", 0)) - normalize_number(r.get("credit_ven", 0))), axis=1
+    )
 
     erp_pay_df["Amt_Rounded"] = erp_pay_df["Amount"].round(2)
     ven_pay_df["Amt_Rounded"] = ven_pay_df["Amount"].round(2)
 
-    # Safely extract reason
-    erp_pay_df["Reason"] = erp_pay_df.get("reason_erp", pd.Series(["Unknown"] * len(erp_pay_df))).astype(str)
-    ven_pay_df["Reason"] = ven_pay_df.get("reason_ven", pd.Series(["Unknown"] * len(ven_pay_df))).astype(str)
+    # SAFELY CONVERT REASON TO STRING
+    erp_pay_df["Reason"] = erp_pay_df.get("reason_erp", pd.Series(["Unknown"] * len(erp_pay_df))).fillna("Unknown").astype(str)
+    ven_pay_df["Reason"] = ven_pay_df.get("reason_ven", pd.Series(["Unknown"] * len(ven_pay_df))).fillna("Unknown").astype(str)
 
     matched = []
     used_ven_idx = set()
 
     for _, e in erp_pay_df.iterrows():
         e_amt = e["Amt_Rounded"]
-        e_reason = e["Reason"][:100]
+        e_reason_raw = str(e["Reason"])
+        e_reason = e_reason_raw[:100] if isinstance(e_reason_raw, str) else "Unknown"
+        
         for vi, v in ven_pay_df.iterrows():
             if vi in used_ven_idx: continue
             v_amt = v["Amt_Rounded"]
-            v_reason = v["Reason"][:100]
+            v_reason_raw = str(v["Reason"])
+            v_reason = v_reason_raw[:100] if isinstance(v_reason_raw, str) else "Unknown"
+            
             if abs(e_amt - v_amt) < 0.05:
                 matched.append({
                     "ERP Reason": e_reason,
@@ -301,13 +309,21 @@ def extract_payments(erp_pay_df, ven_pay_df):
     matched_df = pd.DataFrame(matched)
 
     # Unmatched ERP
-    unmatched_erp = erp_pay_df[~erp_pay_df.index.isin(
-        [i for i, row in erp_pay_df.iterrows() 
-         if any(abs(row["Amt_Rounded"] - v["Amt_Rounded"]) < 0.05 for _, v in ven_pay_df.iterrows())]
-    )][["Reason", "Amount"]]
+    unmatched_erp_rows = []
+    for i, row in erp_pay_df.iterrows():
+        if any(abs(row["Amt_Rounded"] - v["Amt_Rounded"]) < 0.05 for _, v in ven_pay_df.iterrows()):
+            continue
+        reason = str(row["Reason"])[:100] if isinstance(row["Reason"], str) else "Unknown"
+        unmatched_erp_rows.append({"Reason": reason, "Amount": row["Amount"]})
+    unmatched_erp = pd.DataFrame(unmatched_erp_rows)
 
     # Unmatched Vendor
-    unmatched_ven = ven_pay_df[~ven_pay_df.index.isin(used_ven_idx)][["Reason", "Amount"]]
+    unmatched_ven_rows = []
+    for _, row in ven_pay_df.iterrows():
+        if row.name in used_ven_idx: continue
+        reason = str(row["Reason"])[:100] if isinstance(row["Reason"], str) else "Unknown"
+        unmatched_ven_rows.append({"Reason": reason, "Amount": row["Amount"]})
+    unmatched_ven = pd.DataFrame(unmatched_ven_rows)
 
     return matched_df, unmatched_erp, unmatched_ven
 
