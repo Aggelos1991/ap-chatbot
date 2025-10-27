@@ -10,7 +10,7 @@ from openai import OpenAI
 # CONFIG
 # ==========================
 st.set_page_config(page_title="Vendor Statement Extractor", layout="wide")
-st.title("Vendor Statement → Excel (Spanish PDFs)")
+st.title("Vendor Statement → Excel (Spanish, English, Greek PDFs)")
 
 API_KEY = os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY")
 if not API_KEY:
@@ -35,74 +35,120 @@ def clean_text(text):
 
 def extract_with_llm(raw_text):
     prompt = f"""
-    Extract every invoice line from the Spanish vendor statement.
+    Extract every invoice line from the vendor statement.
     Return **ONLY** a JSON array of objects with these exact keys:
     - Invoice_Number (string)
-    - Date          (string, DD/MM/YYYY or YYYY-MM-DD)
-    - Description   (string)
-    - Debit         (number, 0 if empty)
-    - Credit        (number, 0 if empty)
-    - Balance       (number, 0 if empty)
+    - Date (string, DD/MM/YYYY or YYYY-MM-DD)
+    - Description (string)
+    - Debit (number, 0 if empty)
+    - Credit (number, 0 if empty)
+    - Balance (number, 0 if empty)
 
-    Text (max 12 000 chars):
+    Text (max 12,000 chars):
     \"\"\"{raw_text[:12000]}\"\"\"
     """
-
     resp = client.chat.completions.create(
         model=MODEL,
         messages=[
             {"role": "system", "content": "Return ONLY valid JSON. No markdown, no explanations."},
-            {"role": "user",   "content": prompt}
+            {"role": "user", "content": prompt}
         ],
         temperature=0,
         max_tokens=1500
     )
     json_str = resp.choices[0].message.content.strip()
 
-    # strip possible markdown
+    # Strip markdown if present
     if "```" in json_str:
-        json_str = json_str.split("```")[1].replace("json", "", 1).strip()
+        parts = json_str.split("```")
+        json_str = parts[1] if len(parts) > 1 else parts[0]
+        if json_str.lower().startswith("json"):
+            json_str = json_str[4:].strip()
 
     return json.loads(json_str)
 
 def to_excel_bytes(records):
     output = BytesIO()
-    pd.DataFrame(records).to_excel(output, index=False)
+    pd.DataFrame(records).to_excel(output, index=False, engine='openpyxl')
     output.seek(0)
     return output
 
 # ==========================
 # UI
 # ==========================
-uploaded = st.file_uploader("Upload PDF", type="pdf")
+uploaded = st.file_uploader("Upload Vendor Statement (PDF)", type="pdf")
 
 if uploaded:
-    with st.spinner("Reading PDF..."):
+    with st.spinner("Extracting text from PDF..."):
         text = clean_text(extract_text_from_pdf(uploaded))
 
-    st.text_area("Text preview", text[:2000], height=150)
+    st.text_area("Text Preview", text[:2000], height=150, disabled=True)
 
-    if st.button("Extract to Excel"):
-        with st.spinner("Calling GPT..."):
-            data = extract_with_llm(text)
+    if st.button("Extract to Excel", type="primary"):
+        with st.spinner("Analyzing with GPT..."):
+            try:
+                data = extract_with_llm(text)
+            except Exception as e:
+                st.error(f"LLM failed: {e}")
+                st.stop()
 
-        # 1. Show raw JSON (exactly what you loved)
+        # =============================================
+        # SUPERIOR LOGIC: Multi-Language + Smart Fix
+        # =============================================
+        PAYMENT_KEYWORDS = {
+            # Spanish
+            "cobro", "pago", "abono", "ingreso", "recibido", "entrada", "pago recibido",
+            # English
+            "payment", "receipt", "received", "credit", "deposit", "credited",
+            # Greek
+            "πληρωμή", "πληρωμη", "είσπραξη", "εισπραξη", "κατάθεση", "καταθεση",
+            "πίστωση", "πιστωση", "πιστωση", "εισπράχθηκε", "καταβλήθηκε"
+        }
+        IGNORE_KEYWORDS = {
+            # Spanish / English
+            "retención", "retencion", "withholding", "retencion",
+            # Greek
+            "παρακράτηση", "παρακρατηση", "παρακρατήθηκε"
+        }
+
+        cleaned_data = []
+        for row in data:
+            desc = str(row.get("Description", "")).lower()
+
+            # 1. Ignore withholdings
+            if any(k in desc for k in IGNORE_KEYWORDS):
+                continue
+
+            # 2. Force payments to Credit
+            if any(k in desc for k in PAYMENT_KEYWORDS):
+                row["Credit"] = float(row.get("Debit", 0) or row.get("Credit", 0))
+                row["Debit"] = 0
+
+            cleaned_data.append(row)
+
+        data = cleaned_data
+        # =============================================
+
+        # 1. Show Raw JSON
         st.subheader("Raw JSON from LLM")
         st.json(data, expanded=False)
 
-        # 2. Show table
+        # 2. Show Clean Table
         df = pd.DataFrame(data)
-        for c in ["Debit", "Credit", "Balance"]:
-            if c in df.columns:
-                df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
+        for col in ["Debit", "Credit", "Balance"]:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
 
         st.subheader("Extracted Table")
         st.dataframe(df, use_container_width=True)
 
-        # 3. Download
+        # 3. Download Excel
+        excel_data = to_excel_bytes(data)
         st.download_button(
-            "Download Excel",
-            data=to_excel_bytes(data),
-            file_name="statement.xlsx",
+            label="Download Excel File",
+            data=excel_data,
+            file_name="vendor_statement_extracted.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+
+        st.success("Done! JSON → Table → Excel")
