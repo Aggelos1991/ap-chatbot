@@ -2,20 +2,22 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import base64
-import openai
+import io
+import os
 import pdfplumber
 import openpyxl
-import io
-
-# ==========================
-# CONFIGURATION
-# ==========================
-import os
 from openai import OpenAI
+from dotenv import load_dotenv  # 👈 add this line
 
+# ==========================
+# LOAD ENVIRONMENT VARIABLES
+# ==========================
+load_dotenv()  # 👈 this loads .env from your directory
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-
+# ==========================
+# INIT APP
+# ==========================
 app = FastAPI()
 
 # ==========================
@@ -67,10 +69,12 @@ async def analyze(payload: FilePayload):
     """
 
     try:
-        response = openai.ChatCompletion.create(
+        # Use the official client (safer and future-proof)
+        response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}]
         )
+
         result = response.choices[0].message.content.strip().upper()
 
         if "ANDALUSIA" in result:
