@@ -460,7 +460,7 @@ if uploaded_erp and uploaded_vendor:
         with c6:
             st.markdown('<div class="metric-container missing-vendor">', unsafe_allow_html=True)
             st.metric("Missing in Vendor", len(final_ven_miss))
-            st.markdown(f"**Total:** {final_ven_miss['Amount'].sum():,.2f}", unsafe_allowجن_html=True)
+            st.markdown(f"**Total:** {final_ven_miss['Amount'].sum():,.2f}", unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
         with c7:
             st.markdown('<div class="metric-container payment-match">', unsafe_allow_html=True)
