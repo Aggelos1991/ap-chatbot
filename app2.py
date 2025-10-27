@@ -164,12 +164,11 @@ def normalize_columns(df, tag):
         if c not in out.columns:
             out[c] = 0.0
 
-    # ---- GUARANTEE date ----
+       # ---- GUARANTEE date (NO GUESSING) ----
     if f"date_{tag}" not in out.columns:
-        if len(out.columns) > 1:
-            out.rename(columns={out.columns[1]: f"date_{tag}"}, inplace=True)
-        else:
-            out[f"date_{tag}"] = ""
+        # DO NOT rename random column!
+        out[f"date_{tag}"] = ""  # Just add empty date
+        st.warning(f"Warning: No date column found in {tag.upper()} file. Using empty dates.")
 
     # ---- NORMALIZE DATE ----
     if f"date_{tag}" in out.columns:
