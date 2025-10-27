@@ -147,7 +147,7 @@ def normalize_columns(df, tag):
     rename_map = {}
     cols_lower = {c: str(c).strip().lower() for c in df.columns}
 
-      # ---- SMART INVOICE DETECTION FIX ----
+    # ---- INVOICE: Search ANY column for invoice keywords ----
     invoice_matched = False
     for col, low in cols_lower.items():
         if any(a in low for a in mapping["invoice"]):
@@ -155,22 +155,11 @@ def normalize_columns(df, tag):
             invoice_matched = True
             break
 
+    # If NO invoice column found, create a dummy one
     if not invoice_matched:
-        # try "factura" or "code" explicitly if not found
-        for alt in df.columns:
-            low = str(alt).lower()
-            if any(k in low for k in ["factura", "code", "document"]):
-                rename_map[alt] = f"invoice_{tag}"
-                invoice_matched = True
-                break
+        df[f"invoice_{tag}"] = ""
 
-    if not invoice_matched:
-        if len(df.columns) > 0:
-            df.rename(columns={df.columns[0]: f"invoice_{tag}"}, inplace=True)
-        else:
-            df[f"invoice_{tag}"] = ""
-
-    # ---- OTHER COLUMNS ----
+    # ---- OTHER COLUMNS (skip invoice) ----
     for key, aliases in mapping.items():
         if key == "invoice": continue
         for col, low in cols_lower.items():
@@ -186,13 +175,19 @@ def normalize_columns(df, tag):
         if c not in out.columns:
             out[c] = 0.0
 
-    # ---- GUARANTEE date ----
-    if f"date_{tag}" not in out.columns:
-        # try second column, otherwise empty
-        if len(out.columns) > 1:
-            out.rename(columns={out.columns[1]: f"date_{tag}"}, inplace=True)
-        else:
-            out[f"date_{tag}"] = ""
+    # ---- GUARANTEE date: search for date keywords ----
+    date_matched = False
+    for col, low in cols_lower.items():
+        if col in rename_map: continue
+        if any(a in low for a in mapping["date"]):
+            rename_map[col] = f"date_{tag}"
+            date_matched = True
+            break
+
+    if not date_matched:
+        out[f"date_{tag}"] = ""
+
+    out = out.rename(columns=rename_map)
 
     # ---- NORMALIZE DATE ----
     if f"date_{tag}" in out.columns:
