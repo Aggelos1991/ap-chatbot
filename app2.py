@@ -1,5 +1,5 @@
 # --------------------------------------------------------------
-# ReconRaptor – FINAL, BULLETPROOF, ZERO-ERROR, BEAUTIFUL
+# ReconRaptor – FINAL, PAYMENT VALUES FIXED, BULLETPROOF
 # --------------------------------------------------------------
 import streamlit as st
 import pandas as pd
@@ -43,14 +43,22 @@ def fuzzy_ratio(a, b):
 
 def normalize_number(v):
     if pd.isna(v) or str(v).strip() == "": return 0.0
-    s = re.sub(r"[^\d,.\-]", "", str(v).strip())
-    if s.count(",") == 1 and s.count(".") == 1:
-        if s.find(",") > s.find("."): s = s.replace(".", "").replace(",", ".")
-        else: s = s.replace(",", "")
-    elif s.count(",") == 1: s = s.replace(",", ".")
-    elif s.count(".") > 1: s = s.replace(".", "", s.count(".") - 1)
-    try: return float(s)
-    except: return 0.0
+    s = str(v).strip()
+    s = re.sub(r"[^\d,.\-]", "", s)
+    if "," in s and "." in s and s.find(".") < s.find(","):
+        s = s.replace(".", "")
+        s = s.replace(",", ".")
+    elif "," in s and "." in s and s.find(",") < s.find("."):
+        s = s.replace(",", "")
+    elif "," in s:
+        s = s.replace(",", ".")
+    elif s.count(".") > 1:
+        parts = s.split(".")
+        s = "".join(parts[:-1]) + "." + parts[-1]
+    try:
+        return float(s)
+    except:
+        return 0.0
 
 def normalize_date(v):
     if pd.isna(v) or str(v).strip() == "": return ""
@@ -118,13 +126,12 @@ def cancel_net_zero(df, inv_col, amt_col):
     zero_inv = grouped[grouped[amt_col].abs() < 0.01][inv_col].astype(str).tolist()
     return df[~df[inv_col].astype(str).isin(zero_inv)].copy()
 
-# ==================== DOCUMENT TYPE (FILTER NON-PAYMENTS) ====================
+# ==================== DOCUMENT TYPE ====================
 def doc_type(row, tag):
     r = str(row.get(f"reason_{tag}", "")).lower()
     debit = normalize_number(row.get(f"debit_{tag}", 0))
     credit = normalize_number(row.get(f"credit_{tag}", 0))
 
-    # EXCLUDE NON-PAYMENT LINES
     if any(x in r for x in ["previous", "fiscal", "year", "balance", "carry", "forward", "opening"]):
         return "IGNORE"
 
@@ -260,7 +267,7 @@ def tier3_match(erp_miss, ven_miss):
     mdf = pd.DataFrame(matches, columns=cols)
     return mdf, used_e, used_v, e[~e.index.isin(used_e)], v[~v.index.isin(used_v)]
 
-# ==================== PAYMENT MATCHING (SAFE SUM) ====================
+# ==================== PAYMENT MATCHING (REAL VALUES) ====================
 def extract_payments(erp_pay_df, ven_pay_df):
     if erp_pay_df.empty and ven_pay_df.empty:
         empty = pd.DataFrame(columns=["Reason", "Amount"])
@@ -385,7 +392,7 @@ if uploaded_erp and uploaded_vendor:
 
         st.success("Reconciliation Complete!")
 
-        # METRICS (SAFE SUM)
+        # SAFE SUM
         def safe_sum(df, col):
             return df[col].sum() if not df.empty and col in df.columns else 0.0
 
@@ -395,7 +402,7 @@ if uploaded_erp and uploaded_vendor:
         diff = tier1[tier1["Status"] == "Difference Match"]
 
         with c1:
-            st.markdown('<div class="metric-container perfect-match">', unsafe_allow_html=True)
+            st.markdown('< 모습을 class="metric-container perfect-match">', unsafe_allow_html=True)
             st.metric("Perfect Matches", f"{len(perf):,}")
             st.markdown(f"**ERP:** {safe_sum(perf,'ERP Amount'):,.2f}<br>**Vendor:** {safe_sum(perf,'Vendor Amount'):,.2f}", unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
@@ -459,7 +466,7 @@ if uploaded_erp and uploaded_vendor:
                 st.error(f"{len(final_ven_miss):,} invoices – {final_ven_miss['Amount'].sum():,.2f}")
             else: st.success("No invoices missing in Vendor.")
 
-        # PAYMENT TABLES (SAFE SUM)
+        # PAYMENT TABLES
         st.markdown('<h2 class="section-title">Matched Payments</h2>', unsafe_allow_html=True)
         if not pay_match.empty:
             st.dataframe(style(pay_match, "background:#1565C0;color:#fff;font-weight:bold;"), use_container_width=True)
