@@ -402,7 +402,6 @@ if uploaded_erp and uploaded_vendor:
         diff = tier1[tier1["Status"] == "Difference Match"]
 
         with c1:
-            st.markdown('< 모습을 class="metric-container perfect-match">', unsafe_allow_html=True)
             st.metric("Perfect Matches", f"{len(perf):,}")
             st.markdown(f"**ERP:** {safe_sum(perf,'ERP Amount'):,.2f}<br>**Vendor:** {safe_sum(perf,'Vendor Amount'):,.2f}", unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
