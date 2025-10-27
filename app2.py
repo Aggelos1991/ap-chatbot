@@ -1,5 +1,5 @@
 # --------------------------------------------------------------
-# ReconRaptor – Vendor Reconciliation (FINAL + ABS MATCH + CN PARENTHESIS)
+# ReconRaptor – Vendor Reconciliation (FINAL + TIER-1 EXACT MATCH FIX)
 # --------------------------------------------------------------
 import streamlit as st
 import pandas as pd
@@ -70,9 +70,9 @@ def normalize_date(v):
         "%m/%d/%y", "%m-%d-%y",
         "%Y.%m.%d",
     ]
-    for format_str in formats:
+    for fmt in formats:
         try:
-            d = pd.to_datetime(s, format=format_str, errors="coerce")
+            d = pd.to_datetime(s, format=fmt, errors="coerce")
             if not pd.isna(d):
                 return d.strftime("%Y-%m-%d")
         except:
@@ -170,7 +170,7 @@ def normalize_columns(df, tag):
 def style(df, css):
     return df.style.apply(lambda _: [css] * len(_), axis=1)
 
-# ==================== MATCHING (ABS + CN PARENTHESIS) ====================
+# ==================== MATCHING (TIER-1: NORMALIZED EXACT MATCH) ====================
 def match_invoices(erp_df, ven_df):
     matched = []
     used_vendor = set()
@@ -197,11 +197,10 @@ def match_invoices(erp_df, ven_df):
     ven_df["__amt"] = ven_df.apply(lambda r: 
         normalize_number(r.get("debit_ven",0)) - normalize_number(r.get("credit_ven",0)), axis=1)
 
-    # Filter out payments
     erp_use = erp_df[erp_df["__type"] != "IGNORE"].copy()
     ven_use = ven_df[ven_df["__type"] != "IGNORE"].copy()
 
-    # === NET INVOICES + CREDIT NOTES PER INVOICE NUMBER ===
+    # === NET INVOICES + CREDIT NOTES ===
     def net_invoices(df, inv_col):
         out = []
         for inv, g in df.groupby(inv_col, dropna=False):
@@ -222,55 +221,67 @@ def match_invoices(erp_df, ven_df):
     erp_use = net_invoices(erp_use, "invoice_erp")
     ven_use = net_invoices(ven_use, "invoice_ven")
 
-    # === TIER-1: EXACT MATCH (ABS VALUES) ===
+    # === NORMALIZE INVOICE FOR MATCHING (CASE/SPACE INSENSITIVE) ===
+    def normalize_invoice(v):
+        return re.sub(r'\s+', '', str(v)).strip().upper()
+
+    # === TIER-1: EXACT MATCH (NORMALIZED INVOICE + EXACT AMOUNT) ===
     for e_idx, e in erp_use.iterrows():
         e_inv_raw = str(e.get("invoice_erp","")).strip()
-        e_inv = f"({e_inv_raw})" if e["__type"] == "CN" else e_inv_raw
-        e_amt = abs(round(float(e["__amt"]),2))
+        e_inv_norm = normalize_invoice(e_inv_raw)
+        e_inv_display = f"({e_inv_raw})" if e["__type"] == "CN" else e_inv_raw
+        e_amt = abs(round(float(e["__amt"]), 2))
         e_typ = e["__type"]
+
         for v_idx, v in ven_use.iterrows():
             if v_idx in used_vendor: continue
             v_inv_raw = str(v.get("invoice_ven","")).strip()
-            v_inv = f"({v_inv_raw})" if v["__type"] == "CN" else v_inv_raw
-            v_amt = abs(round(float(v["__amt"]),2))
+            v_inv_norm = normalize_invoice(v_inv_raw)
+            v_inv_display = f"({v_inv_raw})" if v["__type"] == "CN" else v_inv_raw
+            v_amt = abs(round(float(v["__amt"]), 2))
             v_typ = v["__type"]
-            if e_typ != v_typ or e_inv_raw != v_inv_raw: continue
-            diff = abs(e_amt - v_amt)
-            status = "Perfect Match" if diff <= 0.01 else "Difference Match" if diff < 1.0 else None
-            if status:
-                matched.append({
-                    "ERP Invoice": e_inv,
-                    "Vendor Invoice": v_inv,
-                    "ERP Amount": e_amt,
-                    "Vendor Amount": v_amt,
-                    "Difference": diff,
-                    "Status": status
-                })
-                used_vendor.add(v_idx)
-                break
+
+            # EXACT MATCH: normalized invoice + type + amount
+            if e_typ != v_typ or e_inv_norm != v_inv_norm:
+                continue
+            if abs(e_amt - v_amt) > 0.01:
+                continue
+
+            matched.append({
+                "ERP Invoice": e_inv_display,
+                "Vendor Invoice": v_inv_display,
+                "ERP Amount": e_amt,
+                "Vendor Amount": v_amt,
+                "Difference": 0.0,
+                "Status": "Perfect Match"
+            })
+            used_vendor.add(v_idx)
+            break
 
     # SAFE RETURN
     cols = ["ERP Invoice","Vendor Invoice","ERP Amount","Vendor Amount","Difference","Status"]
     matched_df = pd.DataFrame(matched, columns=cols) if matched else pd.DataFrame(columns=cols)
 
-    matched_erp_raw = set(m["ERP Invoice"].strip("()") for m in matched if m["ERP Invoice"])
-    matched_ven_raw = set(m["Vendor Invoice"].strip("()") for m in matched if m["Vendor Invoice"])
+    matched_erp_norm = {normalize_invoice(m["ERP Invoice"]) for m in matched}
+    matched_ven_norm = {normalize_invoice(m["Vendor Invoice"]) for m in matched}
 
     date_cols_erp = ["date_erp"] if "date_erp" in erp_use.columns else []
     date_cols_ven = ["date_ven"] if "date_ven" in ven_use.columns else []
 
-    miss_erp = erp_use[~erp_use["invoice_erp"].isin(matched_ven_raw)].copy()
-    miss_ven = ven_use[~ven_use["invoice_ven"].isin(matched_erp_raw)].copy()
+    miss_erp = erp_use[~erp_use["invoice_erp"].map(normalize_invoice).isin(matched_ven_norm)].copy()
+    miss_ven = ven_use[~ven_use["invoice_ven"].map(normalize_invoice).isin(matched_erp_norm)].copy()
 
-    miss_erp["Display_Invoice"] = miss_erp.apply(lambda r: f"({r['invoice_erp']})" if r["__type"] == "CN" else r["invoice_erp"], axis=1)
-    miss_ven["Display_Invoice"] = miss_ven.apply(lambda r: f"({r['invoice_ven']})" if r["__type"] == "CN" else r["invoice_ven"], axis=1)
+    miss_erp["Invoice"] = miss_erp.apply(
+        lambda r: f"({r['invoice_erp']})" if r["__type"] == "CN" else r["invoice_erp"], axis=1)
+    miss_ven["Invoice"] = miss_ven.apply(
+        lambda r: f"({r['invoice_ven']})" if r["__type"] == "CN" else r["invoice_ven"], axis=1)
 
-    miss_erp = miss_erp[["Display_Invoice", "__amt"] + date_cols_erp]
-    miss_erp = miss_erp.rename(columns={"Display_Invoice":"Invoice","__amt":"Amount","date_erp":"Date"})
+    miss_erp = miss_erp[["Invoice", "__amt"] + date_cols_erp]
+    miss_erp = miss_erp.rename(columns={"__amt": "Amount", "date_erp": "Date"})
     if "Date" not in miss_erp.columns: miss_erp["Date"] = ""
 
-    miss_ven = miss_ven[["Display_Invoice", "__amt"] + date_cols_ven]
-    miss_ven = miss_ven.rename(columns={"Display_Invoice":"Invoice","__amt":"Amount","date_ven":"Date"})
+    miss_ven = miss_ven[["Invoice", "__amt"] + date_cols_ven]
+    miss_ven = miss_ven.rename(columns={"__amt": "Amount", "date_ven": "Date"})
     if "Date" not in miss_ven.columns: miss_ven["Date"] = ""
 
     miss_erp = miss_erp[["Invoice","Amount","Date"]].reset_index(drop=True)
