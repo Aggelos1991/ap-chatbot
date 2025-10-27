@@ -1,6 +1,5 @@
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, PlainTextResponse
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import base64
 import io
@@ -11,28 +10,17 @@ from openai import OpenAI
 from dotenv import load_dotenv
 
 # ==========================
-# ENV + OPENAI CLIENT
+# SETUP
 # ==========================
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-# ==========================
-# APP INITIALIZATION
-# ==========================
 app = FastAPI()
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 # ==========================
-# FIX 411: CHUNKED REQUESTS
+# MIDDLEWARE: handle chunked transfer (Power Automate)
 # ==========================
 @app.middleware("http")
-async def fix_chunked(request: Request, call_next):
-    # Power Automate uses Transfer-Encoding: chunked (no Content-Length)
+async def allow_chunked_requests(request: Request, call_next):
     if request.headers.get("transfer-encoding", "").lower() == "chunked":
         body = await request.body()
         request._body = body
@@ -47,23 +35,22 @@ class FilePayload(BaseModel):
     content: str  # base64 content
 
 # ==========================
-# FILE TEXT EXTRACTOR
+# HELPER
 # ==========================
 def extract_text_from_file(file_bytes: bytes, filename: str) -> str:
-    filename = filename.lower()
     text = ""
+    filename = filename.lower()
     try:
         if filename.endswith(".pdf"):
             with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
-                for page in pdf.pages[:5]:
+                for page in pdf.pages[:3]:
                     text += page.extract_text() or ""
         elif filename.endswith(".xlsx"):
             wb = openpyxl.load_workbook(io.BytesIO(file_bytes), read_only=True)
             for sheet in wb.sheetnames:
                 ws = wb[sheet]
                 for row in ws.iter_rows(values_only=True):
-                    row_text = " ".join([str(cell) for cell in row if cell])
-                    text += row_text + "\n"
+                    text += " ".join([str(cell) for cell in row if cell]) + "\n"
         else:
             text = file_bytes.decode(errors="ignore")
     except Exception as e:
@@ -76,19 +63,21 @@ def extract_text_from_file(file_bytes: bytes, filename: str) -> str:
 @app.post("/analyze")
 async def analyze(request: Request):
     try:
-        # ✅ Manually read body to guarantee chunked payload is parsed
-        body = await request.body()
+        # 🔍 Debug log
+        print("🔵 Received POST /analyze")
 
-        # Decode JSON manually instead of relying on Pydantic
-        import json
-        data = json.loads(body.decode("utf-8"))
+        data = await request.json()
+        filename = data.get("filename", "unknown")
+        content_b64 = data.get("content", "")
 
-        filename = data.get("filename", "unknown.txt")
-        content = data.get("content", "")
-        file_bytes = base64.b64decode(content)
+        if not content_b64:
+            print("⚠️ No content provided")
+            return JSONResponse({"keyword": "OTHER", "error": "Empty content"})
 
+        file_bytes = base64.b64decode(content_b64)
         text = extract_text_from_file(file_bytes, filename)
 
+        # GPT classification
         prompt = f"""
         You are a classifier. Identify which of these appears in the text:
         ANDALUSIA, PORTO PETRO, IKOS SPANISH HOTEL MANAGEMENT, or OTHER.
@@ -109,26 +98,14 @@ async def analyze(request: Request):
             keyword = "ANDALUSIA"
         elif "PORTO" in result:
             keyword = "PORTO PETRO"
-        elif "SPANISH" in result or "IKOS SPANISH HOTEL" in result:
+        elif "SPANISH" in result:
             keyword = "IKOS SPANISH HOTEL MANAGEMENT"
         else:
             keyword = "OTHER"
 
+        print(f"✅ Classification result: {keyword}")
         return JSONResponse({"keyword": keyword})
 
     except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
-
-# ==========================
-# ROOT ENDPOINT
-# ==========================
-@app.get("/")
-def home():
-    return PlainTextResponse("✅ FastAPI Analyzer running — ready for Power Automate uploads.")
-
-# ==========================
-# LOCAL ENTRYPOINT
-# ==========================
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
+        print(f"❌ Error: {e}")
+        return JSONResponse({"keyword": "OTHER", "error": str(e)})
