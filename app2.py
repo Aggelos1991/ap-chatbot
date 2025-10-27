@@ -14,7 +14,6 @@ from difflib import SequenceMatcher
 # ==================== PAGE CONFIG & CSS ======================
 st.set_page_config(page_title="ReconRaptor — Vendor Reconciliation", layout="wide")
 st.markdown(
-    """
 <style>
 &nbsp;&nbsp;&nbsp;&nbsp;.big-title {font-size:3rem !important;font-weight:700;text-align:center;
 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;background:linear-gradient(90deg,#1E88E5,#42A5F5);-webkit-background-clip:text;
