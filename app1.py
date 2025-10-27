@@ -11,7 +11,7 @@ from openai import OpenAI
 # CONFIG
 # ==========================
 st.set_page_config(page_title="ABONO = CREDIT", layout="wide")
-st.title("Vendor Statement → Excel (ABONO = CREDIT)")
+st.title("Vendor Statement → Excel (ABONO = CREDIT + REASON COLUMN)")
 
 API_KEY = os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY")
 if not API_KEY:
@@ -59,6 +59,7 @@ def extract_with_llm(raw_text):
     )
     json_str = resp.choices[0].message.content.strip()
 
+    # Cleanup JSON if model added markdown
     if "```" in json_str:
         parts = json_str.split("```")
         json_str = parts[1] if len(parts) > 1 else parts[0]
@@ -84,66 +85,89 @@ if uploaded:
 
     st.text_area("Text Preview", text[:2000], height=150, disabled=True)
 
-    if st.button("EXTRACT → ABONO = CREDIT", type="primary"):
+    if st.button("EXTRACT → ABONO = CREDIT + REASON", type="primary"):
         with st.spinner("GPT is working..."):
             data = extract_with_llm(text)
 
         # =============================================
-        # ABONO = CREDIT. PAGO = CREDIT. NO EXCEPTIONS.
+        # DEFINE MULTILINGUAL KEYWORDS
         # =============================================
         CREDIT_TRIGGERS = [
-            "abono", "pago", "cobro", "transference", "transferencia",
-            "ingreso", "recibido", "pago recibido", "cn", "nota de crédito",
-            "credit note", "credit", "credited", "payment", "receipt",
-            "πληρωμή", "πληρωμη", "είσπραξη", "εισπραξη", "κατάθεση",
-            "μεταφορά", "πιστωτικό", "επιστροφή"
+            "abono", "pago", "cobro", "transference", "transferencia", "ingreso",
+            "recibido", "pago recibido", "cn", "nota de crédito", "credit note",
+            "credit", "credited", "receipt", "transfer", "remittance",
+            "πληρωμή", "πληρωμη", "είσπραξη", "εισπραξη",
+            "κατάθεση", "μεταφορά", "πιστωτικό", "επιστροφή", "έμβασμα", "εμβασμα"
+        ]
+
+        PAYMENT_TRIGGERS = [
+            "pago", "transferencia", "transference", "transfer", "remittance", "ingreso",
+            "έμβασμα", "εμβασμα", "πληρωμή", "πληρωμη", "deposit", "payment", "bank"
+        ]
+
+        CREDIT_NOTE_TRIGGERS = [
+            "nota de crédito", "nota credito", "credit note", "credit", "cn",
+            "πιστωτικό", "πιστωτικο", "creditmemo", "refund", "creditmemo"
         ]
 
         IGNORE_TRIGGERS = [
-            "retención", "retencion", "withholding",
-            "παρακράτηση", "παρακρατηση"
+            "retención", "retencion", "withholding", "παρακράτηση", "παρακρατηση"
         ]
 
         final_data = []
         for row in data:
             desc = str(row.get("Description", "")).lower()
+            debit = float(row.get("Debit", 0) or 0)
+            credit = float(row.get("Credit", 0) or 0)
+            reason = "INVOICE"  # default
 
-            # 1. ABONO / PAGO / etc → FORCE CREDIT
-            if any(trigger in desc for trigger in CREDIT_TRIGGERS):
-                row["Credit"] = float(row.get("Debit", 0) or row.get("Credit", 0))
-                row["Debit"] = 0
-            else:
-                row["Debit"] = float(row.get("Debit", 0))
-                row["Credit"] = float(row.get("Credit", 0))
-
-            # 2. DELETE RETENCIÓN
+            # IGNORE RETENTIONS
             if any(ignore in desc for ignore in IGNORE_TRIGGERS):
                 continue
 
+            # DETECT CREDIT / PAYMENT / CREDIT NOTE
+            if any(k in desc for k in CREDIT_NOTE_TRIGGERS):
+                row["Credit"] = credit if credit != 0 else debit
+                row["Debit"] = 0
+                reason = "CREDIT NOTE"
+
+            elif any(k in desc for k in PAYMENT_TRIGGERS):
+                row["Credit"] = credit if credit != 0 else debit
+                row["Debit"] = 0
+                reason = "PAYMENT"
+
+            elif any(k in desc for k in CREDIT_TRIGGERS):
+                row["Credit"] = credit if credit != 0 else debit
+                row["Debit"] = 0
+                reason = "PAYMENT"
+
+            else:
+                row["Debit"] = debit
+                row["Credit"] = credit
+                reason = "INVOICE"
+
+            row["Reason"] = reason
             final_data.append(row)
 
-        data = final_data
         # =============================================
+        # SHOW RESULTS
+        # =============================================
+        st.subheader("JSON Output")
+        st.json(final_data, expanded=False)
 
-        # Show JSON
-        st.subheader("Raw JSON")
-        st.json(data, expanded=False)
-
-        # Show Table
-        df = pd.DataFrame(data)
+        df = pd.DataFrame(final_data)
         for col in ["Debit", "Credit", "Balance"]:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
 
-        st.subheader("ABONO = CREDIT → FINAL TABLE")
+        st.subheader("ABONO = CREDIT + REASON COLUMN")
         st.dataframe(df, use_container_width=True)
 
-        # Download
         st.download_button(
-            label="DOWNLOAD EXCEL – ABONO IS CREDIT",
-            data=to_excel_bytes(data),
-            file_name="ABONO_IS_CREDIT.xlsx",
+            label="DOWNLOAD EXCEL – ABONO IS CREDIT (with Reason)",
+            data=to_excel_bytes(final_data),
+            file_name="ABONO_IS_CREDIT_REASON.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
-        st.success("ABONO = CREDIT. PAGO = CREDIT. DONE.")
+        st.success("✅ ABONO = CREDIT. REASON COLUMN ADDED (Invoice / Payment / Credit Note).")
