@@ -1,5 +1,5 @@
 # --------------------------------------------------------------
-# ReconRaptor – FINAL, BULLETPROOF, ZERO-ERROR VERSION
+# ReconRaptor – FINAL, BEAUTIFUL, COLORED, TOTALED, BULLETPROOF
 # --------------------------------------------------------------
 import streamlit as st
 import pandas as pd
@@ -31,6 +31,7 @@ st.markdown("""
     .payment-match {background:#004D40;color:#fff;font-weight:bold;}
     .payment-erp {background:#1B5E20;color:#fff;font-weight:bold;}
     .payment-vendor {background:#880E4F;color:#fff;font-weight:bold;}
+    .total-row {background:#263238;color:#fff;font-weight:bold;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -111,6 +112,15 @@ def normalize_columns(df, tag):
 def style(df, css): 
     return df.style.apply(lambda _: [css]*len(_), axis=1)
 
+# ==================== ADD TOTAL ROW (FOR PAYMENTS) ====================
+def add_total_row(df, amount_cols, label="TOTAL"):
+    if df.empty or not amount_cols: return df
+    total_row = {col: "" for col in df.columns}
+    total_row["ERP Reason" if "ERP Reason" in df.columns else "Reason"] = label
+    for col in amount_cols:
+        total_row[col] = df[col].sum()
+    return pd.concat([df, pd.DataFrame([total_row])], ignore_index=True)
+
 # ==================== CANCEL NET-ZERO DUPLICATES ====================
 def cancel_net_zero(df, inv_col, amt_col):
     if df.empty: return df
@@ -143,7 +153,7 @@ def doc_type(row, tag):
         return "PAYMENT"
     return "UNKNOWN"
 
-# ==================== INVOICE MATCHING ====================
+# ==================== INVOICE MATCHING (UNCHANGED) ====================
 def match_invoices(erp_df, ven_df):
     matched = []
     used_vendor_indices = set()
@@ -217,7 +227,7 @@ def match_invoices(erp_df, ven_df):
 
     return tier1_df, miss_erp, miss_ven, erp_pay_full, ven_pay_full
 
-# ==================== TIERS 2 & 3 ====================
+# ==================== TIERS 2 & 3 (UNCHANGED) ====================
 def tier2_match(erp_miss, ven_miss):
     cols = ["ERP Invoice","Vendor Invoice","ERP Amount","Vendor Amount","Difference","Fuzzy Score","Match Type"]
     if erp_miss.empty or ven_miss.empty: 
@@ -256,9 +266,8 @@ def tier3_match(erp_miss, ven_miss):
     mdf = pd.DataFrame(matches, columns=cols)
     return mdf, used_e, used_v, e[~e.index.isin(used_e)], v[~v.index.isin(used_v)]
 
-# ==================== PAYMENT MATCHING (3 TABLES, 100% SAFE) ====================
+# ==================== PAYMENT MATCHING (3 TABLES, COLORED, TOTALED) ====================
 def extract_payments(erp_pay_df, ven_pay_df):
-    # Empty case
     if erp_pay_df.empty and ven_pay_df.empty:
         empty = pd.DataFrame(columns=["Reason", "Amount"])
         return pd.DataFrame(), empty, empty
@@ -266,18 +275,12 @@ def extract_payments(erp_pay_df, ven_pay_df):
     erp_pay_df = erp_pay_df.copy()
     ven_pay_df = ven_pay_df.copy()
 
-    # Compute amounts
-    erp_pay_df["Amount"] = erp_pay_df.apply(
-        lambda r: abs(normalize_number(r.get("debit_erp", 0)) - normalize_number(r.get("credit_erp", 0))), axis=1
-    )
-    ven_pay_df["Amount"] = ven_pay_df.apply(
-        lambda r: abs(normalize_number(r.get("debit_ven", 0)) - normalize_number(r.get("credit_ven", 0))), axis=1
-    )
+    erp_pay_df["Amount"] = erp_pay_df.apply(lambda r: abs(normalize_number(r.get("debit_erp", 0)) - normalize_number(r.get("credit_erp", 0))), axis=1)
+    ven_pay_df["Amount"] = ven_pay_df.apply(lambda r: abs(normalize_number(r.get("debit_ven", 0)) - normalize_number(r.get("credit_ven", 0))), axis=1)
 
     erp_pay_df["Amt_Rounded"] = erp_pay_df["Amount"].round(2)
     ven_pay_df["Amt_Rounded"] = ven_pay_df["Amount"].round(2)
 
-    # SAFELY CONVERT REASON TO STRING
     erp_pay_df["Reason"] = erp_pay_df.get("reason_erp", pd.Series(["Unknown"] * len(erp_pay_df))).fillna("Unknown").astype(str)
     ven_pay_df["Reason"] = ven_pay_df.get("reason_ven", pd.Series(["Unknown"] * len(ven_pay_df))).fillna("Unknown").astype(str)
 
@@ -307,6 +310,8 @@ def extract_payments(erp_pay_df, ven_pay_df):
                 break
 
     matched_df = pd.DataFrame(matched)
+    if not matched_df.empty:
+        matched_df = add_total_row(matched_df, ["ERP Amount", "Vendor Amount", "Difference"], "TOTAL")
 
     # Unmatched ERP
     unmatched_erp_rows = []
@@ -316,6 +321,8 @@ def extract_payments(erp_pay_df, ven_pay_df):
         reason = str(row["Reason"])[:100] if isinstance(row["Reason"], str) else "Unknown"
         unmatched_erp_rows.append({"Reason": reason, "Amount": row["Amount"]})
     unmatched_erp = pd.DataFrame(unmatched_erp_rows)
+    if not unmatched_erp.empty:
+        unmatched_erp = add_total_row(unmatched_erp, ["Amount"], "TOTAL")
 
     # Unmatched Vendor
     unmatched_ven_rows = []
@@ -324,10 +331,12 @@ def extract_payments(erp_pay_df, ven_pay_df):
         reason = str(row["Reason"])[:100] if isinstance(row["Reason"], str) else "Unknown"
         unmatched_ven_rows.append({"Reason": reason, "Amount": row["Amount"]})
     unmatched_ven = pd.DataFrame(unmatched_ven_rows)
+    if not unmatched_ven.empty:
+        unmatched_ven = add_total_row(unmatched_ven, ["Amount"], "TOTAL")
 
     return matched_df, unmatched_erp, unmatched_ven
 
-# ==================== EXCEL EXPORT ====================
+# ==================== EXCEL EXPORT (WITH TOTAL ROWS) ====================
 def export_excel(t1, t2, t3, miss_erp, miss_ven, pay_match, pay_erp, pay_ven):
     wb = Workbook()
     def hdr(ws, row, color):
@@ -367,16 +376,29 @@ def export_excel(t1, t2, t3, miss_erp, miss_ven, pay_match, pay_erp, pay_ven):
     if not pay_match.empty: 
         for r in dataframe_to_rows(pay_match, index=False, header=True): ws5.append(r)
         hdr(ws5, 1, "004D40")
+        # Highlight total row
+        total_row_idx = len(pay_match)
+        for cell in ws5[total_row_idx]:
+            cell.fill = PatternFill(start_color="263238", end_color="263238", fill_type="solid")
+            cell.font = Font(color="FFFFFF", bold=True)
 
     ws6 = wb.create_sheet("Payments ERP Unmatched")
     if not pay_erp.empty: 
         for r in dataframe_to_rows(pay_erp, index=False, header=True): ws6.append(r)
         hdr(ws6, 1, "1B5E20")
+        total_row_idx = len(pay_erp)
+        for cell in ws6[total_row_idx]:
+            cell.fill = PatternFill(start_color="263238", end_color="263238", fill_type="solid")
+            cell.font = Font(color="FFFFFF", bold=True)
 
     ws7 = wb.create_sheet("Payments Vendor Unmatched")
     if not pay_ven.empty: 
         for r in dataframe_to_rows(pay_ven, index=False, header=True): ws7.append(r)
         hdr(ws7, 1, "880E4F")
+        total_row_idx = len(pay_ven)
+        for cell in ws7[total_row_idx]:
+            cell.fill = PatternFill(start_color="263238", end_color="263238", fill_type="solid")
+            cell.font = Font(color="FFFFFF", bold=True)
 
     for ws in wb.worksheets:
         for col in ws.columns:
@@ -444,8 +466,8 @@ if uploaded_erp and uploaded_vendor:
             st.markdown('</div>', unsafe_allow_html=True)
         with c7:
             st.markdown('<div class="metric-container payment-match">', unsafe_allow_html=True)
-            st.metric("Matched Payments", len(pay_match))
-            st.markdown(f"**Total:** {pay_match['ERP Amount'].sum():,.2f}", unsafe_allow_html=True)
+            st.metric("Matched Payments", len(pay_match) - (1 if not pay_match.empty and pay_match.iloc[-1]["ERP Reason"] == "TOTAL" else 0))
+            st.markdown(f"**Total:** {pay_match['ERP Amount'].sum() if not pay_match.empty else 0:,.2f}", unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
 
         st.markdown("---")
@@ -477,7 +499,7 @@ if uploaded_erp and uploaded_vendor:
                 st.error(f"{len(final_ven_miss)} invoices in ERP but not in Vendor – {final_ven_miss['Amount'].sum():,.2f}")
             else: st.success("No invoices missing in Vendor.")
 
-        # PAYMENT TABLES
+        # PAYMENT TABLES WITH COLORS & TOTALS
         st.markdown('<h2 class="section-title">Matched Payments</h2>', unsafe_allow_html=True)
         if not pay_match.empty:
             st.dataframe(style(pay_match, "background:#004D40;color:#fff;font-weight:bold;"), use_container_width=True)
@@ -489,14 +511,14 @@ if uploaded_erp and uploaded_vendor:
             st.markdown('<h2 class="section-title">Unmatched ERP Payments</h2>', unsafe_allow_html=True)
             if not pay_erp_unmatched.empty:
                 st.dataframe(style(pay_erp_unmatched, "background:#1B5E20;color:#fff;font-weight:bold;"), use_container_width=True)
-                st.warning(f"{len(pay_erp_unmatched)} unmatched ERP payments – {pay_erp_unmatched['Amount'].sum():,.2f}")
+                st.warning(f"{len(pay_erp_unmatched) - 1 if not pay_erp_unmatched.empty and pay_erp_unmatched.iloc[-1]['Reason'] == 'TOTAL' else len(pay_erp_unmatched)} unmatched – {pay_erp_unmatched['Amount'].sum():,.2f}")
             else:
                 st.success("All ERP payments matched.")
         with col_p2:
             st.markdown('<h2 class="section-title">Unmatched Vendor Payments</h2>', unsafe_allow_html=True)
             if not pay_ven_unmatched.empty:
                 st.dataframe(style(pay_ven_unmatched, "background:#880E4F;color:#fff;font-weight:bold;"), use_container_width=True)
-                st.warning(f"{len(pay_ven_unmatched)} unmatched Vendor payments – {pay_ven_unmatched['Amount'].sum():,.2f}")
+                st.warning(f"{len(pay_ven_unmatched) - 1 if not pay_ven_unmatched.empty and pay_ven_unmatched.iloc[-1]['Reason'] == 'TOTAL' else len(pay_ven_unmatched)} unmatched – {pay_ven_unmatched['Amount'].sum():,.2f}")
             else:
                 st.success("All Vendor payments matched.")
 
