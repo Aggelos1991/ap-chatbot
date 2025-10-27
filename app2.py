@@ -1,5 +1,5 @@
 # --------------------------------------------------------------
-# ReconRaptor – FINAL, PAYMENT VALUES FIXED, BULLETPROOF
+# ReconRaptor – FINAL, PAYMENTS SHOW REAL VALUES
 # --------------------------------------------------------------
 import streamlit as st
 import pandas as pd
@@ -45,13 +45,16 @@ def normalize_number(v):
     if pd.isna(v) or str(v).strip() == "": return 0.0
     s = str(v).strip()
     s = re.sub(r"[^\d,.\-]", "", s)
+    # Handle 1.065,00 → 1065.00
     if "," in s and "." in s and s.find(".") < s.find(","):
-        s = s.replace(".", "")
-        s = s.replace(",", ".")
+        s = s.replace(".", "").replace(",", ".")
+    # Handle 1,065.00
     elif "," in s and "." in s and s.find(",") < s.find("."):
         s = s.replace(",", "")
+    # Single comma = decimal
     elif "," in s:
         s = s.replace(",", ".")
+    # Multiple dots → last is decimal
     elif s.count(".") > 1:
         parts = s.split(".")
         s = "".join(parts[:-1]) + "." + parts[-1]
@@ -82,12 +85,12 @@ def clean_invoice_code(v):
     s = re.sub(r"^0+", "", s)
     return s or "0"
 
-# ==================== NORMALIZE COLUMNS ====================
+# ==================== NORMALIZE COLUMNS (FIXED FOR Charg/Credit) ====================
 def normalize_columns(df, tag):
     mapping = {
-        "invoice": ["invoice","factura","document","nº","αρ.","παραστατικό","τιμολόγιο","no","fac","bill"],
+        "invoice": ["invoice","factura","document","nº","αρ.","παραστατικό","τιμολόγιο","no","fac","bill","code"],
         "credit": ["credit","haber","abono","πιστωτικό","crédito"],
-        "debit": ["debit","debe","importe","amount","ποσό","αξία","débito"],
+        "debit": ["debit","debe","importe","amount","ποσό","αξία","débito","charg"],
         "reason": ["reason","motivo","concepto","descripcion","αιτιολογία","περιγραφή","descripción"],
         "date": ["date","fecha","ημερομηνία","issue date","posting date","fecha emisión"]
     }
@@ -267,7 +270,7 @@ def tier3_match(erp_miss, ven_miss):
     mdf = pd.DataFrame(matches, columns=cols)
     return mdf, used_e, used_v, e[~e.index.isin(used_e)], v[~v.index.isin(used_v)]
 
-# ==================== PAYMENT MATCHING (REAL VALUES) ====================
+# ==================== PAYMENT MATCHING ====================
 def extract_payments(erp_pay_df, ven_pay_df):
     if erp_pay_df.empty and ven_pay_df.empty:
         empty = pd.DataFrame(columns=["Reason", "Amount"])
@@ -402,6 +405,7 @@ if uploaded_erp and uploaded_vendor:
         diff = tier1[tier1["Status"] == "Difference Match"]
 
         with c1:
+            st.markdown('<div class="metric-container perfect-match">', unsafe_allow_html=True)
             st.metric("Perfect Matches", f"{len(perf):,}")
             st.markdown(f"**ERP:** {safe_sum(perf,'ERP Amount'):,.2f}<br>**Vendor:** {safe_sum(perf,'Vendor Amount'):,.2f}", unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
@@ -500,4 +504,4 @@ if uploaded_erp and uploaded_vendor:
 
     except Exception as e:
         st.error(f"Error: {e}")
-        st.info("Check columns: **invoice**, **debit/credit**, **date**, **reason**")
+        st.info("Check columns: **invoice**, **Charg/Credit**, **date**, **reason**")
