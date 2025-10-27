@@ -1,5 +1,5 @@
 # --------------------------------------------------------------
-# ReconRaptor – FINAL, BLUE PAYMENTS, TOTALS INSIDE, CORRECT VALUES
+# ReconRaptor – FINAL, BULLETPROOF, CLEAN, PROFESSIONAL
 # --------------------------------------------------------------
 import streamlit as st
 import pandas as pd
@@ -31,12 +31,11 @@ st.markdown("""
     .payment-match {background:#1565C0;color:#fff;font-weight:bold;}
     .payment-erp {background:#1976D2;color:#fff;font-weight:bold;}
     .payment-vendor {background:#0D47A1;color:#fff;font-weight:bold;}
-    .total-row {background:#263238;color:#fff;font-weight:bold;}
 </style>
 """, unsafe_allow_html=True)
 
 st.markdown('<h1 class="big-title">ReconRaptor</h1>', unsafe_allow_html=True)
-st.markdown("<p style='text-align: center; font-size: 1.3rem; color: #555;'>Intelligent Vendor Invoice & Payment Reconciliation (ES/EN/GR)</p>", unsafe_allow_html=True)
+st.markdown("<p style='text-align: center; font-size: 1.3rem; color: #555;'>Intelligent Vendor Invoice & Payment Reconciliation</p>", unsafe_allow_html=True)
 
 # ====================== HELPERS ==========================
 def fuzzy_ratio(a, b): 
@@ -112,15 +111,6 @@ def normalize_columns(df, tag):
 def style(df, css): 
     return df.style.apply(lambda _: [css]*len(_), axis=1)
 
-# ==================== ADD TOTAL ROW (INSIDE TABLE) ====================
-def add_total_row(df, amount_cols, label="TOTAL"):
-    if df.empty or not amount_cols: return df
-    total_row = {col: "" for col in df.columns}
-    total_row["ERP Reason" if "ERP Reason" in df.columns else "Reason"] = label
-    for col in amount_cols:
-        total_row[col] = df[col].sum()
-    return pd.concat([df, pd.DataFrame([total_row])], ignore_index=True)
-
 # ==================== CANCEL NET-ZERO DUPLICATES ====================
 def cancel_net_zero(df, inv_col, amt_col):
     if df.empty: return df
@@ -128,11 +118,15 @@ def cancel_net_zero(df, inv_col, amt_col):
     zero_inv = grouped[grouped[amt_col].abs() < 0.01][inv_col].astype(str).tolist()
     return df[~df[inv_col].astype(str).isin(zero_inv)].copy()
 
-# ==================== DOCUMENT TYPE (AGGRESSIVE PAYMENT DETECTION) ====================
+# ==================== DOCUMENT TYPE (FILTER OUT NON-PAYMENTS) ====================
 def doc_type(row, tag):
     r = str(row.get(f"reason_{tag}", "")).lower()
     debit = normalize_number(row.get(f"debit_{tag}", 0))
     credit = normalize_number(row.get(f"credit_{tag}", 0))
+
+    # EXCLUDE NON-PAYMENT LINES
+    if any(x in r for x in ["previous", "fiscal", "year", "balance", "carry", "forward", "opening"]):
+        return "IGNORE"
 
     pay_keywords = [
         "cobro", "pago", "abono", "ingreso", "transferencia", "recibo", "rec", "pago de", "cobro de",
@@ -153,7 +147,7 @@ def doc_type(row, tag):
         return "PAYMENT"
     return "UNKNOWN"
 
-# ==================== INVOICE MATCHING (UNCHANGED) ====================
+# ==================== INVOICE MATCHING ====================
 def match_invoices(erp_df, ven_df):
     matched = []
     used_vendor_indices = set()
@@ -227,7 +221,7 @@ def match_invoices(erp_df, ven_df):
 
     return tier1_df, miss_erp, miss_ven, erp_pay_full, ven_pay_full
 
-# ==================== TIERS 2 & 3 (UNCHANGED) ====================
+# ==================== TIERS 2 & 3 ====================
 def tier2_match(erp_miss, ven_miss):
     cols = ["ERP Invoice","Vendor Invoice","ERP Amount","Vendor Amount","Difference","Fuzzy Score","Match Type"]
     if erp_miss.empty or ven_miss.empty: 
@@ -266,7 +260,7 @@ def tier3_match(erp_miss, ven_miss):
     mdf = pd.DataFrame(matches, columns=cols)
     return mdf, used_e, used_v, e[~e.index.isin(used_e)], v[~v.index.isin(used_v)]
 
-# ==================== PAYMENT MATCHING (BLUE, TOTALS INSIDE, CORRECT VALUES) ====================
+# ==================== PAYMENT MATCHING (REAL VALUES, TOTAL BELOW) ====================
 def extract_payments(erp_pay_df, ven_pay_df):
     if erp_pay_df.empty and ven_pay_df.empty:
         empty = pd.DataFrame(columns=["Reason", "Amount"])
@@ -275,13 +269,8 @@ def extract_payments(erp_pay_df, ven_pay_df):
     erp_pay_df = erp_pay_df.copy()
     ven_pay_df = ven_pay_df.copy()
 
-    # Compute real amounts
-    erp_pay_df["Amount"] = erp_pay_df.apply(
-        lambda r: abs(normalize_number(r.get("debit_erp", 0)) - normalize_number(r.get("credit_erp", 0))), axis=1
-    )
-    ven_pay_df["Amount"] = ven_pay_df.apply(
-        lambda r: abs(normalize_number(r.get("debit_ven", 0)) - normalize_number(r.get("credit_ven", 0))), axis=1
-    )
+    erp_pay_df["Amount"] = erp_pay_df.apply(lambda r: abs(normalize_number(r.get("debit_erp", 0)) - normalize_number(r.get("credit_erp", 0))), axis=1)
+    ven_pay_df["Amount"] = ven_pay_df.apply(lambda r: abs(normalize_number(r.get("debit_ven", 0)) - normalize_number(r.get("credit_ven", 0))), axis=1)
 
     erp_pay_df["Amt_Rounded"] = erp_pay_df["Amount"].round(2)
     ven_pay_df["Amt_Rounded"] = ven_pay_df["Amount"].round(2)
@@ -311,31 +300,14 @@ def extract_payments(erp_pay_df, ven_pay_df):
                 break
 
     matched_df = pd.DataFrame(matched)
-    if not matched_df.empty:
-        matched_df = add_total_row(matched_df, ["ERP Amount", "Vendor Amount", "Difference"], "TOTAL")
-
-    # Unmatched ERP
-    unmatched_erp_rows = []
-    for i, row in erp_pay_df.iterrows():
-        if any(abs(row["Amt_Rounded"] - v["Amt_Rounded"]) < 0.05 for _, v in ven_pay_df.iterrows()):
-            continue
-        unmatched_erp_rows.append({"Reason": str(row["Reason"])[:100], "Amount": row["Amount"]})
-    unmatched_erp = pd.DataFrame(unmatched_erp_rows)
-    if not unmatched_erp.empty:
-        unmatched_erp = add_total_row(unmatched_erp, ["Amount"], "TOTAL")
-
-    # Unmatched Vendor
-    unmatched_ven_rows = []
-    for _, row in ven_pay_df.iterrows():
-        if row.name in used_ven_idx: continue
-        unmatched_ven_rows.append({"Reason": str(row["Reason"])[:100], "Amount": row["Amount"]})
-    unmatched_ven = pd.DataFrame(unmatched_ven_rows)
-    if not unmatched_ven.empty:
-        unmatched_ven = add_total_row(unmatched_ven, ["Amount"], "TOTAL")
+    unmatched_erp = erp_pay_df[~erp_pay_df.index.isin(
+        [i for i, row in erp_pay_df.iterrows() if any(abs(row["Amt_Rounded"] - v["Amt_Rounded"]) < 0.05 for _, v in ven_pay_df.iterrows())]
+    )][["Reason", "Amount"]]
+    unmatched_ven = ven_pay_df[~ven_pay_df.index.isin(used_ven_idx)][["Reason", "Amount"]]
 
     return matched_df, unmatched_erp, unmatched_ven
 
-# ==================== EXCEL EXPORT (WITH TOTAL ROWS) ====================
+# ==================== EXCEL EXPORT ====================
 def export_excel(t1, t2, t3, miss_erp, miss_ven, pay_match, pay_erp, pay_ven):
     wb = Workbook()
     def hdr(ws, row, color):
@@ -375,28 +347,16 @@ def export_excel(t1, t2, t3, miss_erp, miss_ven, pay_match, pay_erp, pay_ven):
     if not pay_match.empty: 
         for r in dataframe_to_rows(pay_match, index=False, header=True): ws5.append(r)
         hdr(ws5, 1, "1565C0")
-        total_row_idx = len(pay_match)
-        for cell in ws5[total_row_idx]:
-            cell.fill = PatternFill(start_color="263238", end_color="263238", fill_type="solid")
-            cell.font = Font(color="FFFFFF", bold=True)
 
     ws6 = wb.create_sheet("Payments ERP Unmatched")
     if not pay_erp.empty: 
         for r in dataframe_to_rows(pay_erp, index=False, header=True): ws6.append(r)
         hdr(ws6, 1, "1976D2")
-        total_row_idx = len(pay_erp)
-        for cell in ws6[total_row_idx]:
-            cell.fill = PatternFill(start_color="263238", end_color="263238", fill_type="solid")
-            cell.font = Font(color="FFFFFF", bold=True)
 
     ws7 = wb.create_sheet("Payments Vendor Unmatched")
     if not pay_ven.empty: 
         for r in dataframe_to_rows(pay_ven, index=False, header=True): ws7.append(r)
         hdr(ws7, 1, "0D47A1")
-        total_row_idx = len(pay_ven)
-        for cell in ws7[total_row_idx]:
-            cell.fill = PatternFill(start_color="263238", end_color="263238", fill_type="solid")
-            cell.font = Font(color="FFFFFF", bold=True)
 
     for ws in wb.worksheets:
         for col in ws.columns:
@@ -434,38 +394,38 @@ if uploaded_erp and uploaded_vendor:
 
         with c1:
             st.markdown('<div class="metric-container perfect-match">', unsafe_allow_html=True)
-            st.metric("Perfect Matches", len(perf))
+            st.metric("Perfect Matches", f"{len(perf):,}")
             st.markdown(f"**ERP:** {safe_sum(perf,'ERP Amount'):,.2f}<br>**Vendor:** {safe_sum(perf,'Vendor Amount'):,.2f}", unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
         with c2:
             st.markdown('<div class="metric-container difference-match">', unsafe_allow_html=True)
-            st.metric("Differences", len(diff))
+            st.metric("Differences", f"{len(diff):,}")
             st.markdown(f"**ERP:** {safe_sum(diff,'ERP Amount'):,.2f}<br>**Vendor:** {safe_sum(diff,'Vendor Amount'):,.2f}", unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
         with c3:
             st.markdown('<div class="metric-container tier2-match">', unsafe_allow_html=True)
-            st.metric("Tier-2", len(tier2))
+            st.metric("Tier-2", f"{len(tier2):,}")
             st.markdown(f"**ERP:** {safe_sum(tier2,'ERP Amount'):,.2f}<br>**Vendor:** {safe_sum(tier2,'Vendor Amount'):,.2f}", unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
         with c4:
             st.markdown('<div class="metric-container tier3-match">', unsafe_allow_html=True)
-            st.metric("Tier-3", len(tier3))
+            st.metric("Tier-3", f"{len(tier3):,}")
             st.markdown(f"**ERP:** {safe_sum(tier3,'ERP Amount'):,.2f}<br>**Vendor:** {safe_sum(tier3,'Vendor Amount'):,.2f}", unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
         with c5:
             st.markdown('<div class="metric-container missing-erp">', unsafe_allow_html=True)
-            st.metric("Missing in ERP", len(final_erp_miss))
+            st.metric("Missing in ERP", f"{len(final_erp_miss):,}")
             st.markdown(f"**Total:** {final_erp_miss['Amount'].sum():,.2f}", unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
         with c6:
             st.markdown('<div class="metric-container missing-vendor">', unsafe_allow_html=True)
-            st.metric("Missing in Vendor", len(final_ven_miss))
+            st.metric("Missing in Vendor", f"{len(final_ven_miss):,}")
             st.markdown(f"**Total:** {final_ven_miss['Amount'].sum():,.2f}", unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
         with c7:
             st.markdown('<div class="metric-container payment-match">', unsafe_allow_html=True)
-            st.metric("Matched Payments", len(pay_match) - (1 if not pay_match.empty and pay_match.iloc[-1]["ERP Reason"] == "TOTAL" else 0))
-            st.markdown(f"**Total:** {pay_match['ERP Amount'].sum() if not pay_match.empty else 0:,.2f}", unsafe_allow_html=True)
+            st.metric("Matched Payments", f"{len(pay_match):,}")
+            st.markdown(f"**Total:** {pay_match['ERP Amount'].sum():,.2f}", unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
 
         st.markdown("---")
@@ -488,19 +448,20 @@ if uploaded_erp and uploaded_vendor:
             st.markdown('<h2 class="section-title">Missing in ERP (Vendor has, ERP missing)</h2>', unsafe_allow_html=True)
             if not final_erp_miss.empty:
                 st.dataframe(style(final_erp_miss, "background:#C62828;color:#fff;font-weight:bold;"), use_container_width=True)
-                st.error(f"{len(final_erp_miss)} invoices in Vendor but not in ERP – {final_erp_miss['Amount'].sum():,.2f}")
+                st.error(f"{len(final_erp_miss):,} invoices – {final_erp_miss['Amount'].sum():,.2f}")
             else: st.success("No invoices missing in ERP.")
         with col_m2:
             st.markdown('<h2 class="section-title">Missing in Vendor (ERP has, Vendor missing)</h2>', unsafe_allow_html=True)
             if not final_ven_miss.empty:
                 st.dataframe(style(final_ven_miss, "background:#AD1457;color:#fff;font-weight:bold;"), use_container_width=True)
-                st.error(f"{len(final_ven_miss)} invoices in ERP but not in Vendor – {final_ven_miss['Amount'].sum():,.2f}")
+                st.error(f"{len(final_ven_miss):,} invoices – {final_ven_miss['Amount'].sum():,.2f}")
             else: st.success("No invoices missing in Vendor.")
 
-        # PAYMENT TABLES (BLUE + TOTALS INSIDE)
+        # PAYMENT TABLES (BLUE, TOTAL BELOW)
         st.markdown('<h2 class="section-title">Matched Payments</h2>', unsafe_allow_html=True)
         if not pay_match.empty:
             st.dataframe(style(pay_match, "background:#1565C0;color:#fff;font-weight:bold;"), use_container_width=True)
+            st.markdown(f"**TOTAL:** {pay_match['ERP Amount'].sum():,.2f}", unsafe_allow_html=True)
         else:
             st.info("No payment matches.")
 
@@ -508,19 +469,15 @@ if uploaded_erp and uploaded_vendor:
         with col_p1:
             st.markdown('<h2 class="section-title">Unmatched ERP Payments</h2>', unsafe_allow_html=True)
             if not pay_erp_unmatched.empty:
-                count = len(pay_erp_unmatched) - 1 if pay_erp_unmatched.iloc[-1]["Reason"] == "TOTAL" else len(pay_erp_unmatched)
-                total = pay_erp_unmatched["Amount"].sum()
                 st.dataframe(style(pay_erp_unmatched, "background:#1976D2;color:#fff;font-weight:bold;"), use_container_width=True)
-                st.warning(f"{count} unmatched – {total:,.2f}")
+                st.warning(f"{len(pay_erp_unmatched):,} unmatched – {pay_erp_unmatched['Amount'].sum():,.2f}")
             else:
                 st.success("All ERP payments matched.")
         with col_p2:
             st.markdown('<h2 class="section-title">Unmatched Vendor Payments</h2>', unsafe_allow_html=True)
             if not pay_ven_unmatched.empty:
-                count = len(pay_ven_unmatched) - 1 if pay_ven_unmatched.iloc[-1]["Reason"] == "TOTAL" else len(pay_ven_unmatched)
-                total = pay_ven_unmatched["Amount"].sum()
                 st.dataframe(style(pay_ven_unmatched, "background:#0D47A1;color:#fff;font-weight:bold;"), use_container_width=True)
-                st.warning(f"{count} unmatched – {total:,.2f}")
+                st.warning(f"{len(pay_ven_unmatched):,} unmatched – {pay_ven_unmatched['Amount'].sum():,.2f}")
             else:
                 st.success("All Vendor payments matched.")
 
