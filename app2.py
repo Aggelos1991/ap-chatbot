@@ -442,7 +442,7 @@ if uploaded_erp and uploaded_vendor:
         st.success("Reconciliation Complete!")
         # ---------- METRICS ----------
         st.markdown('<h2 class="section-title">Reconciliation Summary</h2>', unsafe_allow_html=True)
-        c1, c2, c3, c4, c5, c6 = st.columns(6)
+        c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
         perf = tier1[tier1["Status"] == "Perfect Match"]
         diff = tier1[tier1["Status"] == "Difference Match"]
         def safe_sum(df, col):
