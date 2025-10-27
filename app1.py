@@ -10,8 +10,15 @@ from openai import OpenAI
 # ==========================
 # CONFIG
 # ==========================
-st.set_page_config(page_title="ABONO = CREDIT", layout="wide")
-st.title("Vendor Statement → Excel (ABONO = CREDIT + REASON COLUMN)")
+st.set_page_config(page_title="🦅 DataFalcon Pro — Vendor Statement Parser", layout="wide")
+st.markdown(
+    """
+    <h1 style='text-align:center; font-size:3rem; font-weight:700; background: linear-gradient(90deg,#0D47A1,#42A5F5);
+    -webkit-background-clip:text; -webkit-text-fill-color:transparent;'>🦅 DataFalcon Pro</h1>
+    <h3 style='text-align:center; color:#1565C0;'>Vendor Statement → Excel (ABONO = CREDIT + REASON)</h3>
+    """,
+    unsafe_allow_html=True
+)
 
 API_KEY = os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY")
 if not API_KEY:
@@ -25,6 +32,7 @@ MODEL = "gpt-4o-mini"
 # HELPERS
 # ==========================
 def extract_text_from_pdf(file):
+    """Extract text from uploaded PDF using PyMuPDF"""
     text = ""
     with fitz.open(stream=file.read(), filetype="pdf") as doc:
         for page in doc:
@@ -32,12 +40,14 @@ def extract_text_from_pdf(file):
     return text
 
 def clean_text(text):
+    """Normalize text (remove nbsp, unify € symbol)"""
     return " ".join(text.replace("\xa0", " ").replace("€", " EUR").split())
 
 def extract_with_llm(raw_text):
+    """Ask GPT to extract invoice lines into JSON"""
     prompt = f"""
-    Extract every invoice line from the vendor statement.
-    Return **ONLY** a JSON array of objects with these exact keys:
+    Extract every invoice line from this vendor statement.
+    Return **ONLY** a JSON array with these keys:
     - Invoice_Number (string)
     - Date (string, DD/MM/YYYY or YYYY-MM-DD)
     - Description (string)
@@ -51,15 +61,14 @@ def extract_with_llm(raw_text):
     resp = client.chat.completions.create(
         model=MODEL,
         messages=[
-            {"role": "system", "content": "Return ONLY valid JSON. No markdown, no explanations."},
+            {"role": "system", "content": "Return ONLY valid JSON. No markdown or commentary."},
             {"role": "user", "content": prompt}
         ],
         temperature=0,
         max_tokens=1500
     )
-    json_str = resp.choices[0].message.content.strip()
 
-    # Cleanup JSON if model added markdown
+    json_str = resp.choices[0].message.content.strip()
     if "```" in json_str:
         parts = json_str.split("```")
         json_str = parts[1] if len(parts) > 1 else parts[0]
@@ -69,105 +78,94 @@ def extract_with_llm(raw_text):
     return json.loads(json_str)
 
 def to_excel_bytes(records):
+    """Convert records to Excel bytes for download"""
     output = BytesIO()
-    pd.DataFrame(records).to_excel(output, index=False, engine='openpyxl')
+    pd.DataFrame(records).to_excel(output, index=False, engine="openpyxl")
     output.seek(0)
     return output
 
 # ==========================
 # UI
 # ==========================
-uploaded = st.file_uploader("Upload PDF", type="pdf")
+uploaded = st.file_uploader("📄 Upload Vendor Statement (PDF)", type="pdf")
 
 if uploaded:
     with st.spinner("Reading PDF..."):
         text = clean_text(extract_text_from_pdf(uploaded))
 
-    st.text_area("Text Preview", text[:2000], height=150, disabled=True)
+    st.text_area("Preview (first 2000 chars)", text[:2000], height=150, disabled=True)
 
-    if st.button("EXTRACT → ABONO = CREDIT + REASON", type="primary"):
-        with st.spinner("GPT is working..."):
-            data = extract_with_llm(text)
+    with st.spinner("Extracting data using GPT..."):
+        data = extract_with_llm(text)
 
-        # =============================================
-        # DEFINE MULTILINGUAL KEYWORDS
-        # =============================================
-        CREDIT_TRIGGERS = [
-            "abono", "pago", "cobro", "transference", "transferencia", "ingreso",
-            "recibido", "pago recibido", "cn", "nota de crédito", "credit note",
-            "credit", "credited", "receipt", "transfer", "remittance",
-            "πληρωμή", "πληρωμη", "είσπραξη", "εισπραξη",
-            "κατάθεση", "μεταφορά", "πιστωτικό", "επιστροφή", "έμβασμα", "εμβασμα"
-        ]
+    # ==========================
+    # DETECTION LOGIC
+    # ==========================
+    PAYMENT_TRIGGERS = [
+        "pago", "transferencia", "transference", "transfer", "remittance",
+        "ingreso", "depósito", "deposito", "deposit", "bank", "payment",
+        "paid", "pagado", "paid to", "bank transfer", "transferencia bancaria",
+        "έμβασμα", "εμβασμα", "πληρωμή", "πληρωμη", "κατάθεση", "μεταφορά",
+        "receipt", "received", "recibido", "transfered", "wire"
+    ]
 
-        PAYMENT_TRIGGERS = [
-            "pago", "transferencia", "transference", "transfer", "remittance", "ingreso",
-            "έμβασμα", "εμβασμα", "πληρωμή", "πληρωμη", "deposit", "payment", "bank"
-        ]
+    CREDIT_NOTE_TRIGGERS = [
+        "nota de crédito", "nota credito", "credit note", "credit", "cn",
+        "πιστωτικό", "πιστωτικο", "refund", "creditmemo", "credit memo"
+    ]
 
-        CREDIT_NOTE_TRIGGERS = [
-            "nota de crédito", "nota credito", "credit note", "credit", "cn",
-            "πιστωτικό", "πιστωτικο", "creditmemo", "refund", "creditmemo"
-        ]
+    IGNORE_TRIGGERS = [
+        "retención", "retencion", "withholding", "παρακράτηση", "παρακρατηση"
+    ]
 
-        IGNORE_TRIGGERS = [
-            "retención", "retencion", "withholding", "παρακράτηση", "παρακρατηση"
-        ]
+    final_data = []
+    for row in data:
+        desc = str(row.get("Description", "")).lower()
+        debit = float(row.get("Debit", 0) or 0)
+        credit = float(row.get("Credit", 0) or 0)
+        reason = "INVOICE"
 
-        final_data = []
-        for row in data:
-            desc = str(row.get("Description", "")).lower()
-            debit = float(row.get("Debit", 0) or 0)
-            credit = float(row.get("Credit", 0) or 0)
-            reason = "INVOICE"  # default
+        # Ignore retenções
+        if any(ignore in desc for ignore in IGNORE_TRIGGERS):
+            continue
 
-            # IGNORE RETENTIONS
-            if any(ignore in desc for ignore in IGNORE_TRIGGERS):
-                continue
+        # Credit Note logic
+        if any(k in desc for k in CREDIT_NOTE_TRIGGERS):
+            row["Credit"] = credit if credit != 0 else debit
+            row["Debit"] = 0
+            reason = "CREDIT NOTE"
 
-            # DETECT CREDIT / PAYMENT / CREDIT NOTE
-            if any(k in desc for k in CREDIT_NOTE_TRIGGERS):
-                row["Credit"] = credit if credit != 0 else debit
-                row["Debit"] = 0
-                reason = "CREDIT NOTE"
+        # Payment logic
+        elif any(k in desc for k in PAYMENT_TRIGGERS):
+            row["Credit"] = credit if credit != 0 else debit
+            row["Debit"] = 0
+            reason = "PAYMENT"
 
-            elif any(k in desc for k in PAYMENT_TRIGGERS):
-                row["Credit"] = credit if credit != 0 else debit
-                row["Debit"] = 0
-                reason = "PAYMENT"
+        # Invoice default
+        else:
+            row["Debit"] = debit
+            row["Credit"] = credit
+            reason = "INVOICE"
 
-            elif any(k in desc for k in CREDIT_TRIGGERS):
-                row["Credit"] = credit if credit != 0 else debit
-                row["Debit"] = 0
-                reason = "PAYMENT"
+        row["Reason"] = reason
+        final_data.append(row)
 
-            else:
-                row["Debit"] = debit
-                row["Credit"] = credit
-                reason = "INVOICE"
+    # ==========================
+    # TABLE + DOWNLOAD
+    # ==========================
+    df = pd.DataFrame(final_data)
+    for col in ["Debit", "Credit", "Balance"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
 
-            row["Reason"] = reason
-            final_data.append(row)
+    st.subheader("🧾 Parsed Data (ABONO = CREDIT + REASON)")
+    st.dataframe(df, use_container_width=True)
 
-        # =============================================
-        # SHOW RESULTS
-        # =============================================
-        st.subheader("JSON Output")
-        st.json(final_data, expanded=False)
+    st.download_button(
+        label="📥 DOWNLOAD EXCEL",
+        data=to_excel_bytes(final_data),
+        file_name="DataFalcon_Pro_Statement.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
 
-        df = pd.DataFrame(final_data)
-        for col in ["Debit", "Credit", "Balance"]:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
-
-        st.subheader("ABONO = CREDIT + REASON COLUMN")
-        st.dataframe(df, use_container_width=True)
-
-        st.download_button(
-            label="DOWNLOAD EXCEL – ABONO IS CREDIT (with Reason)",
-            data=to_excel_bytes(final_data),
-            file_name="ABONO_IS_CREDIT_REASON.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-
-        st.success("✅ ABONO = CREDIT. REASON COLUMN ADDED (Invoice / Payment / Credit Note).")
+    st.success("✅ Extraction complete — ABONO = CREDIT. Reason column added (Invoice / Payment / Credit Note).")
