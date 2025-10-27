@@ -10,7 +10,11 @@ import io
 # ==========================
 # CONFIGURATION
 # ==========================
-openai.api_key = "YOUR_OPENAI_API_KEY"  # 👈 Replace this line with your real API key
+import os
+from openai import OpenAI
+
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
 
 app = FastAPI()
 
