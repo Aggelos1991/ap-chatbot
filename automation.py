@@ -1,11 +1,7 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-import base64
-import io
-import os
-import pdfplumber
-import openpyxl
+import base64, io, os, pdfplumber, openpyxl
 from openai import OpenAI
 from dotenv import load_dotenv
 
@@ -17,25 +13,24 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 app = FastAPI()
 
 # ==========================
-# MIDDLEWARE: handle chunked transfer (Power Automate)
+# MODEL
+# ==========================
+class FilePayload(BaseModel):
+    filename: str
+    content: str  # base64
+
+# ==========================
+# MIDDLEWARE (Power Automate compatibility)
 # ==========================
 @app.middleware("http")
 async def allow_chunked_requests(request: Request, call_next):
     if request.headers.get("transfer-encoding", "").lower() == "chunked":
         body = await request.body()
         request._body = body
-    response = await call_next(request)
-    return response
+    return await call_next(request)
 
 # ==========================
-# MODEL
-# ==========================
-class FilePayload(BaseModel):
-    filename: str
-    content: str  # base64 content
-
-# ==========================
-# HELPER
+# FILE PARSING HELPER
 # ==========================
 def extract_text_from_file(file_bytes: bytes, filename: str) -> str:
     text = ""
@@ -63,21 +58,24 @@ def extract_text_from_file(file_bytes: bytes, filename: str) -> str:
 @app.post("/analyze")
 async def analyze(request: Request):
     try:
-        print("🔵 Received POST /analyze")
+        # 1️⃣ Read JSON payload safely
+        try:
+            data = await request.json()
+        except Exception:
+            body = await request.body()
+            return JSONResponse({"keyword": "OTHER", "error": f"Invalid JSON: {body[:100]}"})
 
-        data = await request.json()
         filename = data.get("filename", "unknown")
         content_b64 = data.get("content", "")
 
         if not content_b64:
-            print("⚠️ No content provided")
-            return JSONResponse(content={"keyword": "OTHER", "error": "Empty content"})
+            return JSONResponse({"keyword": "OTHER", "error": "Empty content"})
 
-        # Decode file
+        # 2️⃣ Decode file
         file_bytes = base64.b64decode(content_b64)
         text = extract_text_from_file(file_bytes, filename)
 
-        # Prepare prompt
+        # 3️⃣ Classify text
         prompt = f"""
         You are a classifier. Identify which of these appears in the text:
         ANDALUSIA, PORTO PETRO, IKOS SPANISH HOTEL MANAGEMENT, or OTHER.
@@ -87,43 +85,29 @@ async def analyze(request: Request):
         {text}
         """
 
-        # GPT classification
-        try:
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "user", "content": prompt}]
-            )
-            result = response.choices[0].message.content.strip().upper()
-        except Exception as gpt_error:
-            print(f"⚠️ GPT error: {gpt_error}")
-            result = ""
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}]
+        )
 
-        # Simple rule-based fallback
+        result = response.choices[0].message.content.strip().upper()
         if "ANDALUSIA" in result:
             keyword = "ANDALUSIA"
         elif "PORTO" in result:
             keyword = "PORTO PETRO"
         elif "SPANISH" in result:
             keyword = "IKOS SPANISH HOTEL MANAGEMENT"
-        elif "ANDALUSIA" in text.upper():
-            keyword = "ANDALUSIA"
-        elif "PORTO" in text.upper():
-            keyword = "PORTO PETRO"
-        elif "SPANISH" in text.upper():
-            keyword = "IKOS SPANISH HOTEL MANAGEMENT"
         else:
             keyword = "OTHER"
 
-        print(f"✅ Classification result: {keyword}")
-        return JSONResponse(content={"keyword": keyword})
+        # 4️⃣ Always return JSON — never plain text
+        return JSONResponse({"keyword": keyword})
 
     except Exception as e:
-        print(f"❌ Error: {e}")
-        return JSONResponse(content={"keyword": "OTHER", "error": str(e)})
+        # 5️⃣ Failsafe — make sure *any* exception still returns valid JSON
+        return JSONResponse({"keyword": "OTHER", "error": str(e)})
 
-# ==========================
-# PING (optional test endpoint)
-# ==========================
+# ✅ Test endpoint
 @app.get("/ping")
 async def ping():
-    return JSONResponse(content={"status": "ok", "message": "Server reachable"})
+    return JSONResponse({"status": "ok", "message": "Server reachable"})
