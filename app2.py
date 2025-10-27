@@ -143,7 +143,7 @@ def normalize_columns(df, tag):
                  "ημερομηνία έκδοσης τιμολογίου", "ημερομηνία καταχώρισης",
                  "ημερ. έκδοσης", "ημερ. παραστατικού", "ημερομηνία έκδοσης παραστατικού"]
     }
-
+    df = df.copy()  # Work on copy
     rename_map = {}
     cols_lower = {c: str(c).strip().lower() for c in df.columns}
 
@@ -154,14 +154,8 @@ def normalize_columns(df, tag):
             rename_map[col] = f"invoice_{tag}"
             invoice_matched = True
             break
-
-    if not invoice_matched:
-        # use first column as fallback or create empty one
-        if len(df.columns) > 0:
-            first = df.columns[0]
-            df.rename(columns={first: f"invoice_{tag}"}, inplace=True)
-        else:
-            df[f"invoice_{tag}"] = ""
+    if not invoice_matched and len(df.columns) > 0:
+        rename_map[df.columns[0]] = f"invoice_{tag}"
 
     # ---- OTHER COLUMNS ----
     for key, aliases in mapping.items():
@@ -171,21 +165,20 @@ def normalize_columns(df, tag):
             if any(a in low for a in aliases):
                 rename_map[col] = f"{key}_{tag}"
 
+    # Apply all renames at once
     out = df.rename(columns=rename_map)
 
-    # ---- GUARANTEE debit/credit ----
-    for req in ["debit", "credit"]:
-        c = f"{req}_{tag}"
-        if c not in out.columns:
-            out[c] = 0.0
-
-    # ---- GUARANTEE date ----
-    if f"date_{tag}" not in out.columns:
-        # try second column, otherwise empty
-        if len(out.columns) > 1:
-            out.rename(columns={out.columns[1]: f"date_{tag}"}, inplace=True)
-        else:
-            out[f"date_{tag}"] = ""
+    # ---- GUARANTEE REQUIRED COLUMNS ----
+    required = {
+        f"invoice_{tag}": "",
+        f"debit_{tag}": 0.0,
+        f"credit_{tag}": 0.0,
+        f"date_{tag}": "",
+        f"reason_{tag}": ""
+    }
+    for col, default in required.items():
+        if col not in out.columns:
+            out[col] = default
 
     # ---- NORMALIZE DATE ----
     if f"date_{tag}" in out.columns:
@@ -197,22 +190,10 @@ def normalize_columns(df, tag):
 def style(df, css):
     return df.style.apply(lambda _: [css] * len(_), axis=1)
 
-def match_invoices(erp_df, ven_df):
-    # ✅ SAFETY FIX: Guarantee invoice columns exist before doing anything
-    if "invoice_erp" not in erp_df.columns:
-        erp_df["invoice_erp"] = ""
-    if "invoice_ven" not in ven_df.columns:
-        ven_df["invoice_ven"] = ""
-
-    matched = []
-    used_vendor = set()
-
-
 # ==================== MATCHING ==========================
 def match_invoices(erp_df, ven_df):
     matched = []
     used_vendor = set()
-
     def doc_type(row, tag):
         r = str(row.get(f"reason_{tag}", "")).lower()
         debit = normalize_number(row.get(f"debit_{tag}", 0))
@@ -226,18 +207,14 @@ def match_invoices(erp_df, ven_df):
         if any(k in r for k in ["factura", "invoice", "inv", "τιμολόγιο",
                                 "παραστατικό"]) or debit > 0: return "INV"
         return "UNKNOWN"
-
     erp_df["__type"] = erp_df.apply(lambda r: doc_type(r, "erp"), axis=1)
     ven_df["__type"] = ven_df.apply(lambda r: doc_type(r, "ven"), axis=1)
-
     erp_df["__amt"] = erp_df.apply(lambda r: abs(normalize_number(r.get("debit_erp", 0)) -
                                                 normalize_number(r.get("credit_erp", 0))), axis=1)
     ven_df["__amt"] = ven_df.apply(lambda r: abs(normalize_number(r.get("debit_ven", 0)) -
                                                 normalize_number(r.get("credit_ven", 0))), axis=1)
-
     erp_use = erp_df[erp_df["__type"] != "IGNORE"].copy()
     ven_use = ven_df[ven_df["__type"] != "IGNORE"].copy()
-
     def merge_inv_cn(df, inv_col):
         out = []
         for inv, g in df.groupby(inv_col, dropna=False):
@@ -252,10 +229,8 @@ def match_invoices(erp_df, ven_df):
             else:
                 out.append(g.loc[g["__amt"].idxmax()])
         return pd.DataFrame(out).reset_index(drop=True)
-
     erp_use = merge_inv_cn(erp_use, "invoice_erp")
     ven_use = merge_inv_cn(ven_use, "invoice_ven")
-
     for e_idx, e in erp_use.iterrows():
         e_inv = str(e.get("invoice_erp", "")).strip()
         e_amt = round(float(e["__amt"]), 2)
@@ -279,19 +254,15 @@ def match_invoices(erp_df, ven_df):
                 })
                 used_vendor.add(v_idx)
                 break
-
     matched_df = pd.DataFrame(matched)
     matched_erp = set(matched_df["ERP Invoice"])
     matched_ven = set(matched_df["Vendor Invoice"])
-
     date_cols_erp = ["date_erp"] if "date_erp" in erp_use.columns else []
     date_cols_ven = ["date_ven"] if "date_ven" in ven_use.columns else []
-
     miss_erp = erp_use[~erp_use["invoice_erp"].isin(matched_ven)][["invoice_erp", "__amt"] + date_cols_erp] \
         .rename(columns={"invoice_erp": "Invoice", "__amt": "Amount", "date_erp": "Date"})
     miss_ven = ven_use[~ven_use["invoice_ven"].isin(matched_erp)][["invoice_ven", "__amt"] + date_cols_ven] \
         .rename(columns={"invoice_ven": "Invoice", "__amt": "Amount", "date_ven": "Date"})
-
     return matched_df, miss_erp, miss_ven
 
 def tier2_match(erp_miss, ven_miss):
@@ -373,25 +344,21 @@ def extract_payments(erp_df, ven_df):
               "pago", "deposit", "μεταφορά", "έμβασμα", "εξοφληση", "pagado", "paid"]
     excl_kw = ["invoice of expenses", "expense invoice", "τιμολόγιο εξόδων", "διόρθωση",
                "correction", "reclass", "adjustment", "μεταφορά υπολοίπου"]
-
     def is_pay(row, tag):
         txt = str(row.get(f"reason_{tag}", "")).lower()
         return any(k in txt for k in pay_kw) and not any(b in txt for b in excl_kw) \
                and ((tag == "erp" and normalize_number(row.get("debit_erp", 0)) > 0) or
                     (tag == "ven" and normalize_number(row.get("credit_ven", 0)) > 0))
-
     erp_pay = erp_df[erp_df.apply(lambda r: is_pay(r, "erp"), axis=1)].copy() \
         if "reason_erp" in erp_df.columns else pd.DataFrame()
     ven_pay = ven_df[ven_df.apply(lambda r: is_pay(r, "ven"), axis=1)].copy() \
         if "reason_ven" in ven_df.columns else pd.DataFrame()
-
     if not erp_pay.empty:
         erp_pay["Amount"] = erp_pay.apply(lambda r: abs(normalize_number(r["debit_erp"]) -
                                                        normalize_number(r["credit_erp"])), axis=1)
     if not ven_pay.empty:
         ven_pay["Amount"] = ven_pay.apply(lambda r: abs(normalize_number(r["debit_ven"]) -
                                                        normalize_number(r["credit_ven"])), axis=1)
-
     matched = []
     used = set()
     for _, e in erp_pay.iterrows():
@@ -417,22 +384,18 @@ def export_excel(t1, t2, t3, miss_erp, miss_ven, pay_match):
             c.fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
             c.font = Font(color="FFFFFF", bold=True)
             c.alignment = Alignment(horizontal="center", vertical="center")
-
     ws1 = wb.active; ws1.title = "Tier1"
     if not t1.empty:
         for r in dataframe_to_rows(t1, index=False, header=True): ws1.append(r)
         hdr(ws1, 1, "1E88E5")
-
     ws2 = wb.create_sheet("Tier2")
     if not t2.empty:
         for r in dataframe_to_rows(t2, index=False, header=True): ws2.append(r)
         hdr(ws2, 1, "26A69A")
-
     ws3 = wb.create_sheet("Tier3")
     if not t3.empty:
         for r in dataframe_to_rows(t3, index=False, header=True): ws3.append(r)
         hdr(ws3, 1, "7E57C2")
-
     ws4 = wb.create_sheet("Missing")
     cur = 1
     if not miss_erp.empty:
@@ -448,17 +411,14 @@ def export_excel(t1, t2, t3, miss_erp, miss_ven, pay_match):
         cur += 2
         for r in dataframe_to_rows(miss_ven, index=False, header=True): ws4.append(r)
         hdr(ws4, cur, "AD1457")
-
     ws5 = wb.create_sheet("Payments")
     if not pay_match.empty:
         for r in dataframe_to_rows(pay_match, index=False, header=True): ws5.append(r)
         hdr(ws5, 1, "004D40")
-
     for ws in wb.worksheets:
         for col in ws.columns:
             max_len = max(len(str(c.value)) if c.value else 0 for c in col)
             ws.column_dimensions[get_column_letter(col[0].column)].width = max_len + 3
-
     buf = BytesIO()
     wb.save(buf)
     buf.seek(0)
@@ -473,7 +433,6 @@ if uploaded_erp and uploaded_vendor:
     try:
         erp_raw = pd.read_excel(uploaded_erp, dtype=str)
         ven_raw = pd.read_excel(uploaded_vendor, dtype=str)
-
         erp_df = normalize_columns(erp_raw, "erp")
         ven_df = normalize_columns(ven_raw, "ven")
 
@@ -593,6 +552,7 @@ if uploaded_erp and uploaded_vendor:
                 st.markdown(f"**Total:** {ven_pay['Amount'].sum():,.2f}")
             else:
                 st.info("No vendor payments.")
+
         if not pay_match.empty:
             st.markdown("**Matched Payments**")
             st.dataframe(pay_match.style.apply(lambda _: ['background:#004D40;color:#fff;font-weight:bold'] * len(_), axis=1), use_container_width=True)
