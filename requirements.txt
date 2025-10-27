@@ -1,31 +1,16 @@
-# ---- Core Web Frameworks ----
-fastapi==0.115.0
-uvicorn==0.30.6
-streamlit==1.39.0
-
-# ---- OpenAI + Environment ----
-openai==1.51.2
-python-dotenv==1.0.1
-
-# ---- File and PDF Handling ----
-pdfplumber==0.11.4
-PyMuPDF==1.24.10
-openpyxl==3.1.5
-xlsxwriter==3.2.0
-
-# ---- Data Processing ----
-pandas==2.2.3
-fuzzywuzzy==0.18.0
-python-Levenshtein==0.25.1
-
-# ---- Visualization ----
-plotly==5.24.1
-
-# ---- Web Utilities ----
-requests==2.32.3
-aiofiles==23.2.1
-python-multipart==0.0.9
-
-# ---- (Optional) XML & Image libs used by pdfplumber/OpenPyXL ----
-pillow==10.4.0
-lxml==5.3.0
+streamlit
+openai
+PyMuPDF
+pandas
+openpyxl
+python-dotenv
+fuzzywuzzy
+python-Levenshtein
+pdfplumber
+xlsxwriter
+plotly
+fastapi
+uvicorn
+requests
+aiofiles
+python-multipart
