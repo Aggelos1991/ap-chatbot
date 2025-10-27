@@ -1,5 +1,5 @@
 # --------------------------------------------------------------
-# ReconRaptor – Vendor Reconciliation (FINAL + FULLY FIXED)
+# ReconRaptor – Vendor Reconciliation (FINAL + NETTED CREDIT NOTES)
 # --------------------------------------------------------------
 import streamlit as st
 import pandas as pd
@@ -70,9 +70,9 @@ def normalize_date(v):
         "%m/%d/%y", "%m-%d-%y",
         "%Y.%m.%d",
     ]
-    for fmt in formats:
+    for format_str in formats:
         try:
-            d = pd.to_datetime(s, format=fmt, errors="coerce")
+            d = pd.to_datetime(s, format=format_str, errors="coerce")
             if not pd.isna(d):
                 return d.strftime("%Y-%m-%d")
         except:
@@ -170,7 +170,7 @@ def normalize_columns(df, tag):
 def style(df, css):
     return df.style.apply(lambda _: [css] * len(_), axis=1)
 
-# ==================== MATCHING (TIERED & SAFE) ====================
+# ==================== MATCHING (NETTED CREDIT NOTES) ====================
 def match_invoices(erp_df, ven_df):
     matched = []
     used_vendor = set()
@@ -178,51 +178,60 @@ def match_invoices(erp_df, ven_df):
     def doc_type(row, tag):
         r = str(row.get(f"reason_{tag}", "")).lower()
         debit = normalize_number(row.get(f"debit_{tag}", 0))
+        credit = normalize_number(row.get(f"credit_{tag}", 0))
         pay_pat = [r"^πληρωμ", r"^απόδειξη\s*πληρωμ", r"^payment", r"^bank\s*transfer",
                    r"^trf", r"^remesa", r"^pago", r"^pagado", r"^transferencia",
                    r"^εξοφληση", r"^paid"]
         if any(re.search(p, r) for p in pay_pat): return "IGNORE"
-        if any(k in r for k in ["credit","nota","abono","cn","πιστωτικό","πίστωση","ακυρωτικό"]): return "CN"
-        if any(k in r for k in ["factura","invoice","inv","τιμολόγιο","παραστατικό"]) or debit > 0: return "INV"
+        if any(k in r for k in ["credit","nota","abono","cn","πιστωτικό","πίστωση","ακυρωτικό"]): 
+            return "CN" if credit > 0 else "INV"
+        if any(k in r for k in ["factura","invoice","inv","τιμολόγιο","παραστατικό"]) or debit > 0: 
+            return "INV"
         return "UNKNOWN"
 
     erp_df["__type"] = erp_df.apply(lambda r: doc_type(r, "erp"), axis=1)
     ven_df["__type"] = ven_df.apply(lambda r: doc_type(r, "ven"), axis=1)
 
-    erp_df["__amt"] = erp_df.apply(lambda r: abs(normalize_number(r.get("debit_erp",0)) -
-                                                normalize_number(r.get("credit_erp",0))), axis=1)
-    ven_df["__amt"] = ven_df.apply(lambda r: abs(normalize_number(r.get("debit_ven",0)) -
-                                                normalize_number(r.get("credit_ven",0))), axis=1)
+    erp_df["__amt"] = erp_df.apply(lambda r: 
+        normalize_number(r.get("debit_erp",0)) - normalize_number(r.get("credit_erp",0)), axis=1)
+    ven_df["__amt"] = ven_df.apply(lambda r: 
+        normalize_number(r.get("debit_ven",0)) - normalize_number(r.get("credit_ven",0)), axis=1)
 
+    # Filter out payments
     erp_use = erp_df[erp_df["__type"] != "IGNORE"].copy()
     ven_use = ven_df[ven_df["__type"] != "IGNORE"].copy()
 
-    def merge_inv_cn(df, inv_col):
+    # === NET INVOICES + CREDIT NOTES PER INVOICE NUMBER ===
+    def net_invoices(df, inv_col):
         out = []
         for inv, g in df.groupby(inv_col, dropna=False):
             if g.empty: continue
             inv_rows = g[g["__type"] == "INV"]
             cn_rows  = g[g["__type"] == "CN"]
-            if not inv_rows.empty and not cn_rows.empty:
-                net = round(abs(inv_rows["__amt"].sum() - cn_rows["__amt"].sum()), 2)
-                base = inv_rows.iloc[-1].copy()
-                base["__amt"] = net
-                out.append(base)
-            else:
-                out.append(g.loc[g["__amt"].idxmax()])
+            net_amt = inv_rows["__amt"].sum() - cn_rows["__amt"].sum()
+            net_amt = round(net_amt, 2)
+            if abs(net_amt) < 0.01:
+                continue  # Skip zero-net invoices
+            # Use the INV row with highest debit, or first CN if no INV
+            base = inv_rows.loc[inv_rows["__amt"].idxmax()] if not inv_rows.empty else cn_rows.iloc[0]
+            base = base.copy()
+            base["__amt"] = net_amt
+            base["__type"] = "INV" if net_amt > 0 else "CN"
+            out.append(base)
         return pd.DataFrame(out).reset_index(drop=True)
 
-    erp_use = merge_inv_cn(erp_use, "invoice_erp")
-    ven_use = merge_inv_cn(ven_use, "invoice_ven")
+    erp_use = net_invoices(erp_use, "invoice_erp")
+    ven_use = net_invoices(ven_use, "invoice_ven")
 
+    # === TIER-1: EXACT MATCH ===
     for e_idx, e in erp_use.iterrows():
         e_inv = str(e.get("invoice_erp","")).strip()
-        e_amt = round(float(e["__amt"]),2)
+        e_amt = abs(round(float(e["__amt"]),2))
         e_typ = e["__type"]
         for v_idx, v in ven_use.iterrows():
             if v_idx in used_vendor: continue
             v_inv = str(v.get("invoice_ven","")).strip()
-            v_amt = round(float(v["__amt"]),2)
+            v_amt = abs(round(float(v["__amt"]),2))
             v_typ = v["__type"]
             if e_typ != v_typ or e_inv != v_inv: continue
             diff = abs(e_amt - v_amt)
@@ -249,14 +258,14 @@ def match_invoices(erp_df, ven_df):
     date_cols_erp = ["date_erp"] if "date_erp" in erp_use.columns else []
     date_cols_ven = ["date_ven"] if "date_ven" in ven_use.columns else []
 
-    # ERP → Vendor missing
     miss_erp = erp_use[~erp_use["invoice_erp"].isin(matched_ven)].copy()
+    miss_ven = ven_use[~ven_use["invoice_ven"].isin(matched_erp)].copy()
+
+    # Select and rename
     miss_erp = miss_erp[["invoice_erp", "__amt"] + date_cols_erp]
     miss_erp = miss_erp.rename(columns={"invoice_erp":"Invoice","__amt":"Amount","date_erp":"Date"})
     if "Date" not in miss_erp.columns: miss_erp["Date"] = ""
 
-    # Vendor → ERP missing
-    miss_ven = ven_use[~ven_use["invoice_ven"].isin(matched_erp)].copy()
     miss_ven = miss_ven[["invoice_ven", "__amt"] + date_cols_ven]
     miss_ven = miss_ven.rename(columns={"invoice_ven":"Invoice","__amt":"Amount","date_ven":"Date"})
     if "Date" not in miss_ven.columns: miss_ven["Date"] = ""
