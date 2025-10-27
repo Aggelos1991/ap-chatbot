@@ -158,7 +158,7 @@ if uploaded:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
 
-    st.subheader("🧾 Parsed Data)
+    st.subheader("🧾 Parsed Data")
     st.dataframe(df, use_container_width=True)
 
     st.download_button(
