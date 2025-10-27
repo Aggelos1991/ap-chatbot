@@ -16,7 +16,7 @@ from streamlit_plotly_events import plotly_events
 # ==================== PAGE CONFIG & CSS ======================
 st.set_page_config(page_title="ReconRaptor — Vendor Reconciliation", layout="wide")
 st.markdown(
-    """
+    ""
 , unsafe_allow_html=True,
 )
 # ==================== TITLES =========================
