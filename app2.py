@@ -659,69 +659,69 @@ if uploaded_erp and uploaded_vendor:
                 use_container_width=True
             )
 
-        # =============== EXCEL EXPORT (UNMATCHED ONLY + AUTO WIDTH) ==============
-        def export_excel(miss_erp, miss_ven, miss_erp_pay, miss_ven_pay):
-            output = BytesIO()
-            wb = Workbook()
-            wb.remove(wb.active)  # remove default sheet
-        
-            # Header style
-            header_fill = PatternFill(start_color="ADD8E6", end_color="ADD8E6", fill_type="solid")
-            header_font = Font(bold=True)
-        
-            # Helper to add sheet with auto-width
-            def add_sheet(name, df):
-                if df.empty:
-                    return
-                ws = wb.create_sheet(title=name)
-                # Write headers
-                for c_idx, col in enumerate(df.columns, 1):
-                    cell = ws.cell(row=1, column=c_idx, value=col)
-                    cell.fill = header_fill
-                    cell.font = header_font
-                # Write data
-                for r_idx, row in enumerate(df.itertuples(index=False), 2):
-                    for c_idx, value in enumerate(row, 1):
-                        ws.cell(row=r_idx, column=c_idx, value=value)
-                # Auto-adjust column widths
-                for col in ws.columns:
-                    max_length = 0
-                    column = col[0].column_letter
-                    for cell in col:
-                        try:
-                            if len(str(cell.value)) > max_length:
-                                max_length = len(str(cell.value))
-                        except:
-                            pass
-                    adjusted_width = min(max_length + 2, 50)
-                    ws.column_dimensions[column].width = adjusted_width
-                # Add Total row (only for Amount column)
-                if "Amount" in df.columns:
-                    total_row = len(df) + 2
-                    ws.cell(row=total_row, column=df.columns.get_loc("Amount") + 1, value=df["Amount"].sum())
-                    ws.cell(row=total_row, column=1, value="Total").font = Font(bold=True)
-        
-            # Add sheets
-            add_sheet("Unmatched_ERP", miss_erp)
-            add_sheet("Unmatched_Vendor", miss_ven)
-            add_sheet("Unmatched_ERP_Pay", miss_erp_pay)
-            add_sheet("Unmatched_Ven_Pay", miss_ven_pay)
-        
-            wb.save(output)
-            output.seek(0)
-            return output.getvalue()
-        
-        
-        # =============== REPLACE YOUR EXPORT BLOCK WITH THIS ==============
-        try:
-            st.markdown("## Download Report")
-            excel_data = export_excel(missE, missV, missPE, missPV)  # ← your variables
-            st.download_button(
-                label="Download Unmatched Only (Excel)",
-                data=excel_data,
-                file_name="ReconRaptor_Unmatched.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-        except Exception as e:
-            st.error(f"Export failed: {e}")
-            st.info("Make sure reconciliation has run and there are unmatched items.")
+    # =============== SIMPLE DOWNLOAD: 1 TAB, 2 TABLES ==============
+def export_unmatched_simple(miss_erp, miss_ven):
+    output = BytesIO()
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Unmatched Items"
+
+    header_fill = PatternFill(start_color="ADD8E6", end_color="ADD8E6", fill_type="solid")
+    header_font = Font(bold=True)
+
+    row = 1
+
+    # ---- Table 1: Missing in ERP ----
+    ws.cell(row=row, column=1, value="MISSING IN ERP").font = Font(bold=True, size=14)
+    row += 1
+    headers = ["Invoice", "Amount", "Date"]
+    for c, h in enumerate(headers, 1):
+        cell = ws.cell(row=row, column=c, value=h)
+        cell.fill = header_fill
+        cell.font = header_font
+    row += 1
+    for _, r in miss_erp.iterrows():
+        ws.cell(row=row, column=1, value=r["Invoice"])
+        ws.cell(row=row, column=2, value=r["Amount"])
+        ws.cell(row=row, column=3, value=r["Date"])
+        row += 1
+    ws.cell(row=row, column=1, value="Total")
+    ws.cell(row=row, column=2, value=miss_erp["Amount"].sum()).font = Font(bold=True)
+    row += 2
+
+    # ---- Table 2: Missing in Vendor ----
+    ws.cell(row=row, column=1, value="MISSING IN VENDOR").font = Font(bold=True, size=14)
+    row += 1
+    for c, h in enumerate(headers, 1):
+        cell = ws.cell(row=row, column=c, value=h)
+        cell.fill = header_fill
+        cell.font = header_font
+    row += 1
+    for _, r in miss_ven.iterrows():
+        ws.cell(row=row, column=1, value=r["Invoice"])
+        ws.cell(row=row, column=2, value=r["Amount"])
+        ws.cell(row=row, column=3, value=r["Date"])
+        row += 1
+    ws.cell(row=row, column=1, value="Total")
+    ws.cell(row=row, column=2, value=miss_ven["Amount"].sum()).font = Font(bold=True)
+
+    # Auto-width
+    for col in ws.columns:
+        max_len = 0
+        col_letter = col[0].column_letter
+        for cell in col:
+            if cell.value:
+                max_len = max(max_len, len(str(cell.value)))
+        ws.column_dimensions[col_letter].width = min(max_len + 2, 50)
+
+    wb.save(output)
+    output.seek(0)
+    return output.getvalue()
+
+# =============== DOWNLOAD BUTTON ==============
+st.download_button(
+    label="Download Unmatched (1 Tab, 2 Tables)",
+    data=export_unmatched_simple(missE, missV),  # your variables
+    file_name="Unmatched_Only.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+)
