@@ -2,6 +2,9 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import base64, io, os, pdfplumber, openpyxl, json
+import fitz  # PyMuPDF for OCR fallback
+import pytesseract
+from PIL import Image
 from openai import OpenAI
 from dotenv import load_dotenv
 
@@ -36,21 +39,40 @@ def extract_text_from_file(file_bytes: bytes, filename: str) -> str:
     text = ""
     filename = filename.lower()
     try:
+        # --- PDF FILES ---
         if filename.endswith(".pdf"):
+            # Try normal text extraction
             with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
                 for page in pdf.pages[:3]:
-                    text += page.extract_text() or ""
+                    page_text = page.extract_text()
+                    if page_text:
+                        text += page_text + "\n"
+
+            # Fallback to OCR if text is empty or too short
+            if len(text.strip()) < 20:
+                doc = fitz.open(stream=file_bytes, filetype="pdf")
+                for page_index in range(min(3, len(doc))):
+                    pix = doc[page_index].get_pixmap(dpi=200)
+                    img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                    ocr_text = pytesseract.image_to_string(img, lang="eng")
+                    text += ocr_text + "\n"
+
+        # --- EXCEL FILES ---
         elif filename.endswith(".xlsx"):
             wb = openpyxl.load_workbook(io.BytesIO(file_bytes), read_only=True)
             for sheet in wb.sheetnames:
                 ws = wb[sheet]
                 for row in ws.iter_rows(values_only=True):
                     text += " ".join([str(cell) for cell in row if cell]) + "\n"
+
+        # --- OTHER TEXT FILES ---
         else:
             text = file_bytes.decode(errors="ignore")
+
     except Exception as e:
         text = f"Error reading file: {e}"
-    return text[:4000]
+
+    return text[:6000]  # Limit to first 6000 chars to control token usage
 
 # ==========================
 # ROUTE
@@ -76,7 +98,7 @@ async def analyze(request: Request):
         text = extract_text_from_file(file_bytes, filename)
         upper_text = text.upper()
 
-        # 3️⃣ Fast local detection before GPT call
+        # 3️⃣ Fast local detection (before LLM)
         if any(k in upper_text for k in ["ANDALUSIA", "IKOS ANDALUSIA"]):
             return JSONResponse({"keyword": "ANDALUSIA", "error": ""})
         elif any(k in upper_text for k in ["PORTO PETRO", "IKOS PORTO"]):
@@ -84,7 +106,7 @@ async def analyze(request: Request):
         elif "IKOS SPANISH" in upper_text or "SPANISH HOTEL MANAGEMENT" in upper_text:
             return JSONResponse({"keyword": "IKOS SPANISH HOTEL MANAGEMENT", "error": ""})
 
-        # 4️⃣ Fallback — LLM classification if not found
+        # 4️⃣ Fallback to LLM classification if no local match
         prompt = f"""
 You are a strict JSON classifier for hotel identification.
 
