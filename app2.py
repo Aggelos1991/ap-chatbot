@@ -232,16 +232,20 @@ def match_invoices(erp_df, ven_df):
             if e_typ != v_typ or e_inv != v_inv:
                 continue
             diff = abs(e_amt - v_amt)
-            status = "Perfect Match" if diff <= 0.01 else ("Difference Match" if diff < 1.0 else None)
-            if status:
-                matched.append({
-                    "ERP Invoice": e_inv,
-                    "Vendor Invoice": v_inv,
-                    "ERP Amount": e_amt,
-                    "Vendor Amount": v_amt,
-                    "Difference": round(diff, 2),
-                    "Status": status
-                })
+            if diff <= 0.01:
+            status = "Perfect Match"
+        else:
+            status = "Difference Match"
+        
+        matched.append({
+            "ERP Invoice": e_inv,
+            "Vendor Invoice": v_inv,
+            "ERP Amount": e_amt,
+            "Vendor Amount": v_amt,
+            "Difference": round(diff, 2),
+            "Status": status
+        })
+
                 used_vendor.add(v_idx)
                 break
 
