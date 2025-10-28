@@ -171,28 +171,34 @@ def match_invoices(erp_df, ven_df):
             return "INV"
         return "UNKNOWN"
 
+    # ---- classify + normalize amounts ----
     erp_df["__type"] = erp_df.apply(lambda r: doc_type(r, "erp"), axis=1)
     ven_df["__type"] = ven_df.apply(lambda r: doc_type(r, "ven"), axis=1)
-
     erp_df["__amt"] = erp_df.apply(lambda r: abs(normalize_number(r.get("debit_erp", 0)) - normalize_number(r.get("credit_erp", 0))), axis=1)
     ven_df["__amt"] = ven_df.apply(lambda r: abs(normalize_number(r.get("debit_ven", 0)) - normalize_number(r.get("credit_ven", 0))), axis=1)
 
+    # ---- consolidate ----
     erp_use = consolidate_by_invoice(erp_df[erp_df["__type"] != "IGNORE"].copy(), "invoice_erp")
     ven_use = consolidate_by_invoice(ven_df[ven_df["__type"] != "IGNORE"].copy(), "invoice_ven")
 
+    # ---- pre-clean invoice codes for strong Tier-1 matching ----
+    erp_use["__inv_clean"] = erp_use["invoice_erp"].apply(clean_invoice_code).astype(str)
+    ven_use["__inv_clean"] = ven_use["invoice_ven"].apply(clean_invoice_code).astype(str)
+
     for e_idx, e in erp_use.iterrows():
-        e_inv = str(e.get("invoice_erp", "")).strip().upper()
-        e_amt = round(float(e.get("__amt", 0.0)), 2)
+        e_code = e["__inv_clean"]
+        e_amt = round(float(e["__amt"]), 2)
         e_typ = e.get("__type", "INV")
 
         for v_idx, v in ven_use.iterrows():
             if v_idx in used_vendor:
                 continue
-            v_inv = str(v.get("invoice_ven", "")).strip().upper()
-            v_amt = round(float(v.get("__amt", 0.0)), 2)
+            v_code = v["__inv_clean"]
+            v_amt = round(float(v["__amt"]), 2)
             v_typ = v.get("__type", "INV")
 
-            if e_typ != v_typ or e_inv != v_inv:
+            # --- stricter but now normalized comparison ---
+            if e_typ != v_typ or e_code != v_code:
                 continue
 
             diff = abs(e_amt - v_amt)
@@ -204,8 +210,8 @@ def match_invoices(erp_df, ven_df):
                 continue
 
             matched.append({
-                "ERP Invoice": e_inv,
-                "Vendor Invoice": v_inv,
+                "ERP Invoice": e.get("invoice_erp", ""),
+                "Vendor Invoice": v.get("invoice_ven", ""),
                 "ERP Amount": e_amt,
                 "Vendor Amount": v_amt,
                 "Difference": round(diff, 2),
