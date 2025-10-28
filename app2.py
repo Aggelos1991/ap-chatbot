@@ -232,7 +232,7 @@ def match_invoices(erp_df, ven_df):
             if e_typ != v_typ or e_inv != v_inv:
                 continue
             diff = abs(e_amt - v_amt)
-            status = "Perfect Match" if diff <= 0.01 else ("Difference Match" if diff < 1.0 else None)
+            status = "Perfect Match" if diff <= 0.01 else "Difference Match"
             if status:
                 matched.append({
                     "ERP Invoice": e_inv,
@@ -336,7 +336,7 @@ def tier3_match(erp_miss, ven_miss):
                 continue
 
             sim = fuzzy_ratio(e_code, v_code)
-            if e_date == v_date and sim >= 0.90:
+            if e_date == v_date and sim >= 0.75:
                 diff = abs(e_amt - v_amt)
                 matches.append({
                     "ERP Invoice": e_inv,
