@@ -430,24 +430,7 @@ def export_excel(miss_erp, miss_ven):
             c.alignment = Alignment(horizontal="center", vertical="center")
 
     ws1 = wb.active
-    ws1.title = "Tier1"
-    if not t1.empty:
-        for r in dataframe_to_rows(t1, index=False, header=True):
-            ws1.append(r)
-        hdr(ws1, 1, "1E88E5")
-
-    ws2 = wb.create_sheet("Tier2")
-    if not t2.empty:
-        for r in dataframe_to_rows(t2, index=False, header=True):
-            ws2.append(r)
-        hdr(ws2, 1, "26A69A")
-
-    ws3 = wb.create_sheet("Tier3")
-    if not t3.empty:
-        for r in dataframe_to_rows(t3, index=False, header=True):
-            ws3.append(r)
-        hdr(ws3, 1, "7E57C2")
-
+    
     ws4 = wb.create_sheet("Missing")
     cur = 1
     # Missing in ERP (vendor invoices not found in ERP)
