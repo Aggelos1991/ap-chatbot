@@ -345,42 +345,65 @@ if uploaded_erp and uploaded_vendor:
     # --- MATCHES ---
     with tab2:
         st.markdown("### Tier-1 Perfect")
-        st.dataframe(t1_perfect if not t1_perfect.empty else st.warning("No matches"), use_container_width=True)
+        if t1_perfect.empty:
+            st.info("No perfect matches found.")
+        else:
+            st.dataframe(t1_perfect, use_container_width=True)
+
         st.markdown("### Tier-1 Difference")
-        st.dataframe(t1_diff if not t1_diff.empty else st.warning("No matches"), use_container_width=True)
+        if t1_diff.empty:
+            st.info("No difference matches found.")
+        else:
+            st.dataframe(t1_diff, use_container_width=True)
+
         st.markdown("### Tier-2 Fuzzy Diff (≤600€, ≥85%)")
-        st.dataframe(t2_fuzzy if not t2_fuzzy.empty else st.warning("No matches"), use_container_width=True)
+        if t2_fuzzy.empty:
+            st.info("No Tier-2 matches found.")
+        else:
+            st.dataframe(t2_fuzzy, use_container_width=True)
+
         st.markdown("### Tier-3 Fuzzy (Exact Date+Amt, ≥85%)")
-        st.dataframe(t3_fuzzy if not t3_fuzzy.empty else st.warning("No matches"), use_container_width=True)
-        st.markdown("### Missing in ERP")
+        if t3_fuzzy.empty:
+            st.info("No Tier-3 matches found.")
+        else:
+            st.dataframe(t3_fuzzy, use_container_width=True)
+
+        st.markdown("### Missing in ERP (Present in Vendor)")
         st.dataframe(miss_ven, use_container_width=True)
-        st.markdown("### Missing in Vendor")
+
+        st.markdown("### Missing in Vendor (Present in ERP)")
         st.dataframe(miss_erp, use_container_width=True)
 
     # --- PAYMENTS ---
     with tab3:
-        tot_erp = pay_erp['__amt'].sum()
-        tot_ven = pay_ven['__amt'].sum()
+        tot_erp = pay_erp['__amt'].sum() if not pay_erp.empty else 0.0
+        tot_ven = pay_ven['__amt'].sum() if not pay_ven.empty else 0.0
         p1, p2, p3 = st.columns(3)
         p1.markdown(f"<div class='metric-box green'>Matched<br><h2>{len(pay_match)}</h2></div>", unsafe_allow_html=True)
         p2.markdown(f"<div class='metric-box teal'>ERP Total<br><h2>{tot_erp:.2f}</h2></div>", unsafe_allow_html=True)
         p3.markdown(f"<div class='metric-box purple'>Ven Total<br><h2>{tot_ven:.2f}</h2></div>", unsafe_allow_html=True)
+
         st.markdown("### Matched Payments")
-        st.dataframe(pay_match if not pay_match.empty else st.warning("No matches"), use_container_width=True)
+        if pay_match.empty:
+            st.info("No matched payments found.")
+        else:
+            st.dataframe(pay_match, use_container_width=True)
+
         st.markdown("### Unmatched ERP Payments")
         st.dataframe(miss_pay_erp, use_container_width=True)
+
         st.markdown("### Unmatched Vendor Payments")
         st.dataframe(miss_pay_ven, use_container_width=True)
 
         # Export only unmatched
         wb = Workbook()
+        header_fill = PatternFill(start_color="ADD8E6", end_color="ADD8E6", fill_type="solid")
         sheets = {
             "Unmatched_ERP_Invoices": miss_erp,
             "Unmatched_Vendor_Invoices": miss_ven,
             "Unmatched_ERP_Payments": miss_pay_erp,
             "Unmatched_Vendor_Payments": miss_pay_ven
         }
-        header_fill = PatternFill(start_color="ADD8E6", end_color="ADD8E6", fill_type="solid")
         for name, df in sheets.items():
             if df.empty: continue
             ws = wb.create_sheet(name)
@@ -395,4 +418,9 @@ if uploaded_erp and uploaded_vendor:
             wb.remove(wb["Sheet"])
         out = BytesIO()
         wb.save(out)
-        st.download_button("Export Unmatched Only", data=out.getvalue(), file_name="unmatched.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        st.download_button(
+            "Export Unmatched Only",
+            data=out.getvalue(),
+            file_name="unmatched.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
