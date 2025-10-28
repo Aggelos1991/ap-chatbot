@@ -277,9 +277,10 @@ def match_invoices(erp_df, ven_df):
     miss_erp = miss_erp[[c for c in keep_cols if c in miss_erp.columns]].reset_index(drop=True)
     miss_ven = miss_ven[[c for c in keep_cols if c in miss_ven.columns]].reset_index(drop=True)
 
-    
     return matched_df, miss_erp, miss_ven
-    def tier2_match(erp_miss, ven_miss):
+
+
+def tier2_match(erp_miss, ven_miss):
     if erp_miss.empty or ven_miss.empty:
         return pd.DataFrame(), set(), set(), erp_miss.copy(), ven_miss.copy()
 
