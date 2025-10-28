@@ -10,7 +10,7 @@ from openpyxl import Workbook
 from openpyxl.utils import get_column_letter
 from openpyxl.styles import PatternFill, Font, Alignment
 from difflib import SequenceMatcher
-from pandas.io.excel import dataframe_to_rows  # <-- REQUIRED FOR EXCEL EXPORT
+from pandas.io.excel._base import dataframe_to_rows
 
 # ==================== PAGE CONFIG & CSS ======================
 st.set_page_config(page_title="ReconRaptor — Vendor Reconciliation", layout="wide")
