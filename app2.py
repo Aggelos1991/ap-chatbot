@@ -676,23 +676,24 @@ if uploaded_erp and uploaded_vendor:
             )
 
      st.markdown('<h2 style="color: #FF6B35;">Download Missing Items</h2>', unsafe_allow_html=True)
+    
+    try:
+        # Combine only missing ERP and missing Vendor
+        combined = pd.concat([
+            final_erp_miss.assign(Source="Missing in ERP"),
+            final_ven_miss.assign(Source="Missing in Vendor")
+        ], ignore_index=True)
+    
+        excel_buf = BytesIO()
+        combined.to_excel(excel_buf, sheet_name="Missing_Only", index=False)
+        excel_buf.seek(0)
+    
+        st.download_button(
+            label="Download Missing Items (Excel)",
+            data=excel_buf,
+            file_name="Missing_Items.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+    except Exception as e:
+        st.error(f"Error: {e}")
 
-        try:
-            # Combine only missing ERP and missing Vendor
-            combined = pd.concat([
-                final_erp_miss.assign(Source="Missing in ERP"),
-                final_ven_miss.assign(Source="Missing in Vendor")
-            ], ignore_index=True)
-        
-            excel_buf = BytesIO()
-            combined.to_excel(excel_buf, sheet_name="Missing_Only", index=False)
-            excel_buf.seek(0)
-        
-            st.download_button(
-                label="Download Missing Items (Excel)",
-                data=excel_buf,
-                file_name="Missing_Items.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-        except Exception as e:
-            st.error(f"Error: {e}")
