@@ -1,4 +1,4 @@
-Error: dataframe_to_rows() got an unexpected keyword argument 'indexARD'import streamlit as st
+import streamlit as st
 import pandas as pd
 import re
 from io import BytesIO
@@ -267,7 +267,7 @@ def export_excel(t1, t2, t3, miss_erp, miss_ven, pay_match):
     if not miss_erp.empty:
         ws4.merge_cells(start_row=cur, start_column=1, end_row=cur, end_column=max(3, miss_erp.shape[1]))
         ws4.cell(cur, 1, "Missing in Vendor").font = Font(bold=True, size=14); cur += 2
-        for r in dataframe_to_rows(miss_erp, indexARD=False, header=True): ws4.append(r)
+        for r in dataframe_to_rows(miss_erp, index=False, header=True): ws4.append(r)
         hdr(ws4, cur, "AD1457")
     ws5 = wb.create_sheet("Payments")
     if not pay_match.empty:
@@ -400,4 +400,4 @@ if uploaded_erp and uploaded_vendor:
         st.download_button("Download Excel", data=excel_buf, file_name="ReconRaptor_Report.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     except Exception as e:
         st.error(f"Error: {e}")
-        st.info("Need columns: invoice, debit/credit, date, reason") fix this
+        st.info("Need columns: invoice, debit/credit, date, reason")
