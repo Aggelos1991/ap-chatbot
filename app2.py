@@ -420,7 +420,7 @@ def extract_payments(erp_df, ven_df):
     return erp_pay, ven_pay, pd.DataFrame(matched)
 
 # ==================== EXCEL EXPORT =========================
-def export_excel(t1, t2, t3, miss_erp, miss_ven, pay_match):
+def export_excel(miss_erp, miss_ven):
     wb = Workbook()
 
     def hdr(ws, row, color):
