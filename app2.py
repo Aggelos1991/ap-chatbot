@@ -675,25 +675,33 @@ if uploaded_erp and uploaded_vendor:
                 use_container_width=True
             )
 
+# Export section
 st.markdown('<h2 style="color: #FF6B35;">Download Missing Items</h2>', unsafe_allow_html=True)
-    
-    try:
+
+try:
+    # Check if data exists
+    if final_erp_miss.empty and final_ven_miss.empty:
+        st.warning("No missing items to export!")
+    else:
         # Combine only missing ERP and missing Vendor
         combined = pd.concat([
-            final_erp_miss.assign(Source="Missing in ERP"),
-            final_ven_miss.assign(Source="Missing in Vendor")
+            final_erp_miss.assign(Source="Missing in ERP") if not final_erp_miss.empty else pd.DataFrame(),
+            final_ven_miss.assign(Source="Missing in Vendor") if not final_ven_miss.empty else pd.DataFrame()
         ], ignore_index=True)
-    
+
         excel_buf = BytesIO()
-        combined.to_excel(excel_buf, sheet_name="Missing_Only", index=False)
+        with pd.ExcelWriter(excel_buf, engine='openpyxl') as writer:
+            combined.to_excel(writer, sheet_name="Missing_Only", index=False)
         excel_buf.seek(0)
-    
+
         st.download_button(
             label="Download Missing Items (Excel)",
-            data=excel_buf,
+            data=excel_buf.getvalue(),
             file_name="Missing_Items.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
-    except Exception as e:
-        st.error(f"Error: {e}")
+
+except Exception as e:
+    st.error(f"Error: {e}")
+    st.info("Check that your files contain required columns")
 
