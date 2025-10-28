@@ -659,16 +659,46 @@ if uploaded_erp and uploaded_vendor:
                 use_container_width=True
             )
 
-        # ---------- EXPORT ----------
-        st.markdown('<h2 class="section-title">Download Report</h2>', unsafe_allow_html=True)
-        excel_buf = export_excel(tier1, tier2, tier3, final_erp_miss, final_ven_miss, pay_match)
-        st.download_button(
-            label="Download Full Excel Report",
-            data=excel_buf,
-            file_name="ReconRaptor_Report.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-
-    except Exception as e:
-        st.error(f"Error: {e}")
-        st.info("Check that your files contain columns like: **invoice**, **debit/credit**, **date**, **reason**")
+             # ==================== EXCEL EXPORT =========================
+        def export_excel(miss_erp, miss_ven):
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "Missing"
+        
+            start_row = 1
+        
+            # ---- Missing in ERP ----
+            if not miss_ven.empty:
+                miss_ven_insert = miss_ven.copy()
+                miss_ven_insert.insert(0, "Category", "Missing in ERP")
+                for r in dataframe_to_rows(miss_ven_insert, index=False, header=True):
+                    ws.append(r)
+        
+                # color header
+                for cell in ws[start_row]:
+                    cell.fill = PatternFill(start_color="C62828", end_color="C62828", fill_type="solid")
+                    cell.font = Font(color="FFFFFF", bold=True)
+        
+                start_row = ws.max_row + 2  # leave one blank line between sections
+        
+            # ---- Missing in Vendor ----
+            if not miss_erp.empty:
+                miss_erp_insert = miss_erp.copy()
+                miss_erp_insert.insert(0, "Category", "Missing in Vendor")
+                for r in dataframe_to_rows(miss_erp_insert, index=False, header=True):
+                    ws.append(r)
+        
+                # color header
+                for cell in ws[start_row]:
+                    cell.fill = PatternFill(start_color="AD1457", end_color="AD1457", fill_type="solid")
+                    cell.font = Font(color="FFFFFF", bold=True)
+        
+            # ---- Auto-size columns ----
+            for col in ws.columns:
+                max_len = max(len(str(c.value)) if c.value else 0 for c in col)
+                ws.column_dimensions[get_column_letter(col[0].column)].width = max_len + 3
+        
+            buf = BytesIO()
+            wb.save(buf)
+            buf.seek(0)
+            return buf
