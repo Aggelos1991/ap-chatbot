@@ -64,7 +64,7 @@ def normalize_number(v):
 
 def normalize_date(v):
     if pd.isna(v) or str(v).strip() == "":
-        return None
+        return ""
     s = str(v).strip()
     s = re.sub(r"[^\d/.-]", "", s)
     s = s.replace(".", "/").replace("-", "/")
@@ -78,7 +78,7 @@ def normalize_date(v):
     d = pd.to_datetime(s, errors="coerce", dayfirst=True)
     if pd.isna(d):
         d = pd.to_datetime(s, errors="coerce", dayfirst=False)
-    return d.strftime("%Y-%m-%d") if not pd.isna(d) else None
+    return d.strftime("%Y-%m-%d") if not pd.isna(d) else ""
 
 def normalize_columns(df, tag):
     mapping = {
@@ -177,12 +177,12 @@ def match_invoices(erp_use, ven_use):
         if e_idx in used_erp_inv: continue
         e_inv = e["invoice_erp"]
         e_amt = round(e["__amt"], 2)
-        e_date = e.get("date_erp")
+        e_date = e.get("date_erp", "")
         for v_idx, v in inv_ven.iterrows():
             if v_idx in used_ven_inv: continue
             v_inv = v["invoice_ven"]
             v_amt = round(v["__amt"], 2)
-            v_date = v.get("date_ven")
+            v_date = v.get("date_ven", "")
             if e_inv != v_inv: continue
             diff = abs(e_amt - v_amt)
             if diff <= 0.01:
@@ -212,7 +212,7 @@ def match_invoices(erp_use, ven_use):
         if e_idx in used_erp_inv: continue
         e_inv = e["invoice_erp"]
         e_amt = round(e["__amt"], 2)
-        e_date = e.get("date_erp")
+        e_date = e.get("date_erp", "")
         best_vidx = None
         best_ratio = 0
         best_diff = float('inf')
@@ -233,7 +233,7 @@ def match_invoices(erp_use, ven_use):
                 "ERP Invoice": e_inv, "Vendor Invoice": v["invoice_ven"],
                 "ERP Amount": e_amt, "Vendor Amount": round(v["__amt"], 2),
                 "Difference": round(best_diff, 2), "ERP Date": e_date,
-                "Vendor Date": v.get("date_ven"), "Fuzzy Ratio": round(best_ratio, 2),
+                "Vendor Date": v.get("date_ven", ""), "Fuzzy Ratio": round(best_ratio, 2),
                 "Status": "Tier-2 Fuzzy Diff"
             })
             used_erp_inv.add(e_idx)
@@ -242,33 +242,31 @@ def match_invoices(erp_use, ven_use):
     remain_erp = inv_erp[~inv_erp.index.isin(used_erp_inv)]
     remain_ven = inv_ven[~inv_ven.index.isin(used_ven_inv)]
 
-    # Tier 3: Fuzzy (>=85%), exact date + amount (strict string match)
+    # Tier 3: Fuzzy (>=85%), exact date + amount
     for e_idx, e in remain_erp.iterrows():
         if e_idx in used_erp_inv: continue
         e_inv = e["invoice_erp"]
         e_amt = round(e["__amt"], 2)
-        e_date_str = e.get("date_erp")
-        if e_date_str is None: continue
+        e_date = e.get("date_erp", "")
         best_vidx = None
         best_ratio = 0
         for v_idx, v in remain_ven.iterrows():
             if v_idx in used_ven_inv: continue
             v_inv = v["invoice_ven"]
             v_amt = round(v["__amt"], 2)
-            v_date_str = v.get("date_ven")
-            if v_date_str != e_date_str: continue
-            if abs(e_amt - v_amt) > 0.01: continue
-            ratio = fuzzy_ratio(e_inv, v_inv)
-            if ratio >= 0.85 and ratio > best_ratio:
-                best_ratio = ratio
-                best_vidx = v_idx
+            v_date = v.get("date_ven", "")
+            if e_date == v_date and abs(e_amt - v_amt) <= 0.01:
+                ratio = fuzzy_ratio(e_inv, v_inv)
+                if ratio >= 0.85 and ratio > best_ratio:
+                    best_ratio = ratio
+                    best_vidx = v_idx
         if best_vidx is not None:
             v = remain_ven.loc[best_vidx]
             matched_tier3.append({
                 "ERP Invoice": e_inv, "Vendor Invoice": v["invoice_ven"],
                 "ERP Amount": e_amt, "Vendor Amount": v_amt,
-                "Difference": 0.0, "ERP Date": e_date_str,
-                "Vendor Date": v.get("date_ven"), "Fuzzy Ratio": round(best_ratio, 2),
+                "Difference": 0.0, "ERP Date": e_date,
+                "Vendor Date": v.get("date_ven", ""), "Fuzzy Ratio": round(best_ratio, 2),
                 "Status": "Tier-3 Fuzzy"
             })
             used_erp_inv.add(e_idx)
@@ -295,7 +293,7 @@ def match_invoices(erp_use, ven_use):
             if abs(e_amt - v_amt) <= 0.01:
                 matched_pay.append({
                     "ERP Amount": e_amt, "Vendor Amount": v_amt, "Difference": 0.0,
-                    "ERP Date": e.get("date_erp"), "Vendor Date": v.get("date_ven")
+                    "ERP Date": e.get("date_erp", ""), "Vendor Date": v.get("date_ven", "")
                 })
                 used_erp_pay.add(e_idx)
                 used_ven_pay.add(v_idx)
