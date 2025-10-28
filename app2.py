@@ -423,6 +423,9 @@ def extract_payments(erp_df, ven_df):
 def export_excel(miss_erp, miss_ven):
     wb = Workbook()
 
+    default = wb.active
+    wb.remove(default)
+
     def hdr(ws, row, color):
         for c in ws[row]:
             c.fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
