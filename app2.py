@@ -488,10 +488,75 @@ if uploaded_erp and uploaded_vendor:
         st.success("Reconciliation Complete!")
 
         # ---------- METRICS ----------
-        st.markdown('<h2 class="section-title">Reconciliation Summary</h2>', unsafe_allow_html=True)
-        c1, c2, c3, c4, c5, c6 = st.columns(6)
-        perf = tier1[tier1["Status"] == "Perfect Match"] if not tier1.empty else pd.DataFrame()
-        diff = tier1[tier1["Status"] == "Difference Match"] if not tier1.empty else pd.DataFrame()
+  c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
+
+perf = tier1[tier1["Status"] == "Perfect Match"] if not tier1.empty else pd.DataFrame()
+diff = tier1[tier1["Status"] == "Difference Match"] if not tier1.empty else pd.DataFrame()
+
+def safe_sum(df, col):
+    return float(df[col].sum()) if not df.empty and col in df.columns else 0.0
+
+with c1:
+    st.markdown('<div class="metric-container perfect-match">', unsafe_allow_html=True)
+    st.metric("Perfect Matches", len(perf))
+    st.markdown(
+        f"**ERP:** {safe_sum(perf, 'ERP Amount'):,.2f}<br>"
+        f"**Vendor:** {safe_sum(perf, 'Vendor Amount'):,.2f}<br>"
+        f"**Diff:** {safe_sum(perf, 'Difference'):,.2f}",
+        unsafe_allow_html=True
+    )
+    st.markdown('</div>', unsafe_allow_html=True)
+
+with c2:
+    st.markdown('<div class="metric-container difference-match">', unsafe_allow_html=True)
+    st.metric("Differences", len(diff))
+    st.markdown(
+        f"**ERP:** {safe_sum(diff, 'ERP Amount'):,.2f}<br>"
+        f"**Vendor:** {safe_sum(diff, 'Vendor Amount'):,.2f}<br>"
+        f"**Diff:** {safe_sum(diff, 'Difference'):,.2f}",
+        unsafe_allow_html=True
+    )
+    st.markdown('</div>', unsafe_allow_html=True)
+
+with c3:
+    st.markdown('<div class="metric-container tier2-match">', unsafe_allow_html=True)
+    st.metric("Tier-2", len(tier2))
+    st.markdown(
+        f"**ERP:** {safe_sum(tier2, 'ERP Amount'):,.2f}<br>"
+        f"**Vendor:** {safe_sum(tier2, 'Vendor Amount'):,.2f}<br>"
+        f"**Diff:** {safe_sum(tier2, 'Difference'):,.2f}",
+        unsafe_allow_html=True
+    )
+    st.markdown('</div>', unsafe_allow_html=True)
+
+with c4:
+    st.markdown('<div class="metric-container tier3-match">', unsafe_allow_html=True)
+    st.metric("Tier-3", len(tier3))
+    st.markdown(
+        f"**ERP:** {safe_sum(tier3, 'ERP Amount'):,.2f}<br>"
+        f"**Vendor:** {safe_sum(tier3, 'Vendor Amount'):,.2f}<br>"
+        f"**Diff:** {safe_sum(tier3, 'Difference'):,.2f}",
+        unsafe_allow_html=True
+    )
+    st.markdown('</div>', unsafe_allow_html=True)
+
+with c5:
+    st.markdown('<div class="metric-container missing-erp">', unsafe_allow_html=True)
+    st.metric("Unmatched ERP", len(final_erp_miss))
+    st.markdown(f"**Total:** {final_erp_miss['Amount'].sum():,.2f}" if "Amount" in final_erp_miss else "**Total:** 0.00", unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+with c6:
+    st.markdown('<div class="metric-container missing-vendor">', unsafe_allow_html=True)
+    st.metric("Unmatched Vendor", len(final_ven_miss))
+    st.markdown(f"**Total:** {final_ven_miss['Amount'].sum():,.2f}" if "Amount" in final_ven_miss else "**Total:** 0.00", unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+with c7:
+    st.markdown('<div class="metric-container payment-match">', unsafe_allow_html=True)
+    st.metric("Payments", len(pay_match) if not pay_match.empty else 0)
+    st.markdown('</div>', unsafe_allow_html=True)
+
 
         def safe_sum(df, col):
             return float(df[col].sum()) if not df.empty and col in df.columns else 0.0
