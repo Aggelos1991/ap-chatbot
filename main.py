@@ -51,9 +51,9 @@ Text (first 6000 chars):
 {text[:6000]}
 
 Rules (exact phrase match):
-- "ANDALUSIA"  → contains "IKOS" AND any of: Odisia, Estepona, Andalusia, Costa del Sol, Malaga
-- "PORTO PETRO" → contains **both** "IKOS" **and** the exact phrase "PORTO PETRO"
-- "IKOS SPANISH HOTEL MANAGEMENT" → contains any of: Spanish Hotel, Ikos Resorts Spain, hotel management
+- "ANDALUSIA"  → contains  any ANDALUSIA or andalusia
+- "PORTO PETRO" → contains the exact phrase "PORTO PETRO"
+- "IKOS SPANISH HOTEL MANAGEMENT" → contains IKOS SPANISH HOTEL MANAGEMENT or ikos spanish hotel management or ISHM
 - otherwise → "OTHER"
 
 Return ONLY:
