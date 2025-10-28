@@ -679,7 +679,7 @@ if uploaded_erp and uploaded_vendor:
 
         # ---------- EXPORT ----------
         st.markdown('<h2 class="section-title">Download Report</h2>', unsafe_allow_html=True)
-        excel_buf = export_excel(tier1, tier2, tier3, final_erp_miss, final_ven_miss, pay_match)
+        excel_buf = export_excel(final_erp_miss, final_ven_miss)
         st.download_button(
             label="Download Full Excel Report",
             data=excel_buf,
