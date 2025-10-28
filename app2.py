@@ -596,5 +596,3 @@ if uploaded_erp and uploaded_vendor:
                 st.markdown(f"**Total:** {ven_pay['Amount'].sum():,.2f}")
             else:
                 st.info("No vendor payments.")
-
-        
