@@ -349,7 +349,7 @@ if uploaded_erp and uploaded_vendor:
 
     # --- SUMMARY ---
     with tab1:
-        c1, c2, c3, c4, c5, c6,—no c7 = st.columns(7)
+        c1, c2, c3, c4, c5, c6,c7 = st.columns(7)
         c1.markdown(f"<div class='metric-box green'>Perfect<br><h2>{len(t1_perfect)}</h2></div>", unsafe_allow_html=True)
         c2.markdown(f"<div class='metric-box orange'>Diff (±1)<br><h2>{len(t1_diff)}</h2></div>", unsafe_allow_html=True)
         c3.markdown(f"<div class='metric-box teal'>Tier-2<br><h2>{len(t2_fuzzy)}</h2></div>", unsafe_allow_html=True)
