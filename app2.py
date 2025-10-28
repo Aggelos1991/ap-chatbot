@@ -132,10 +132,10 @@ def normalize_columns(df, tag):
             if any(a in low for a in aliases):
                 rename_map[col] = f"{key}_{tag}"
     out = df.rename(columns=rename_map)
-    for req in ["debit", "credit"]:
+    for req in ["debit", "credit", "date"]:
         c = f"{req}_{tag}"
         if c not in out.columns:
-            out[c] = 0.0
+            out[c] = "" if req == "date" else 0.0
     if f"date_{tag}" in out.columns:
         out[f"date_{tag}"] = out[f"date_{tag}"].apply(normalize_date)
     return out
@@ -225,8 +225,10 @@ def match_invoices(erp_df, ven_df):
     matched_codes_erp = set(tier1["ERP Code"]) if not tier1.empty else set()
     matched_codes_ven = set(tier1["Vendor Code"]) if not tier1.empty else set()
     # Missing after Tier-1 (by code)
-    miss_erp = erp_use[~erp_use["__code"].isin(matched_codes_ven)][["invoice_erp", "__amt", "date_erp"] if "date_erp" in erp_use.columns else ["invoice_erp", "__amt"]].rename(columns={"invoice_erp": "Invoice", "__amt": "Amount", "date_erp": "Date"})
-    miss_ven = ven_use[~ven_use["__code"].isin(matched_codes_erp)][["invoice_ven", "__amt", "date_ven"] if "date_ven" in ven_use.columns else ["invoice_ven", "__amt"]].rename(columns={"invoice_ven": "Invoice", "__amt": "Amount", "date_ven": "Date"})
+    miss_erp_cols = ["invoice_erp", "__amt", "date_erp"] if "date_erp" in erp_use.columns else ["invoice_erp", "__amt"]
+    miss_ven_cols = ["invoice_ven", "__amt", "date_ven"] if "date_ven" in ven_use.columns else ["invoice_ven", "__amt"]
+    miss_erp = erp_use[~erp_use["__code"].isin(matched_codes_ven)][miss_erp_cols].rename(columns={"invoice_erp": "Invoice", "__amt": "Amount", "date_erp": "Date"})
+    miss_ven = ven_use[~ven_use["__code"].isin(matched_codes_erp)][miss_ven_cols].rename(columns={"invoice_ven": "Invoice", "__amt": "Amount", "date_ven": "Date"})
     return tier1, miss_erp.reset_index(drop=True), miss_ven.reset_index(drop=True)
 
 def tier2_match(erp_miss, ven_miss):
@@ -265,8 +267,8 @@ def tier2_match(erp_miss, ven_miss):
                 used_v.add(vi)
                 break
     mdf = pd.DataFrame(matches)
-    rem_e = e[~e.index.isin(used_e)].copy()
-    rem_v = v[~v.index.isin(used_v)].copy()
+    rem_e = e[~e.index.isin(used_e)][["Invoice", "Amount", "Date"] if "Date" in e.columns else ["Invoice", "Amount"]].copy()
+    rem_v = v[~v.index.isin(used_v)][["Invoice", "Amount", "Date"] if "Date" in v.columns else ["Invoice", "Amount"]].copy()
     return mdf, used_e, used_v, rem_e.reset_index(drop=True), rem_v.reset_index(drop=True)
 
 def tier3_match(erp_miss, ven_miss):
@@ -274,14 +276,12 @@ def tier3_match(erp_miss, ven_miss):
         return pd.DataFrame(), set(), set(), erp_miss.copy(), ven_miss.copy()
     e = erp_miss.copy()
     v = ven_miss.copy()
-    if "Date" in e.columns:
-        e["d"] = e["Date"].apply(normalize_date)
-    else:
-        e["d"] = ""
-    if "Date" in v.columns:
-        v["d"] = v["Date"].apply(normalize_date)
-    else:
-        v["d"] = ""
+    if "Date" not in e.columns:
+        e["Date"] = ""
+    if "Date" not in v.columns:
+        v["Date"] = ""
+    e["d"] = e["Date"].apply(normalize_date)
+    v["d"] = v["Date"].apply(normalize_date)
     e["Code"] = e["Invoice"].astype(str).apply(clean_invoice_code)
     v["Code"] = v["Invoice"].astype(str).apply(clean_invoice_code)
     matches, used_e, used_v = [], set(), set()
@@ -566,7 +566,7 @@ if uploaded_erp and uploaded_vendor:
             else:
                 st.info("No vendor payments.")
         st.markdown('<h2 class="section-title">Download Report</h2>', unsafe_allow_html=True)
-        excel_buf = export_excel(tier1, tier2, t3, final_erp_miss, final_ven_miss, pay_match)
+        excel_buf = export_excel(tier1, tier2, tier3, final_erp_miss, final_ven_miss, pay_match)
         st.download_button(
             label="Download Full Excel Report",
             data=excel_buf,
