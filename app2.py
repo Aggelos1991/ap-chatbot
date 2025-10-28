@@ -688,9 +688,6 @@ if uploaded_erp and uploaded_vendor:
                 use_container_width=True
             )
 
-except Exception as e:
-    st.error(f"Error: {e}")
-    st.info("Check that your files contain columns like: **invoice**, **debit/credit**, **date**, **reason**")
 
 
 # ==================== EXCEL EXPORT (Only Unified Missing Sheet) =========================
