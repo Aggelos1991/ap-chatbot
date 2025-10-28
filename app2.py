@@ -504,6 +504,18 @@ if uploaded_erp and uploaded_vendor:
 
         st.success("Reconciliation Complete!")
 
+        # --- your metrics, tables, etc ---
+        st.markdown("Everything looks good ✅")
+
+        # ✅ ADD EXPORT BUTTON HERE
+        buf = export_excel(final_erp_miss, final_ven_miss)
+        st.download_button("📥 Download Missing Sheet", buf, "Missing_Invoices.xlsx")
+
+    except Exception as e:
+        st.error(f"Error: {e}")
+        st.info("Check that your files contain columns like: **invoice**, **debit/credit**, **date**, **reason**")
+
+
         # ---------- METRICS ----------
         st.markdown('<h2 class="section-title">Reconciliation Summary</h2>', unsafe_allow_html=True)
         c1, c2, c3, c4, c5, c6 = st.columns(6)
