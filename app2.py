@@ -353,7 +353,7 @@ def tier3_match(erp_miss, ven_miss):
                 continue
 
             sim = fuzzy_ratio(e_code, v_code)
-            if e_date == v_date and sim >= 0.75:
+            if e_date == v_date and sim >= 0.90:
                 diff = abs(e_amt - v_amt)
                 matches.append({
                     "ERP Invoice": e_inv,
@@ -503,18 +503,6 @@ if uploaded_erp and uploaded_vendor:
             erp_pay, ven_pay, pay_match = extract_payments(erp_df, ven_df)
 
         st.success("Reconciliation Complete!")
-
-        # --- your metrics, tables, etc ---
-        st.markdown("Everything looks good ✅")
-
-        # ✅ ADD EXPORT BUTTON HERE
-        buf = export_excel(final_erp_miss, final_ven_miss)
-        st.download_button("📥 Download Missing Sheet", buf, "Missing_Invoices.xlsx")
-
-    except Exception as e:
-        st.error(f"Error: {e}")
-        st.info("Check that your files contain columns like: **invoice**, **debit/credit**, **date**, **reason**")
-
 
         # ---------- METRICS ----------
         st.markdown('<h2 class="section-title">Reconciliation Summary</h2>', unsafe_allow_html=True)
@@ -688,20 +676,16 @@ if uploaded_erp and uploaded_vendor:
                 use_container_width=True
             )
 
+        # ---------- EXPORT ----------
+        st.markdown('<h2 class="section-title">Download Report</h2>', unsafe_allow_html=True)
+        excel_buf = export_excel(tier1, tier2, tier3, final_erp_miss, final_ven_miss, pay_match)
+        st.download_button(
+            label="Download Full Excel Report",
+            data=excel_buf,
+            file_name="ReconRaptor_Report.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 
-
-# ==================== EXCEL EXPORT (Only Unified Missing Sheet) =========================
-def export_excel(miss_erp, miss_ven):
-    import pandas as pd
-    from openpyxl import Workbook
-    from openpyxl.utils import get_column_letter
-    from openpyxl.styles import PatternFill, Font, Alignment
-    from io import BytesIO
-
-    def append_df_to_ws(ws, df):
-        """Fallback for dataframe_to_rows."""
-        # write header
-        ws.append(list(df.columns))
-        # write data
-        for _, row in df.iterrows():
-            ws.append(list(row.values))
+    except Exception as e:
+        st.error(f"Error: {e}")
+        st.info("Check that your files contain columns like: **invoice**, **debit/credit**, **date**, **reason**")
