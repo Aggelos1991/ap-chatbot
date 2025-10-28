@@ -1,16 +1,29 @@
-streamlit
-openai
-PyMuPDF
-pandas
-openpyxl
-python-dotenv
-fuzzywuzzy
-python-Levenshtein
-pdfplumber
-xlsxwriter
-plotly
+# --- Core Frameworks ---
 fastapi
 uvicorn
+streamlit
+
+# --- AI & API ---
+openai
+python-dotenv
 requests
 aiofiles
 python-multipart
+
+# --- PDF & File Parsing ---
+PyMuPDF            # fitz (for OCR rasterization)
+pdfplumber
+openpyxl
+xlsxwriter
+pandas
+
+# --- OCR & Imaging ---
+pytesseract
+pillow
+
+# --- Fuzzy Matching & Text Logic ---
+fuzzywuzzy
+python-Levenshtein
+
+# --- Visualization / Plotting ---
+plotly
