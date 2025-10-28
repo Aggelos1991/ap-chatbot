@@ -6,8 +6,6 @@ from PIL import Image
 from openai import OpenAI
 from dotenv import load_dotenv
 
-app = FastAPI()   # ← MUST be named `app`
-
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 app = FastAPI()
@@ -26,25 +24,25 @@ async def allow_chunked_requests(request: Request, call_next):
 def extract_text_from_pdf_all(file_bytes: bytes) -> str:
     """Extract text from ALL pages using pdfplumber + PyMuPDF + OCR fallback."""
     text = ""
-    # 1. pdfplumber (best for structured text)
+    # 1. pdfplumber
     try:
         with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
-            for page in pdf.pages:  # ALL PAGES
+            for page in pdf.pages:
                 t = page.extract_text()
                 if t:
                     text += t + "\n"
     except Exception as e:
         print(f"[PDFPlumber Error] {e}")
 
-    # 2. PyMuPDF (best for scanned + vector)
+    # 2. PyMuPDF
     try:
         doc = fitz.open(stream=file_bytes, filetype="pdf")
-        for page in doc:  # ALL PAGES
+        for page in doc:
             text += page.get_text("text") + "\n"
     except Exception as e:
         print(f"[PyMuPDF Error] {e}")
 
-    # 3. OCR only if almost no text
+    # 3. OCR fallback
     if len(text.strip()) < 100:
         try:
             doc = fitz.open(stream=file_bytes, filetype="pdf")
@@ -80,7 +78,6 @@ def extract_text_from_file(file_bytes: bytes, filename: str) -> str:
 
 def normalize(txt: str) -> str:
     txt = txt.upper()
-    # Accents
     txt = re.sub(r"[ÁÀÂÃÄÅ]", "A", txt)
     txt = re.sub(r"[ÉÈÊË]", "E", txt)
     txt = re.sub(r"[ÍÌÎÏ]", "I", txt)
@@ -88,13 +85,12 @@ def normalize(txt: str) -> str:
     txt = re.sub(r"[ÚÙÛÜ]", "U", txt)
     txt = re.sub(r"[Ñ]", "N", txt)
     txt = txt.replace("Ç", "C")
-    # Clean
     txt = txt.replace("\xa0", " ").replace("\u00a0", " ")
     txt = re.sub(r"[^A-Z0-9\s]", " ", txt)
     txt = re.sub(r"\s+", " ", txt)
     return txt.strip()
 
-# === FINAL: STRONG LOCAL KEYWORD DETECTION ===
+# === STRONG LOCAL KEYWORD DETECTION ===
 def detect_ikos_hotel(text: str) -> str:
     patterns = {
         "ANDALUSIA": [
@@ -156,7 +152,7 @@ async def analyze(request: Request):
         if local_result:
             return JSONResponse({"keyword": local_result, "error": ""})
 
-        # === 2. FALLBACK: GPT-4o-mini (only if local fails) ===
+        # === 2. FALLBACK: GPT-4o-mini ===
         prompt = f"""
 You are a strict JSON classifier. Analyze the text and return ONLY valid JSON.
 
@@ -180,13 +176,12 @@ Return ONLY this JSON:
                 model="gpt-4o-mini",
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0,
-                response_format={"type": "json_object"}  # Forces valid JSON
+                response_format={"type": "json_object"}
             )
             raw = response.choices[0].message.content.strip()
             parsed = json.loads(raw)
             keyword = parsed.get("keyword", "OTHER").upper()
 
-            # Validate
             valid = ["ANDALUSIA", "PORTO PETRO", "IKOS SPANISH HOTEL MANAGEMENT", "OTHER"]
             if keyword not in valid:
                 keyword = "OTHER"
@@ -194,7 +189,6 @@ Return ONLY this JSON:
             return JSONResponse({"keyword": keyword, "error": ""})
 
         except Exception as e:
-            # Final fallback: look in raw output
             raw_up = raw.upper() if 'raw' in locals() else ""
             if any(x in raw_up for x in ["ANDALUSIA", "ODISIA", "ESTEPONA"]):
                 return JSONResponse({"keyword": "ANDALUSIA", "error": "LLM parse failed, fallback match"})
@@ -206,7 +200,7 @@ Return ONLY this JSON:
             return JSONResponse({"keyword": "OTHER", "error": f"LLM failed: {str(e)[:100]}"})
 
     except Exception as e:
-        return JSONResponse({"keyword": "OTHER", "error": f"Server error: {str(e)[:100]}"}))
+        return JSONResponse({"keyword": "OTHER", "error": f"Server error: {str(e)[:100]}"})
 
 @app.get("/ping")
 async def ping():
