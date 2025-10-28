@@ -692,50 +692,16 @@ if uploaded_erp and uploaded_vendor:
 
 # ==================== EXCEL EXPORT (Only Unified Missing Sheet) =========================
 def export_excel(miss_erp, miss_ven):
+    import pandas as pd
     from openpyxl import Workbook
-    from openpyxl.utils.dataframe import dataframe_to_rows, get_column_letter
+    from openpyxl.utils import get_column_letter
     from openpyxl.styles import PatternFill, Font, Alignment
     from io import BytesIO
 
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Missing"
-
-    def style_header(row, color):
-        """Apply background color and white bold font to header row."""
-        for cell in row:
-            cell.fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
-            cell.font = Font(color="FFFFFF", bold=True)
-            cell.alignment = Alignment(horizontal="center", vertical="center")
-
-    cur = 1
-
-    # -------- Missing in ERP --------
-    if not miss_ven.empty:
-        ws.merge_cells(start_row=cur, start_column=1, end_row=cur, end_column=max(3, miss_ven.shape[1]))
-        ws.cell(cur, 1, "Missing in ERP").font = Font(bold=True, size=14)
-        cur += 1
-        for r in dataframe_to_rows(miss_ven, index=False, header=True):
-            ws.append(r)
-        style_header(ws[cur + 1], "C62828")
-        cur = ws.max_row + 3
-
-    # -------- Missing in Vendor --------
-    if not miss_erp.empty:
-        ws.merge_cells(start_row=cur, start_column=1, end_row=cur, end_column=max(3, miss_erp.shape[1]))
-        ws.cell(cur, 1, "Missing in Vendor").font = Font(bold=True, size=14)
-        cur += 1
-        for r in dataframe_to_rows(miss_erp, index=False, header=True):
-            ws.append(r)
-        style_header(ws[cur + 1], "AD1457")
-
-    # -------- Auto column width --------
-    for col in ws.columns:
-        max_len = max(len(str(c.value)) if c.value else 0 for c in col)
-        ws.column_dimensions[get_column_letter(col[0].column)].width = max_len + 3
-
-    buf = BytesIO()
-    wb.save(buf)
-    buf.seek(0)
-    return buf
-
+    def append_df_to_ws(ws, df):
+        """Fallback for dataframe_to_rows."""
+        # write header
+        ws.append(list(df.columns))
+        # write data
+        for _, row in df.iterrows():
+            ws.append(list(row.values))
