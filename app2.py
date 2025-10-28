@@ -676,16 +676,41 @@ if uploaded_erp and uploaded_vendor:
                 use_container_width=True
             )
 
-        # ---------- EXPORT ----------
-        st.markdown('<h2 class="section-title">Download Report</h2>', unsafe_allow_html=True)
-        excel_buf = export_excel(tier1, tier2, tier3, final_erp_miss, final_ven_miss, pay_match)
-        st.download_button(
-            label="Download Full Excel Report",
-            data=excel_buf,
-            file_name="ReconRaptor_Report.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+       # ==================== EXPORT MISSING ONLY (ONE SHEET) ====================
+def export_missing_only(erp_miss, ven_miss):
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        # Combine both missing tables
+        combined = pd.concat([
+            erp_miss.assign(Source="Missing in Vendor") if not erp_miss.empty else pd.DataFrame(),
+            ven_miss.assign(Source="Missing in ERP") if not ven_miss.empty else pd.DataFrame()
+        ], ignore_index=True)
 
-    except Exception as e:
-        st.error(f"Error: {e}")
-        st.info("Check that your files contain columns like: **invoice**, **debit/credit**, **date**, **reason**")
+        if not combined.empty:
+            combined.to_excel(writer, sheet_name="Missing_Items", index=False)
+        else:
+            pd.DataFrame({"Message": ["No missing items found."]}).to_excel(writer, sheet_name="Missing_Items", index=False)
+
+        # Style header: ORANGE
+        ws = writer.sheets["Missing_Items"]
+        orange_fill = PatternFill(start_color="FF6B35", end_color="FF6B35", fill_type="solid")
+        white_font = Font(color="FFFFFF", bold=True)
+        for cell in ws[1]:
+            cell.fill = orange_fill
+            cell.font = white_font
+
+        # Auto column width
+        for col in ws.columns:
+            max_len = 0
+            column = col[0].column_letter
+            for cell in col:
+                try:
+                    if len(str(cell.value)) > max_len:
+                        max_len = len(str(cell.value))
+                except:
+                    pass
+            adjusted_width = min(max_len + 2, 50)
+            ws.column_dimensions[column].width = adjusted_width
+
+    output.seek(0)
+    return output.getvalue()
