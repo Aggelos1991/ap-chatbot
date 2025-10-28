@@ -428,34 +428,27 @@ def export_excel(miss_erp, miss_ven):
             c.fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
             c.font = Font(color="FFFFFF", bold=True)
             c.alignment = Alignment(horizontal="center", vertical="center")
-
-    ws1 = wb.active
     
-    ws4 = wb.create_sheet("Missing")
+    ws1 = wb.create_sheet("Missing")
     cur = 1
     # Missing in ERP (vendor invoices not found in ERP)
     if not miss_ven.empty:
-        ws4.merge_cells(start_row=cur, start_column=1, end_row=cur, end_column=max(3, miss_ven.shape[1]))
-        ws4.cell(cur, 1, "Missing in ERP").font = Font(bold=True, size=14)
+        ws1.merge_cells(start_row=cur, start_column=1, end_row=cur, end_column=max(3, miss_ven.shape[1]))
+        ws1.cell(cur, 1, "Missing in ERP").font = Font(bold=True, size=14)
         cur += 2
         for r in dataframe_to_rows(miss_ven, index=False, header=True):
-            ws4.append(r)
-        hdr(ws4, cur, "C62828")
-        cur = ws4.max_row + 3
+            ws1.append(r)
+        hdr(ws1, cur, "C62828")
+        cur = ws1.max_row + 3
     # Missing in Vendor (ERP invoices not found in vendor)
     if not miss_erp.empty:
-        ws4.merge_cells(start_row=cur, start_column=1, end_row=cur, end_column=max(3, miss_erp.shape[1]))
-        ws4.cell(cur, 1, "Missing in Vendor").font = Font(bold=True, size=14)
+        ws1.merge_cells(start_row=cur, start_column=1, end_row=cur, end_column=max(3, miss_erp.shape[1]))
+        ws1.cell(cur, 1, "Missing in Vendor").font = Font(bold=True, size=14)
         cur += 2
         for r in dataframe_to_rows(miss_erp, index=False, header=True):
-            ws4.append(r)
-        hdr(ws4, cur, "AD1457")
+            ws1.append(r)
+        hdr(ws1, cur, "AD1457")
 
-    ws5 = wb.create_sheet("Payments")
-    if not pay_match.empty:
-        for r in dataframe_to_rows(pay_match, index=False, header=True):
-            ws5.append(r)
-        hdr(ws5, 1, "004D40")
 
     for ws in wb.worksheets:
         for col in ws.columns:
