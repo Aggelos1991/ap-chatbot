@@ -171,9 +171,10 @@ def match_invoices(erp_df, ven_df):
             diff = abs(e_amt - v_amt)
             status = "Perfect Match" if diff <= 0.01 else ("Difference Match" if diff < 1.0 else None)
             if status:
-                matched Procedure.append({"ERP Invoice": e_inv, "Vendor Invoice": v_inv, "ERP Amount": e_amt,
+                matched.append({"ERP Invoice": e_inv, "Vendor Invoice": v_inv, "ERP Amount": e_amt,
                                 "Vendor Amount": v_amt, "Difference": round(diff, 2), "Status": status})
-                used_vendor.add(v_idx); break
+                used_vendor.add(v_idx)
+                break  # optional: break ensures one ERP matches one vendor
 
     matched_df = pd.DataFrame(matched)
     matched_erp = set(matched_df["ERP Invoice"]) if not matched_df.empty else set()
