@@ -151,29 +151,43 @@ def consolidate_entries(df, tag):
     reason_col = f"reason_{tag}"
     debit_col = f"debit_{tag}"
     credit_col = f"credit_{tag}"
+
+    if inv_col not in df.columns:
+        df[inv_col] = ""
+
     consolidated = []
     for inv, g in df.groupby(inv_col, dropna=False):
-        if g.empty: continue
-        signed_amts = g.apply(lambda r: normalize_number(r.get(debit_col, 0)) - normalize_number(r.get(credit_col, 0)), axis=1)
+        if g.empty:
+            continue
+
+        signed_amts = g.apply(
+            lambda r: normalize_number(r.get(debit_col, 0)) - normalize_number(r.get(credit_col, 0)),
+            axis=1
+        )
         total_signed = round(signed_amts.sum(), 2)
         net_amt = abs(total_signed)
-        if net_amt < 0.01: continue  # skip near zero
+        if net_amt < 0.01:
+            continue
+
         net_type = "INV" if total_signed > 0 else "CN"
-        # Rep row: max abs signed
         rep_idx = abs(signed_amts).idxmax()
         base = g.loc[rep_idx].copy()
+
+        base[inv_col] = inv
         base["__amt"] = net_amt
         base["__type"] = net_type
-        # Date: max
+
         if date_col in g.columns:
-            valid_dates = g[g[date_col] != ""][date_col]
+            valid_dates = g[g[date_col].notna() & (g[date_col] != "")][date_col]
             if not valid_dates.empty:
-                base[date_col] = max(valid_dates)
-        # Reason: concat unique
+                base[date_col] = pd.to_datetime(valid_dates).max().strftime("%Y-%m-%d")
+
         if reason_col in g.columns:
-            reasons = ' | '.join(g[g[reason_col].notna()][reason_col].unique())
-            base[reason_col] = reasons
+            reasons = g[g[reason_col].notna()][reason_col].astype(str).unique()
+            base[reason_col] = " | ".join([r.strip() for r in reasons if r.strip()])
+
         consolidated.append(base)
+
     return pd.DataFrame(consolidated).reset_index(drop=True)
 
 def match_invoices(erp_df, ven_df):
@@ -218,6 +232,7 @@ def match_invoices(erp_df, ven_df):
     miss_ven = ven_use[~ven_use["invoice_ven"].isin(matched_erp)][["invoice_ven", "__amt"] + date_cols_ven] \
         .rename(columns={"invoice_ven": "Invoice", "__amt": "Amount", "date_ven": "Date"})
     return matched_df, miss_erp, miss_ven
+
 def tier2_match(erp_miss, ven_miss):
     if erp_miss.empty or ven_miss.empty:
         return pd.DataFrame(), set(), set(), erp_miss.copy(), ven_miss.copy()
@@ -253,6 +268,7 @@ def tier2_match(erp_miss, ven_miss):
     rem_e = e[~e.index.isin(used_e)].copy()
     rem_v = v[~v.index.isin(used_v)].copy()
     return mdf, used_e, used_v, rem_e, rem_v
+
 def tier3_match(erp_miss, ven_miss):
     if erp_miss.empty or ven_miss.empty:
         return pd.DataFrame(), set(), set(), erp_miss.copy(), ven_miss.copy()
@@ -290,6 +306,7 @@ def tier3_match(erp_miss, ven_miss):
     rem_e = e[~e.index.isin(used_e)].copy()
     rem_v = v[~v.index.isin(used_v)].copy()
     return mdf, used_e, used_v, rem_e, rem_v
+
 def extract_payments(erp_df, ven_df):
     pay_kw = ["πληρωμή", "payment", "bank transfer", "transferencia", "trf", "remesa", "pago", "deposit", "μεταφορά", "έμβασμα", "εξοφληση", "pagado", "paid"]
     excl_kw = ["invoice of expenses", "expense invoice", "τιμολόγιο εξόδων", "διόρθωση", "correction", "reclass", "adjustment", "μεταφορά υπολοίπου"]
@@ -320,6 +337,7 @@ def extract_payments(erp_df, ven_df):
                 used.add(vi)
                 break
     return erp_pay, ven_pay, pd.DataFrame(matched)
+
 # ==================== EXCEL EXPORT =========================
 def export_excel(t1, t2, t3, miss_erp, miss_ven, pay_match):
     wb = Workbook()
@@ -374,6 +392,7 @@ def export_excel(t1, t2, t3, miss_erp, miss_ven, pay_match):
     wb.save(buf)
     buf.seek(0)
     return buf
+
 # ==================== UI =========================
 st.markdown("### Upload Your Files")
 uploaded_erp = st.file_uploader("ERP Export (Excel)", type=["xlsx"], key="erp")
