@@ -1,4 +1,4 @@
-import streamlit as st
+Error: dataframe_to_rows() got an unexpected keyword argument 'indexARD'import streamlit as st
 import pandas as pd
 import re
 from io import BytesIO
@@ -128,17 +128,18 @@ def match_invoices(erp_df, ven_df):
         records = []
         if inv_col not in df.columns: return pd.DataFrame(columns=df.columns)
         tag = "erp" if "erp" in inv_col else "ven"
-        debit_col = f"debit_{tag}"
-        credit_col = f"credit_{tag}"
         for inv, group in df.groupby(inv_col, dropna=False):
             if group.empty: continue
-            total_net = group.apply(lambda r: normalize_number(r.get(debit_col, 0)) - normalize_number(r.get(credit_col, 0)), axis=1).sum()
-            net = round(total_net, 2)
+            sum_inv = group.loc[group["__type"] == "INV", "__amt"].sum()
+            sum_cn = group.loc[group["__type"] == "CN", "__amt"].sum()
+            net = round(sum_inv - sum_cn, 2)
             base = group.iloc[0].copy()
             base["__amt"] = abs(net)
             base["__type"] = "INV" if net >= 0 else "CN"
-            base[debit_col] = max(net, 0)
-            base[credit_col] = -min(net, 0)
+            debit_col = f"debit_{tag}"
+            credit_col = f"credit_{tag}"
+            base[debit_col] = net if net >= 0 else 0.0
+            base[credit_col] = -net if net < 0 else 0.0
             records.append(base)
         return pd.DataFrame(records).reset_index(drop=True)
     erp_use = consolidate_by_invoice(erp_use, "invoice_erp")
@@ -266,7 +267,7 @@ def export_excel(t1, t2, t3, miss_erp, miss_ven, pay_match):
     if not miss_erp.empty:
         ws4.merge_cells(start_row=cur, start_column=1, end_row=cur, end_column=max(3, miss_erp.shape[1]))
         ws4.cell(cur, 1, "Missing in Vendor").font = Font(bold=True, size=14); cur += 2
-        for r in dataframe_to_rows(miss_erp, index=False, header=True): ws4.append(r)
+        for r in dataframe_to_rows(miss_erp, indexARD=False, header=True): ws4.append(r)
         hdr(ws4, cur, "AD1457")
     ws5 = wb.create_sheet("Payments")
     if not pay_match.empty:
@@ -399,4 +400,4 @@ if uploaded_erp and uploaded_vendor:
         st.download_button("Download Excel", data=excel_buf, file_name="ReconRaptor_Report.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     except Exception as e:
         st.error(f"Error: {e}")
-        st.info("Need columns: invoice, debit/credit, date, reason")
+        st.info("Need columns: invoice, debit/credit, date, reason") fix this
