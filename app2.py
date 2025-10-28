@@ -137,7 +137,7 @@ def consolidate_by_invoice(df: pd.DataFrame, inv_col: str) -> pd.DataFrame:
         records.append(base)
     return pd.DataFrame(records).reset_index(drop=True)
 
-# ==================== MATCHING CORE ==========================
+# ==================== MATCHING CORE (FIXED: 100% MATCHES STAY IN TIER-1) ==========================
 def match_invoices(erp_df, ven_df):
     matched = []; used_vendor = set()
 
@@ -170,13 +170,13 @@ def match_invoices(erp_df, ven_df):
         ven_df[ven_df["__type"] != "IGNORE"].copy(), "invoice_ven")
 
     for e_idx, e in erp_use.iterrows():
-        e_inv = str(e.get("invoice_erp", "")).strip()
+        e_inv = str(e.get("invoice_erp", "")).strip().upper()
         e_amt = round(float(e.get("__amt", 0.0)), 2)
         e_typ = e.get("__type", "INV")
 
         for v_idx, v in ven_use.iterrows():
             if v_idx in used_vendor: continue
-            v_inv = str(v.get("invoice_ven", "")).strip()
+            v_inv = str(v.get("invoice_ven", "")).strip().upper()
             v_amt = round(float(v.get("__amt", 0.0)), 2)
             v_typ = v.get("__type", "INV")
 
@@ -187,8 +187,8 @@ def match_invoices(erp_df, ven_df):
                       else "Difference Match" if diff < 1.0 else None)
             if status:
                 matched.append({
-                    "ERP Invoice": e_inv,
-                    "Vendor Invoice": v_inv,
+                    "ERP Invoice": e.get("invoice_erp"),
+                    "Vendor Invoice": v.get("invoice_ven"),
                     "ERP Amount": e_amt,
                     "Vendor Amount": v_amt,
                     "Difference": round(diff, 2),
