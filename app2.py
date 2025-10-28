@@ -659,16 +659,69 @@ if uploaded_erp and uploaded_vendor:
                 use_container_width=True
             )
 
-        # ---------- EXPORT ----------
-        st.markdown('<h2 class="section-title">Download Report</h2>', unsafe_allow_html=True)
-        excel_buf = export_excel(final_erp_miss, final_ven_miss)
-        st.download_button(
-            label="Download Full Excel Report",
-            data=excel_buf,
-            file_name="ReconRaptor_Report.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-
-    except Exception as e:
-        st.error(f"Error: {e}")
-        st.info("Check that your files contain columns like: **invoice**, **debit/credit**, **date**, **reason**")
+        # =============== EXCEL EXPORT (UNMATCHED ONLY + AUTO WIDTH) ==============
+        def export_excel(miss_erp, miss_ven, miss_erp_pay, miss_ven_pay):
+            output = BytesIO()
+            wb = Workbook()
+            wb.remove(wb.active)  # remove default sheet
+        
+            # Header style
+            header_fill = PatternFill(start_color="ADD8E6", end_color="ADD8E6", fill_type="solid")
+            header_font = Font(bold=True)
+        
+            # Helper to add sheet with auto-width
+            def add_sheet(name, df):
+                if df.empty:
+                    return
+                ws = wb.create_sheet(title=name)
+                # Write headers
+                for c_idx, col in enumerate(df.columns, 1):
+                    cell = ws.cell(row=1, column=c_idx, value=col)
+                    cell.fill = header_fill
+                    cell.font = header_font
+                # Write data
+                for r_idx, row in enumerate(df.itertuples(index=False), 2):
+                    for c_idx, value in enumerate(row, 1):
+                        ws.cell(row=r_idx, column=c_idx, value=value)
+                # Auto-adjust column widths
+                for col in ws.columns:
+                    max_length = 0
+                    column = col[0].column_letter
+                    for cell in col:
+                        try:
+                            if len(str(cell.value)) > max_length:
+                                max_length = len(str(cell.value))
+                        except:
+                            pass
+                    adjusted_width = min(max_length + 2, 50)
+                    ws.column_dimensions[column].width = adjusted_width
+                # Add Total row (only for Amount column)
+                if "Amount" in df.columns:
+                    total_row = len(df) + 2
+                    ws.cell(row=total_row, column=df.columns.get_loc("Amount") + 1, value=df["Amount"].sum())
+                    ws.cell(row=total_row, column=1, value="Total").font = Font(bold=True)
+        
+            # Add sheets
+            add_sheet("Unmatched_ERP", miss_erp)
+            add_sheet("Unmatched_Vendor", miss_ven)
+            add_sheet("Unmatched_ERP_Pay", miss_erp_pay)
+            add_sheet("Unmatched_Ven_Pay", miss_ven_pay)
+        
+            wb.save(output)
+            output.seek(0)
+            return output.getvalue()
+        
+        
+        # =============== REPLACE YOUR EXPORT BLOCK WITH THIS ==============
+        try:
+            st.markdown("## Download Report")
+            excel_data = export_excel(missE, missV, missPE, missPV)  # ← your variables
+            st.download_button(
+                label="Download Unmatched Only (Excel)",
+                data=excel_data,
+                file_name="ReconRaptor_Unmatched.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        except Exception as e:
+            st.error(f"Export failed: {e}")
+            st.info("Make sure reconciliation has run and there are unmatched items.")
