@@ -1,13 +1,14 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-import base64, io, os, pdfplumber, openpyxl
+import base64, io, os, pdfplumber, openpyxl, json
 from openai import OpenAI
 from dotenv import load_dotenv
 
 # ==========================
 # SETUP
 # ==========================
+load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 app = FastAPI()
 
@@ -16,7 +17,7 @@ app = FastAPI()
 # ==========================
 class FilePayload(BaseModel):
     filename: str
-    content: str  # base64
+    content: str  # base64 string
 
 # ==========================
 # MIDDLEWARE (Power Automate compatibility)
@@ -70,43 +71,67 @@ async def analyze(request: Request):
         if not content_b64:
             return JSONResponse({"keyword": "OTHER", "error": "Empty content"})
 
-        # 2️⃣ Decode file
+        # 2️⃣ Decode file and extract text
         file_bytes = base64.b64decode(content_b64)
         text = extract_text_from_file(file_bytes, filename)
 
-        # 3️⃣ Classify text
+        # 3️⃣ Classify text (Improved prompt)
         prompt = f"""
-        You are a classifier. Identify which of these appears in the text:
-        ANDALUSIA, PORTO PETRO, IKOS SPANISH HOTEL MANAGEMENT, or OTHER.
-        Return only one of those words. No explanations.
+You are a strict JSON classifier for hotel identification.
 
-        Text:
-        {text}
+Analyze the following text and detect which known entity it belongs to.
+Your job is to read the text and return ONE valid JSON object with two fields: "keyword" and "error".
+Never include explanations or text outside JSON.
+
+Possible keyword values (case-insensitive, accept fuzzy mentions like 'Ikos Andalusia', 'Andalusía', etc.):
+- "ANDALUSIA"
+- "PORTO PETRO"
+- "IKOS SPANISH HOTEL MANAGEMENT"
+- "OTHER"  (use only if none of the above appear)
+
+Return format example:
+{{"keyword": "ANDALUSIA", "error": ""}}
+
+Text to analyze:
+{text[:3500]}
         """
 
         response = client.chat.completions.create(
             model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}]
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0
         )
 
-        result = response.choices[0].message.content.strip().upper()
-        if "ANDALUSIA" in result:
-            keyword = "ANDALUSIA"
-        elif "PORTO" in result:
-            keyword = "PORTO PETRO"
-        elif "SPANISH" in result:
-            keyword = "IKOS SPANISH HOTEL MANAGEMENT"
-        else:
-            keyword = "OTHER"
+        raw = response.choices[0].message.content.strip()
 
-        # 4️⃣ Always return JSON — never plain text
-        return JSONResponse({"keyword": keyword})
+        # Try to parse a valid JSON response
+        try:
+            parsed = json.loads(raw)
+            keyword = parsed.get("keyword", "OTHER").upper()
+            error = parsed.get("error", "")
+        except Exception:
+            # fallback to text-based detection
+            result = raw.upper()
+            if "ANDALUSIA" in result:
+                keyword = "ANDALUSIA"
+            elif "PORTO" in result:
+                keyword = "PORTO PETRO"
+            elif "SPANISH" in result:
+                keyword = "IKOS SPANISH HOTEL MANAGEMENT"
+            else:
+                keyword = "OTHER"
+            error = f"Unstructured response: {raw}"
+
+        # 4️⃣ Always return JSON — Power Automate friendly
+        return JSONResponse({"keyword": keyword, "error": error})
 
     except Exception as e:
-        # 5️⃣ Failsafe — make sure *any* exception still returns valid JSON
+        # 5️⃣ Failsafe — any exception still returns valid JSON
         return JSONResponse({"keyword": "OTHER", "error": str(e)})
 
-# ✅ Test endpoint
+# ==========================
+# HEALTH CHECK
+# ==========================
 @app.get("/ping")
 async def ping():
     return JSONResponse({"status": "ok", "message": "Server reachable"})
