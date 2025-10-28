@@ -1,3 +1,4 @@
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -74,13 +75,22 @@ async def analyze(request: Request):
         # 2️⃣ Decode file and extract text
         file_bytes = base64.b64decode(content_b64)
         text = extract_text_from_file(file_bytes, filename)
+        upper_text = text.upper()
 
-        # 3️⃣ Classify text (Improved prompt)
+        # 3️⃣ Fast local detection before GPT call
+        if any(k in upper_text for k in ["ANDALUSIA", "IKOS ANDALUSIA"]):
+            return JSONResponse({"keyword": "ANDALUSIA", "error": ""})
+        elif any(k in upper_text for k in ["PORTO PETRO", "IKOS PORTO"]):
+            return JSONResponse({"keyword": "PORTO PETRO", "error": ""})
+        elif "IKOS SPANISH" in upper_text or "SPANISH HOTEL MANAGEMENT" in upper_text:
+            return JSONResponse({"keyword": "IKOS SPANISH HOTEL MANAGEMENT", "error": ""})
+
+        # 4️⃣ Fallback — LLM classification if not found
         prompt = f"""
 You are a strict JSON classifier for hotel identification.
 
 Analyze the following text and detect which known entity it belongs to.
-Your job is to read the text and return ONE valid JSON object with two fields: "keyword" and "error".
+Return ONE valid JSON object with two fields: "keyword" and "error".
 Never include explanations or text outside JSON.
 
 Possible keyword values (case-insensitive, accept fuzzy mentions like 'Ikos Andalusia', 'Andalusía', etc.):
@@ -104,13 +114,11 @@ Text to analyze:
 
         raw = response.choices[0].message.content.strip()
 
-        # Try to parse a valid JSON response
         try:
             parsed = json.loads(raw)
             keyword = parsed.get("keyword", "OTHER").upper()
             error = parsed.get("error", "")
         except Exception:
-            # fallback to text-based detection
             result = raw.upper()
             if "ANDALUSIA" in result:
                 keyword = "ANDALUSIA"
@@ -122,11 +130,9 @@ Text to analyze:
                 keyword = "OTHER"
             error = f"Unstructured response: {raw}"
 
-        # 4️⃣ Always return JSON — Power Automate friendly
         return JSONResponse({"keyword": keyword, "error": error})
 
     except Exception as e:
-        # 5️⃣ Failsafe — any exception still returns valid JSON
         return JSONResponse({"keyword": "OTHER", "error": str(e)})
 
 # ==========================
