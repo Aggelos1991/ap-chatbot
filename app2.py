@@ -156,7 +156,7 @@ def match_invoices(erp_df, ven_df):
 
     for e_idx, e in erp_use.iterrows():
         e_inv = str(e.get("invoice_erp", "")).strip()
-        e_amt = round(float(e.get("__ amt", 0.0)), 2)
+        e_amt = round(float(e.get("__amt", 0.0)), 2)
         e_typ = e.get("__type", "INV")
         for v_idx, v in ven_use.iterrows():
             if v_idx in used_vendor: continue
@@ -176,7 +176,7 @@ def match_invoices(erp_df, ven_df):
     miss_erp = erp_use[~erp_use["invoice_erp"].isin(matched_ven)].copy()
     miss_ven = ven_use[~ven_use["invoice_ven"].isin(matched_erp)].copy()
     miss_erp = miss_erp.rename(columns={"invoice_erp": "Invoice", "__amt": "Amount", "date_erp": "Date"})
-    miss_ven = ven_ven.rename(columns={"invoice_ven": "Invoice", "__amt": "Amount", "date_ven": "Date"})
+    miss_ven = miss_ven.rename(columns={"invoice_ven": "Invoice", "__amt": "Amount", "date_ven": "Date"})
     keep_cols = ["Invoice", "Amount", "Date"]
     miss_erp = miss_erp[[c for c in keep_cols if c in miss_erp.columns]].reset_index(drop=True)
     miss_ven = miss_ven[[c for c in keep_cols if c in miss_ven.columns]].reset_index(drop=True)
@@ -217,7 +217,7 @@ def tier3_match(erp_miss, ven_miss):
             if e_date == v_date and sim >= 0.90:
                 diff = abs(e_amt - v_amt)
                 matches.append({"ERP Invoice": e_inv, "Vendor Invoice": v_inv, "ERP Amount": e_amt,
-                                "Vendor Amount": v_amt, "Difference": round(diff, 2), "Fuzzy Score": round(sim, 2),
+                                "Vendor Amount": v_amt, "Difference": round(diff,  2), "Fuzzy Score": round(sim, 2),
                                 "Date": e_date, "Match Type": "Tier-3"})
                 used_e.add(ei); used_v.add(vi); break
     mdf = pd.DataFrame(matches)
@@ -234,7 +234,7 @@ def extract_payments(erp_df, ven_df):
         return any(k in txt for k in pay_kw) and not any(b in txt for b in excl_kw) \
                and ((tag == "erp" and normalize_number(row.get("debit_erp", 0)) > 0) or
                     (tag == "ven" and normalize_number(row.get("credit_ven", 0)) > 0))
-    erp_pay = erp_df[erp_df.apply(lambda r: is_pay(r, "erp"), axis=1)].:)].copy() if "reason_erp" in erp_df.columns else pd.DataFrame()
+    erp_pay = erp_df[erp_df.apply(lambda r: is_pay(r, "erp"), axis=1)].copy() if "reason_erp" in erp_df.columns else pd.DataFrame()
     ven_pay = ven_df[ven_df.apply(lambda r: is_pay(r, "ven"), axis=1)].copy() if "reason_ven" in ven_df.columns else pd.DataFrame()
     if not erp_pay.empty: erp_pay["Amount"] = erp_pay.apply(lambda r: abs(normalize_number(r["debit_erp"]) - normalize_number(r["credit_erp"])), axis=1)
     if not ven_pay.empty: ven_pay["Amount"] = ven_pay.apply(lambda r: abs(normalize_number(r["debit_ven"]) - normalize_number(r["credit_ven"])), axis=1)
@@ -252,8 +252,10 @@ def extract_payments(erp_df, ven_df):
 def export_excel(t1, t2, t3, miss_erp, miss_ven, pay_match):
     wb = Workbook()
     def hdr(ws, row, color):
-        for c in ws[row]: c.fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
-        c.font = Font(color="FFFFFF", bold=True); c.alignment = Alignment(horizontal="center", vertical="center")
+        for c in ws[row]:
+            c.fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
+            c.font = Font(color="FFFFFF", bold=True)
+            c.alignment = Alignment(horizontal="center", vertical="center")
     ws1 = wb.active; ws1.title = "Tier1"
     if not t1.empty:
         for r in dataframe_to_rows(t1, index=False, header=True): ws1.append(r)
@@ -310,56 +312,108 @@ if uploaded_erp and uploaded_vendor:
         perf = tier1[tier1["Status"] == "Perfect Match"] if not tier1.empty else pd.DataFrame()
         diff = tier1[tier1["Status"] == "Difference Match"] if not tier1.empty else pd.DataFrame()
         def safe_sum(df, col): return float(df[col].sum()) if not df.empty and col in df.columns else 0.0
-        with c1: st.markdown('<div class="metric-container perfect-match">', unsafe_allow_html=True)
-        st.metric("Perfect", len(perf)); st.markdown(f"**Diff:** {safe_sum(perf, 'Difference'):,.2f}", unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-        with c2: st.markdown('<div class="metric-container difference-match">', unsafe_allow_html=True)
-        st.metric("Differences", len(diff)); st.markdown(f"**Diff:** {safe_sum(diff, 'Difference'):,.2f}", unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-        with c3: st.markdown('<div class="metric-container tier2-match">', unsafe_allow_html=True)
-        st.metric("Tier-2", len(tier2)); st.markdown(f"**Diff:** {safe_sum(tier2, 'Difference'):,.2f}", unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-        with c4: st.markdown('<div class="metric-container tier3-match">', unsafe_allow_html=True)
-        st.metric("Tier-3", len(tier3)); st.markdown(f"**Diff:** {safe_sum(tier3, 'Difference'):,.2f}", unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-        with c5: st.markdown('<div class="metric-container missing-erp">', unsafe_allow_html=True)
-        st.metric("Unmatched ERP", len(final_erp_miss))
-        st.markdown(f"**Total:** {final_erp_miss['Amount'].sum():,.2f}" if "Amount" in final_erp_miss else "**Total:** 0.00", unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-        with c6: st.markdown('<div class="metric-container missing-vendor">', unsafe_allow_html=True)
-        st.metric("Unmatched Vendor", len(final_ven_miss))
-        st.markdown(f"**Total:** {final_ven_miss['Amount'].sum():,.2f}" if "Amount" in final_ven_miss else "**Total:** 0.00", unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-        with c7: st.markdown('<div class="metric-container payment-match">', unsafe_allow_html=True)
-        st.metric("Payment Matches", len(pay_match)); st.markdown('</div>', unsafe_allow_html=True)
+        with c1: 
+            st.markdown('<div class="metric-container perfect-match">', unsafe_allow_html=True)
+            st.metric("Perfect", len(perf))
+            st.markdown(f"**Diff:** {safe_sum(perf, 'Difference'):,.2f}", unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+        with c2: 
+            st.markdown('<div class="metric-container difference-match">', unsafe_allow_html=True)
+            st.metric("Differences", len(diff))
+            st.markdown(f"**Diff:** {safe_sum(diff, 'Difference'):,.2f}", unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+        with c3: 
+            st.markdown('<div class="metric-container tier2-match">', unsafe_allow_html=True)
+            st.metric("Tier-2", len(tier2))
+            st.markdown(f"**Diff:** {safe_sum(tier2, 'Difference'):,.2f}", unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+        with c4: 
+            st.markdown('<div class="metric-container tier3-match">', unsafe_allow_html=True)
+            st.metric("Tier-3", len(tier3))
+            st.markdown(f"**Diff:** {safe_sum(tier3, 'Difference'):,.2f}", unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+        with c5: 
+            st.markdown('<div class="metric-container missing-erp">', unsafe_allow_html=True)
+            st.metric("Unmatched ERP", len(final_erp_miss))
+            st.markdown(f"**Total:** {final_erp_miss['Amount'].sum():,.2f}" if "Amount" in final_erp_miss else "**Total:** 0.00", unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+        with c6: 
+            st.markdown('<div class="metric-container missing-vendor">', unsafe_allow_html=True)
+            st.metric("Unmatched Vendor", len(final_ven_miss))
+            st.markdown(f"**Total:** {final_ven_miss['Amount'].sum():,.2f}" if "Amount" in final_ven_miss else "**Total:** 0.00", unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+        with c7: 
+            st.markdown('<div class="metric-container payment-match">', unsafe_allow_html=True)
+            st.metric("Payment Matches", len(pay_match))
+            st.markdown('</div>', unsafe_allow_html=True)
 
         st.markdown("---")
         st.markdown('<h2 class="section-title">Tier-1: Exact</h2>', unsafe_allow_html=True)
         col_a, col_b = st.columns(2)
-        with col_a: st.markdown("**Perfect**"); st.dataframe(style(perf[['ERP Invoice', 'Vendor Invoice', 'ERP Amount', 'Vendor Amount', 'Difference']], "background:#2E7D32;color:#fff;font-weight:bold;"), use_container_width=True) if not perf.empty else st.info("None")
-        with col_b: st.markdown("**Differences**"); st.dataframe(style(diff[['ERP Invoice', 'Vendor Invoice', 'ERP Amount', 'Vendor Amount', 'Difference']], "background:#FF8F00;color:#fff;font-weight:bold;"), use_container_width=True) if not diff.empty else st.success("None")
+        with col_a: 
+            st.markdown("**Perfect**")
+            if not perf.empty:
+                st.dataframe(style(perf[['ERP Invoice', 'Vendor Invoice', 'ERP Amount', 'Vendor Amount', 'Difference']], "background:#2E7D32;color:#fff;font-weight:bold;"), use_container_width=True)
+            else:
+                st.info("None")
+        with col_b: 
+            st.markdown("**Differences**")
+            if not diff.empty:
+                st.dataframe(style(diff[['ERP Invoice', 'Vendor Invoice', 'ERP Amount', 'Vendor Amount', 'Difference']], "background:#FF8F00;color:#fff;font-weight:bold;"), use_container_width=True)
+            else:
+                st.success("None")
 
         st.markdown('<h2 class="section-title">Tier-2</h2>', unsafe_allow_html=True)
-        st.dataframe(style(tier2, "background:#26A69A;color:#fff;font-weight:bold;"), use_container_width=True) if not tier2.empty else st.info("None")
+        if not tier2.empty:
+            st.dataframe(style(tier2, "background:#26A69A;color:#fff;font-weight:bold;"), use_container_width=True)
+        else:
+            st.info("None")
 
         st.markdown('<h2 class="section-title">Tier-3</h2>', unsafe_allow_html=True)
-        st.dataframe(style(tier3, "background:#7E57C2;color:#fff;font-weight:bold;"), use_container_width=True) if not tier3.empty else st.info("None")
+        if not tier3.empty:
+            st.dataframe(style(tier3, "background:#7E57C2;color:#fff;font-weight:bold;"), use_container_width=True)
+        else:
+            st.info("None")
 
         col_m1, col_m2 = st.columns(2)
-        with col_m1: st.markdown('<h2 class="section-title">Missing in ERP</h2>', unsafe_allow_html=True)
-        st.dataframe(style(final_ven_miss, "background:#AD1457;color:#fff;font-weight:bold;"), use_container_width=True) if not final_ven_miss.empty else st.success("All found")
-        with col_m2: st.markdown('<h2 class="section-title">Missing in Vendor</h2>', unsafe_allow_html=True)
-        st.dataframe(style(final_erp_miss, "background:#C62828;color:#fff;font-weight:bold;"), use_container_width=True) if not final_erp_miss.empty else st.success("All found")
+        with col_m1: 
+            st.markdown('<h2 class="section-title">Missing in ERP</h2>', unsafe_allow_html=True)
+            if not final_ven_miss.empty:
+                st.dataframe(style(final_ven_miss, "background:#AD1457;color:#fff;font-weight:bold;"), use_container_width=True)
+            else:
+                st.success("All found")
+        with col_m2: 
+            st.markdown('<h2 class="section-title">Missing in Vendor</h2>', unsafe_allow_html=True)
+            if not final_erp_miss.empty:
+                st.dataframe(style(final_erp_miss, "background:#C62828;color:#fff;font-weight:bold;"), use_container_width=True)
+            else:
+                st.success("All found")
 
         st.markdown('<h2 class="section-title">Payments</h2>', unsafe_allow_html=True)
         col_p1, col_p2 = st.columns(2)
-        with col_p1: st.markdown("**ERP**"); disp = erp_pay[['reason_erp', 'debit_erp', 'credit_erp', 'Amount']].copy() if not erp_pay.empty else pd.DataFrame()
-        disp.columns = ['Reason', 'Debit', 'Credit', 'Net']; st.dataframe(disp.style.apply(lambda _: ['background:#4CAF50;color:#fff'] * len(_), axis=1), use_container_width=True) if not erp_pay.empty else st.info("None")
-        with col_p2: st.markdown("**Vendor**"); disp = ven_pay[['reason_ven', 'debit_ven', 'credit_ven', 'Amount']].copy() if not ven_pay.empty else pd.DataFrame()
-        disp.columns = ['Reason', 'Debit', 'Credit', 'Net']; st.dataframe(disp.style.apply(lambda _: ['background:#2196F3;color:#fff'] * len(_), axis=1), use_container_width=True) if not ven_pay.empty else st.info("None")
-        if not pay_match.empty: st.markdown("**Matched**"); st.dataframe(pay_match.style.apply(lambda _: ['background:#004D40;color:#fff;font-weight:bold'] * len(_), axis=1), use_container_width=True)
+        with col_p1: 
+            st.markdown("**ERP**")
+            if not erp_pay.empty:
+                disp = erp_pay[['reason_erp', 'debit_erp', 'credit_erp', 'Amount']].copy()
+                disp.columns = ['Reason', 'Debit', 'Credit', 'Net']
+                st.dataframe(disp.style.apply(lambda _: ['background:#4CAF50;color:#fff'] * len(_), axis=1), use_container_width=True)
+            else:
+                st.info("None")
+        with col_p2: 
+            st.markdown("**Vendor**")
+            if not ven_pay.empty:
+                disp = ven_pay[['reason_ven', 'debit_ven', 'credit_ven', 'Amount']].copy()
+                disp.columns = ['Reason', 'Debit', 'Credit', 'Net']
+                st.dataframe(disp.style.apply(lambda _: ['background:#2196F3;color:#fff'] * len(_), axis=1), use_container_width=True)
+            else:
+                st.info("None")
+        if not pay_match.empty:
+            st.markdown("**Matched**")
+            st.dataframe(pay_match.style.apply(lambda _: ['background:#004D40;color:#fff;font-weight:bold'] * len(_), axis=1), use_container_width=True)
 
         st.markdown('<h2 class="section-title">Download</h2>', unsafe_allow_html=True)
         excel_buf = export_excel(tier1, tier2, tier3, final_erp_miss, final_ven_miss, pay_match)
         st.download_button("Download Excel", data=excel_buf, file_name="ReconRaptor_Report.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-    except Exception as e: st.error(f"Error: {e}"); st.info("Need columns: invoice, debit/credit, date, reason")
+    except Exception as e: 
+        st.error(f"Error: {e}")
+        st.info("Need columns: invoice, debit/credit, date, reason")
