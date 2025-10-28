@@ -675,16 +675,24 @@ if uploaded_erp and uploaded_vendor:
                 use_container_width=True
             )
 
-        # ---------- EXPORT ----------
-        st.markdown('<h2 class="section-title">Download Report</h2>', unsafe_allow_html=True)
-        excel_buf = export_excel(tier1, tier2, tier3, final_erp_miss, final_ven_miss, pay_match)
-        st.download_button(
-            label="Download Full Excel Report",
-            data=excel_buf,
-            file_name="ReconRaptor_Report.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+     st.markdown('<h2 style="color: #FF6B35;">Download Missing Items</h2>', unsafe_allow_html=True)
 
-    except Exception as e:
-        st.error(f"Error: {e}")
-        st.info("Check that your files contain columns like: **invoice**, **debit/credit**, **date**, **reason**")
+        try:
+            # Combine only missing ERP and missing Vendor
+            combined = pd.concat([
+                final_erp_miss.assign(Source="Missing in ERP"),
+                final_ven_miss.assign(Source="Missing in Vendor")
+            ], ignore_index=True)
+        
+            excel_buf = BytesIO()
+            combined.to_excel(excel_buf, sheet_name="Missing_Only", index=False)
+            excel_buf.seek(0)
+        
+            st.download_button(
+                label="Download Missing Items (Excel)",
+                data=excel_buf,
+                file_name="Missing_Items.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        except Exception as e:
+            st.error(f"Error: {e}")
