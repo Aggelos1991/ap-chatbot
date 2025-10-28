@@ -551,10 +551,10 @@ if uploaded_erp and uploaded_vendor:
             st.metric("Unmatched Vendor", len(final_ven_miss))
             st.markdown(f"**Total:** {final_ven_miss['Amount'].sum():,.2f}" if "Amount" in final_ven_miss else "**Total:** 0.00", unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
-
-        st.markdown('<div class="metric-container payment-match">', unsafe_allow_html=True)
-        st.metric("New Payment Matches", len(pay_match) if not pay_match.empty else 0)
-        st.markdown('</div>', unsafe_allow_html=True)
+        with c7:
+            st.markdown('<div class="metric-container payment-match">', unsafe_allow_html=True)
+            st.metric("New Payment Matches", len(pay_match) if not pay_match.empty else 0)
+            st.markdown('</div>', unsafe_allow_html=True)
 
         st.markdown("---")
 
