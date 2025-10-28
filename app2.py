@@ -171,19 +171,18 @@ def match_invoices(erp_df, ven_df):
             return "INV"
         return "UNKNOWN"
 
-    # ---- classify + normalize amounts ----
     erp_df["__type"] = erp_df.apply(lambda r: doc_type(r, "erp"), axis=1)
     ven_df["__type"] = ven_df.apply(lambda r: doc_type(r, "ven"), axis=1)
+
     erp_df["__amt"] = erp_df.apply(lambda r: abs(normalize_number(r.get("debit_erp", 0)) - normalize_number(r.get("credit_erp", 0))), axis=1)
     ven_df["__amt"] = ven_df.apply(lambda r: abs(normalize_number(r.get("debit_ven", 0)) - normalize_number(r.get("credit_ven", 0))), axis=1)
 
-    # ---- consolidate ----
     erp_use = consolidate_by_invoice(erp_df[erp_df["__type"] != "IGNORE"].copy(), "invoice_erp")
     ven_use = consolidate_by_invoice(ven_df[ven_df["__type"] != "IGNORE"].copy(), "invoice_ven")
 
-    # ---- pre-clean invoice codes for strong Tier-1 matching ----
-    erp_use["__inv_clean"] = erp_use["invoice_erp"].apply(clean_invoice_code).astype(str)
-    ven_use["__inv_clean"] = ven_use["invoice_ven"].apply(clean_invoice_code).astype(str)
+    # 🔧 Normalize invoice codes to clean comparable strings
+    erp_use["__inv_clean"] = erp_use["invoice_erp"].apply(lambda x: re.sub(r"\.0+$", "", str(clean_invoice_code(x)).strip()))
+    ven_use["__inv_clean"] = ven_use["invoice_ven"].apply(lambda x: re.sub(r"\.0+$", "", str(clean_invoice_code(x)).strip()))
 
     for e_idx, e in erp_use.iterrows():
         e_code = e["__inv_clean"]
@@ -197,7 +196,7 @@ def match_invoices(erp_df, ven_df):
             v_amt = round(float(v["__amt"]), 2)
             v_typ = v.get("__type", "INV")
 
-            # --- stricter but now normalized comparison ---
+            # 🧠 strict but consistent comparison
             if e_typ != v_typ or e_code != v_code:
                 continue
 
@@ -224,7 +223,6 @@ def match_invoices(erp_df, ven_df):
     matched_erp = set(matched_df["ERP Invoice"]) if not matched_df.empty else set()
     matched_ven = set(matched_df["Vendor Invoice"]) if not matched_df.empty else set()
 
-    # ✅ Corrected missing logic
     miss_erp = erp_use[~erp_use["invoice_erp"].isin(matched_erp)].copy()
     miss_ven = ven_use[~ven_use["invoice_ven"].isin(matched_ven)].copy()
 
