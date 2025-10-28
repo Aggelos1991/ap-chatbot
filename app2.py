@@ -128,18 +128,17 @@ def match_invoices(erp_df, ven_df):
         records = []
         if inv_col not in df.columns: return pd.DataFrame(columns=df.columns)
         tag = "erp" if "erp" in inv_col else "ven"
+        debit_col = f"debit_{tag}"
+        credit_col = f"credit_{tag}"
         for inv, group in df.groupby(inv_col, dropna=False):
             if group.empty: continue
-            sum_inv = group.loc[group["__type"] == "INV", "__amt"].sum()
-            sum_cn = group.loc[group["__type"] == "CN", "__amt"].sum()
-            net = round(sum_inv - sum_cn, 2)
+            total_net = group.apply(lambda r: normalize_number(r.get(debit_col, 0)) - normalize_number(r.get(credit_col, 0)), axis=1).sum()
+            net = round(total_net, 2)
             base = group.iloc[0].copy()
             base["__amt"] = abs(net)
             base["__type"] = "INV" if net >= 0 else "CN"
-            debit_col = f"debit_{tag}"
-            credit_col = f"credit_{tag}"
-            base[debit_col] = net if net >= 0 else 0.0
-            base[credit_col] = -net if net < 0 else 0.0
+            base[debit_col] = max(net, 0)
+            base[credit_col] = -min(net, 0)
             records.append(base)
         return pd.DataFrame(records).reset_index(drop=True)
     erp_use = consolidate_by_invoice(erp_use, "invoice_erp")
