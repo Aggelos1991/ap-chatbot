@@ -1,5 +1,5 @@
 # --------------------------------------------------------------
-# ReconRaptor — Vendor Reconciliation (Final Enhanced Build)
+# ReconRaptor — Vendor Reconciliation (Final Fixed Build)
 # --------------------------------------------------------------
 import streamlit as st
 import pandas as pd
@@ -106,7 +106,6 @@ payment_keywords = [
 def consolidate_by_invoice(df: pd.DataFrame, inv_col: str, tag: str) -> pd.DataFrame:
     if inv_col not in df.columns:
         return pd.DataFrame(columns=df.columns)
-    # ERP: payments in debit; Vendor: payments in credit
     owing_col = f"debit_{tag}" if tag == "ven" else f"credit_{tag}"
     paid_col = f"credit_{tag}" if tag == "ven" else f"debit_{tag}"
     date_col = f"date_{tag}"
@@ -116,7 +115,6 @@ def consolidate_by_invoice(df: pd.DataFrame, inv_col: str, tag: str) -> pd.DataF
     without_inv = df[df[inv_col].isna() | (df[inv_col] == '')]
     records = []
 
-    # Invoices/CNs with invoice number
     for inv, group in with_inv.groupby(inv_col):
         owing = group[owing_col].apply(normalize_number).sum()
         paid = group[paid_col].apply(normalize_number).sum()
@@ -129,7 +127,6 @@ def consolidate_by_invoice(df: pd.DataFrame, inv_col: str, tag: str) -> pd.DataF
         base['__group_ids'] = list(group['__id'])
         records.append(base)
 
-    # Lines without invoice number
     for idx, row in without_inv.iterrows():
         owing = normalize_number(row[owing_col])
         paid = normalize_number(row[paid_col])
@@ -137,8 +134,8 @@ def consolidate_by_invoice(df: pd.DataFrame, inv_col: str, tag: str) -> pd.DataF
         is_payment_keyword = any(kw in reason_text for kw in payment_keywords)
 
         if paid > 0:
-            if not is_payment_keyword and "credit" in reason_text or "abono" in reason_text:
-                continue  # Likely CN
+            if not is_payment_keyword and ("credit" in reason_text or "abono" in reason_text):
+                continue
             row["__amt"] = paid
             row["__type"] = "PAY"
             row['__group_ids'] = [row['__id']]
@@ -164,7 +161,6 @@ def match_invoices(erp_use, ven_use):
     used_erp_inv = set()
     used_ven_inv = set()
 
-    # Tier 1: Exact invoice number
     for e_idx, e in inv_erp.iterrows():
         if e_idx in used_erp_inv: continue
         e_inv = str(e.get("invoice_erp", "")).strip().upper()
@@ -199,7 +195,6 @@ def match_invoices(erp_use, ven_use):
     remain_erp = inv_erp[~inv_erp.index.isin(used_erp_inv)]
     remain_ven = inv_ven[~inv_ven.index.isin(used_ven_inv)]
 
-    # Tier 2: Fuzzy invoice (>=85%), diff <=600
     for e_idx, e in remain_erp.iterrows():
         if e_idx in used_erp_inv: continue
         e_inv = str(e.get("invoice_erp", "")).strip().upper()
@@ -234,7 +229,6 @@ def match_invoices(erp_use, ven_use):
     remain_erp = inv_erp[~inv_erp.index.isin(used_erp_inv)]
     remain_ven = inv_ven[~inv_ven.index.isin(used_ven_inv)]
 
-    # Tier 3: Fuzzy (>=85%), exact date + amount
     for e_idx, e in remain_erp.iterrows():
         if e_idx in used_erp_inv: continue
         e_inv = str(e.get("invoice_erp", "")).strip().upper()
@@ -265,7 +259,6 @@ def match_invoices(erp_use, ven_use):
             used_erp_inv.add(e_idx)
             used_ven_inv.add(best_vidx)
 
-    # Unmatched invoices
     unmatch_erp = inv_erp[~inv_erp.index.isin(used_erp_inv)].rename(
         columns={"invoice_erp": "Invoice", "__amt": "Amount", "date_erp": "Date"}
     )[['Invoice', 'Amount', 'Date']]
@@ -273,7 +266,6 @@ def match_invoices(erp_use, ven_use):
         columns={"invoice_ven": "Invoice", "__amt": "Amount", "date_ven": "Date"}
     )[['Invoice', 'Amount', 'Date']]
 
-    # Payments matching by amount
     matched_pay = []
     used_erp_pay = set()
     used_ven_pay = set()
@@ -342,43 +334,43 @@ if uploaded_erp and uploaded_vendor:
     # --- SUMMARY ---
     with tab1:
         c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
-        c1.markdown(f"<div class='metric-box green'>Perfect<br><h2>{len(t1_perfect)}</h2></div>", True)
-        c2.markdown(f"<div class='metric-box orange'>Diff (±1)<br><h2>{len(t1_diff)}</h2></div>", True)
-        c3.markdown(f"<div class='metric-box teal'>Tier-2<br><h2>{len(t2_fuzzy)}</h2></div>", True)
-        c4.markdown(f"<div class='metric-box purple'>Tier-3<br><h2>{len(t3_fuzzy)}</h2></div>", True)
-        c5.markdown(f"<div class='metric-box red'>Miss ERP<br><h2>{len(miss_erp)}</h2></div>", True)
-        c6.markdown(f"<div class='metric-box pink'>Miss Ven<br><h2>{len(miss_ven)}</h2></div>", True)
-        c7.markdown(f"<div class='metric-box dark'>Pay Match<br><h2>{len(pay_match)}</h2></div>", True)
+        c1.markdown(f"<div class='metric-box green'>Perfect<br><h2>{len(t1_perfect)}</h2></div>", unsafe_allow_html=True)
+        c2.markdown(f"<div class='metric-box orange'>Diff (±1)<br><h2>{len(t1_diff)}</h2></div>", unsafe_allow_html=True)
+        c3.markdown(f"<div class='metric-box teal'>Tier-2<br><h2>{len(t2_fuzzy)}</h2></div>", unsafe_allow_html=True)
+        c4.markdown(f"<div class='metric-box purple'>Tier-3<br><h2>{len(t3_fuzzy)}</h2></div>", unsafe_allow_html=True)
+        c5.markdown(f"<div class='metric-box red'>Miss ERP<br><h2>{len(miss_erp)}</h2></div>", unsafe_allow_html=True)
+        c6.markdown(f"<div class='metric-box pink'>Miss Ven<br><h2>{len(miss_ven)}</h2></div>", unsafe_allow_html=True)
+        c7.markdown(f"<div class='metric-box dark'>Pay Match<br><h2>{len(pay_match)}</h2></div>", unsafe_allow_html=True)
 
     # --- MATCHES ---
     with tab2:
         st.markdown("### Tier-1 Perfect")
-        st.dataframe(t1_perfect if not t1_perfect.empty else pd.DataFrame(), True)
+        st.dataframe(t1_perfect if not t1_perfect.empty else st.warning("No matches"), use_container_width=True)
         st.markdown("### Tier-1 Difference")
-        st.dataframe(t1_diff if not t1_diff.empty else pd.DataFrame(), True)
+        st.dataframe(t1_diff if not t1_diff.empty else st.warning("No matches"), use_container_width=True)
         st.markdown("### Tier-2 Fuzzy Diff (≤600€, ≥85%)")
-        st.dataframe(t2_fuzzy if not t2_fuzzy.empty else pd.DataFrame(), True)
+        st.dataframe(t2_fuzzy if not t2_fuzzy.empty else st.warning("No matches"), use_container_width=True)
         st.markdown("### Tier-3 Fuzzy (Exact Date+Amt, ≥85%)")
-        st.dataframe(t3_fuzzy if not t3_fuzzy.empty else pd.DataFrame(), True)
+        st.dataframe(t3_fuzzy if not t3_fuzzy.empty else st.warning("No matches"), use_container_width=True)
         st.markdown("### Missing in ERP")
-        st.dataframe(miss_ven, True)
+        st.dataframe(miss_ven, use_container_width=True)
         st.markdown("### Missing in Vendor")
-        st.dataframe(miss_erp, True)
+        st.dataframe(miss_erp, use_container_width=True)
 
     # --- PAYMENTS ---
     with tab3:
         tot_erp = pay_erp['__amt'].sum()
         tot_ven = pay_ven['__amt'].sum()
         p1, p2, p3 = st.columns(3)
-        p1.markdown(f"<div class='metric-box green'>Matched<br><h2>{len(pay_match)}</h2></div>", True)
-        p2.markdown(f"<div class='metric-box teal'>ERP Total<br><h2>{tot_erp:.2f}</h2></div>", True)
-        p3.markdown(f"<div class='metric-box purple'>Ven Total<br><h2>{tot_ven:.2f}</h2></div>", True)
+        p1.markdown(f"<div class='metric-box green'>Matched<br><h2>{len(pay_match)}</h2></div>", unsafe_allow_html=True)
+        p2.markdown(f"<div class='metric-box teal'>ERP Total<br><h2>{tot_erp:.2f}</h2></div>", unsafe_allow_html=True)
+        p3.markdown(f"<div class='metric-box purple'>Ven Total<br><h2>{tot_ven:.2f}</h2></div>", unsafe_allow_html=True)
         st.markdown("### Matched Payments")
-        st.dataframe(pay_match if not pay_match.empty else pd.DataFrame(), True)
+        st.dataframe(pay_match if not pay_match.empty else st.warning("No matches"), use_container_width=True)
         st.markdown("### Unmatched ERP Payments")
-        st.dataframe(miss_pay_erp, True)
+        st.dataframe(miss_pay_erp, use_container_width=True)
         st.markdown("### Unmatched Vendor Payments")
-        st.dataframe(miss_pay_ven, True)
+        st.dataframe(miss_pay_ven, use_container_width=True)
 
         # Export only unmatched
         wb = Workbook()
@@ -394,15 +386,13 @@ if uploaded_erp and uploaded_vendor:
             ws = wb.create_sheet(name)
             for r in dataframe_to_rows(df, index=False, header=True):
                 ws.append(r)
-            # Color header
             for cell in ws[1]:
                 cell.fill = header_fill
                 cell.font = Font(bold=True)
-            # Total
             total = df['Amount'].sum()
             ws.append(["Total", total] + [""] * (ws.max_column - 2))
-        if wb.sheetnames != ["Sheet"]:
+        if "Sheet" in wb.sheetnames:
             wb.remove(wb["Sheet"])
         out = BytesIO()
         wb.save(out)
-        st.download_button("Export Unmatched Only", data=out.getvalue(), file_name="unmatched.xlsx")
+        st.download_button("Export Unmatched Only", data=out.getvalue(), file_name="unmatched.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
