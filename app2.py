@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import re
@@ -291,7 +290,7 @@ def export_excel(t1, t2, t3, miss_erp, miss_ven, pay_match):
     if not miss_erp.empty:
         ws4.merge_cells(start_row=cur, start_column=1, end_row=cur, end_column=max(3, miss_erp.shape[1]))
         ws4.cell(cur, 1, "Missing in Vendor").font = Font(bold=True, size=14); cur += 2
-        for r in dataframe_to_rows(miss_erp, index=False, header=True): ws4.append(r)
+        for r in dataframe_to_rows(miss_erp, indexARD=False, header=True): ws4.append(r)
         hdr(ws4, cur, "AD1457")
     ws5 = wb.create_sheet("Payments")
     if not pay_match.empty:
@@ -370,24 +369,42 @@ if uploaded_erp and uploaded_vendor:
         col_a, col_b = st.columns(2)
         with col_a:
             st.markdown("**Perfect Matches**")
-            st.dataframe(style(perf[['ERP Invoice', 'Vendor Invoice', 'ERP Amount', 'Vendor Amount', 'Difference']], "background:#2E7D32;color:#fff;font-weight:bold;"), use_container_width=True) if not perf.empty else st.info("None")
+            if not perf.empty:
+                st.dataframe(style(perf[['ERP Invoice', 'Vendor Invoice', 'ERP Amount', 'Vendor Amount', 'Difference']], "background:#2E7D32;color:#fff;font-weight:bold;"), use_container_width=True)
+            else:
+                st.info("No perfect matches")
         with col_b:
             st.markdown("**Amount Differences (< 1.00)**")
-            st.dataframe(style(diff[['ERP Invoice', 'Vendor Invoice', 'ERP Amount', 'Vendor Amount', 'Difference']], "background:#FF8F00;color:#fff;font-weight:bold;"), use_container_width=True) if not diff.empty else st.success("None")
+            if not diff.empty:
+                st.dataframe(style(diff[['ERP Invoice', 'Vendor Invoice', 'ERP Amount', 'Vendor Amount', 'Difference']], "background:#FF8F00;color:#fff;font-weight:bold;"), use_container_width=True)
+            else:
+                st.success("No differences")
 
         st.markdown('<h2 class="section-title">Tier-2: Fuzzy + Small Diff</h2>', unsafe_allow_html=True)
-        st.dataframe(style(tier2, "background:#26A69A;color:#fff;font-weight:bold;"), use_container_width=True) if not tier2.empty else st.info("None")
+        if not tier2.empty:
+            st.dataframe(style(tier2, "background:#26A69A;color:#fff;font-weight:bold;"), use_container_width=True)
+        else:
+            st.info("No Tier-2 matches")
 
         st.markdown('<h2 class="section-title">Tier-3: Date + Strict Fuzzy</h2>', unsafe_allow_html=True)
-        st.dataframe(style(tier3, "background:#7E57C2;color:#fff;font-weight:bold;"), use_container_width=True) if not tier3.empty else st.info("None")
+        if not tier3.empty:
+            st.dataframe(style(tier3, "background:#7E57C2;color:#fff;font-weight:bold;"), use_container_width=True)
+        else:
+            st.info("No Tier-3 matches")
 
         col_m1, col_m2 = st.columns(2)
         with col_m1:
             st.markdown('<h2 class="section-title">Missing in ERP</h2>', unsafe_allow_html=True)
-            st.dataframe(style(final_ven_miss, "background:#AD1457;color:#fff;font-weight:bold;"), use_container_width=True) if not final_ven_miss.empty else st.success("All found")
+            if not final_ven_miss.empty:
+                st.dataframe(style(final_ven_miss, "background:#AD1457;color:#fff;font-weight:bold;"), use_container_width=True)
+            else:
+                st.success("All vendor invoices found in ERP")
         with col_m2:
             st.markdown('<h2 class="section-title">Missing in Vendor</h2>', unsafe_allow_html=True)
-            st.dataframe(style(final_erp_miss, "background:#C62828;color:#fff;font-weight:bold;"), use_container_width=True) if not final_erp_miss.empty else st.success("All found")
+            if not final_erp_miss.empty:
+                st.dataframe(style(final_erp_miss, "background:#C62828;color:#fff;font-weight:bold;"), use_container_width=True)
+            else:
+                st.success("All ERP invoices found in vendor")
 
         st.markdown('<h2 class="section-title">Payments</h2>', unsafe_allow_html=True)
         col_p1, col_p2 = st.columns(2)
@@ -397,14 +414,16 @@ if uploaded_erp and uploaded_vendor:
                 disp = erp_pay[['reason_erp', 'debit_erp', 'credit_erp', 'Amount']].copy()
                 disp.columns = ['Reason', 'Debit', 'Credit', 'Net']
                 st.dataframe(disp.style.apply(lambda _: ['background:#4CAF50;color:#fff'] * len(_), axis=1), use_container_width=True)
-            else: st.info("None")
+            else:
+                st.info("No ERP payments")
         with col_p2:
             st.markdown("**Vendor Payments**")
             if not ven_pay.empty:
                 disp = ven_pay[['reason_ven', 'debit_ven', 'credit_ven', 'Amount']].copy()
                 disp.columns = ['Reason', 'Debit', 'Credit', 'Net']
                 st.dataframe(disp.style.apply(lambda _: ['background:#2196F3;color:#fff'] * len(_), axis=1), use_container_width=True)
-            else: st.info("None")
+            else:
+                st.info("No vendor payments")
         if not pay_match.empty:
             st.markdown("**Matched Payments**")
             st.dataframe(pay_match.style.apply(lambda _: ['background:#004D40;color:#fff;font-weight:bold'] * len(_), axis=1), use_container_width=True)
