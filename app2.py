@@ -675,8 +675,7 @@ if uploaded_erp and uploaded_vendor:
                 pay_match.style.apply(lambda _: ['background:#004D40;color:#fff;font-weight:bold'] * len(_), axis=1),
                 use_container_width=True
             )
-
-     except Exception as e:
+except Exception as e:
             st.error(f"Error: {e}")
             st.info("Check that your files contain columns like: **invoice**, **debit/credit**, **date**, **reason**")
 
