@@ -1,103 +1,3 @@
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel
-import base64, io, os, json, re, pdfplumber, openpyxl, fitz, pytesseract
-from PIL import Image
-from openai import OpenAI
-from dotenv import load_dotenv
-
-load_dotenv()
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-app = FastAPI()
-
-class FilePayload(BaseModel):
-    filename: str
-    content: str
-
-@app.middleware("http")
-async def allow_chunked_requests(request: Request, call_next):
-    if request.headers.get("transfer-encoding", "").lower() == "chunked":
-        body = await request.body()
-        request._body = body
-    return await call_next(request)
-
-def extract_text_from_pdf_all(file_bytes: bytes) -> str:
-    text = ""
-    # 1. pdfplumber
-    try:
-        with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
-            for page in pdf.pages:
-                t = page.extract_text()
-                if t:
-                    text += t + "\n"
-    except Exception as e:
-        print(f"[PDFPlumber Error] {e}")
-    # 2. PyMuPDF
-    try:
-        doc = fitz.open(stream=file_bytes, filetype="pdf")
-        for page in doc:
-            text += page.get_text("text") + "\n"
-        doc.close()
-    except Exception as e:
-        print(f"[PyMuPDF Error] {e}")
-    # 3. OCR fallback
-    if len(text.strip()) < 50:
-        try:
-            doc = fitz.open(stream=file_bytes, filetype="pdf")
-            for i in range(min(10, len(doc))):
-                pix = doc[i].get_pixmap(dpi=200)
-                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-                ocr = pytesseract.image_to_string(img, lang="eng+spa")
-                text += ocr + "\n"
-            doc.close()
-        except Exception as e:
-            print(f"[OCR Error] {e}")
-    return text.strip()
-
-def extract_text_from_file(file_bytes: bytes, filename: str) -> str:
-    filename = filename.lower()
-    if filename.endswith(".pdf"):
-        return extract_text_from_pdf_all(file_bytes)
-    elif filename.endswith((".xlsx", ".xls")):
-        text = ""
-        try:
-            wb = openpyxl.load_workbook(io.BytesIO(file_bytes), read_only=True)
-            for sheet in wb.sheetnames:
-                ws = wb[sheet]
-                for row in ws.iter_rows(values_only=True):
-                    row_text = " ".join([str(cell) for cell in row if cell not in (None, "")])
-                    if row_text:
-                        text += row_text + "\n"
-        except Exception as e:
-            print(f"[Excel Error] {e}")
-        return text
-    else:
-        return file_bytes.decode("utf-8", errors="ignore")
-
-def normalize(txt: str) -> str:
-    txt = txt.upper()
-    txt = re.sub(r"[ÁÀÂÃÄÅ]", "A", txt)
-    txt = re.sub(r"[ÉÈÊË]", "E", txt)
-    txt = re.sub(r"[ÍÌÎÏ]", "I", txt)
-    txt = re.sub(r"[ÓÒÔÕÖØ]", "O", txt)
-    txt = re.sub(r"[ÚÙÛÜ]", "U", txt)
-    txt = re.sub(r"[Ñ]", "N", txt)
-    txt = txt.replace("Ç", "C")
-    txt = txt.replace("\xa0", " ").replace("\u00a0", " ")
-    txt = re.sub(r"[^A-Z0-9\s]", " ", txt)
-    txt = re.sub(r"\s+", " ", txt)
-    return txt.strip()
-
-def detect_ikos_hotel(text: str) -> str:
-    norm = normalize(text)
-    if "IKOS" in norm and any(kw in norm for kw in ["ODISIA", "ESTEPONA", "ANDALUSIA", "ANDALUCIA", "COSTA DEL SOL", "MALAGA"]):
-        return "ANDALUSIA"
-    if "IKOS" in norm and any(kw in norm for kw in ["PORTO PETRO", "PORTOPETRO", "MALLORCA", "CALA DOR", "SANTANYI"]):
-        return "PORTO PETRO"
-    if any(kw in norm for kw in ["SPANISH HOTEL", "HOTEL MANAGEMENT", "IKOS RESORTS SPAIN", "IKOS GROUP", "IKOS INTERNATIONAL", "SANI IKOS", "IKOS HOTELS SPAIN"]):
-        return "IKOS SPANISH HOTEL MANAGEMENT"
-    return None
-
 @app.post("/analyze")
 async def analyze(request: Request):
     try:
@@ -106,40 +6,56 @@ async def analyze(request: Request):
         except Exception:
             body = await request.body()
             return JSONResponse({"keyword": "OTHER", "error": f"Invalid JSON: {body[:100].decode(errors='ignore')}"})
+
         filename = data.get("filename", "unknown")
         content_b64 = data.get("content", "")
         if not content_b64:
             return JSONResponse({"keyword": "OTHER", "error": "Empty content"})
+
         file_bytes = base64.b64decode(content_b64)
         raw_text = extract_text_from_file(file_bytes, filename)
         text = normalize(raw_text)
-        print(f"\n[DEBUG] File: {filename}")
-        print(f"[DEBUG] Text length: {len(text)}")
-        print(f"[DEBUG] Sample: {text[:500]}\n")
 
-        # FILENAME DETECTION (BACKUP)
-        filename_lower = filename.lower()
-        if any(kw in filename_lower for kw in ["andalusia", "odisia", "estepona"]):
+        # --------------------------------------------------------------
+        # DEBUG (keep it – helps you see why a file fails)
+        # --------------------------------------------------------------
+        print(f"\n[DEBUG] File: {filename}")
+        print(f"[DEBUG] Raw len: {len(raw_text)} | Norm len: {len(text)}")
+        print(f"[DEBUG] Sample: {text[:300]}")
+        print(f"[DEBUG] IKOS?: {'IKOS' in text} | PORTO PETRO?: {'PORTO PETRO' in text}")
+
+        # --------------------------------------------------------------
+        # 1. FILENAME FAST-PATH
+        # --------------------------------------------------------------
+        filename_norm = normalize(filename)
+        if any(k in filename_norm for k in ["ANDALUSIA", "ODISIA", "ESTEPONA", "COSTA DEL SOL"]):
             return JSONResponse({"keyword": "ANDALUSIA", "error": ""})
-        if any(kw in filename_lower for kw in ["porto petro", "portopetro", "mallorca"]):
+        if "PORTO PETRO" in filename_norm:
             return JSONResponse({"keyword": "PORTO PETRO", "error": ""})
 
-        # TEXT DETECTION
+        # --------------------------------------------------------------
+        # 2. LOCAL KEYWORD DETECTION
+        # --------------------------------------------------------------
         local_result = detect_ikos_hotel(text)
         if local_result:
             return JSONResponse({"keyword": local_result, "error": ""})
 
-        # LLM FALLBACK
+        # --------------------------------------------------------------
+        # 3. LLM FALLBACK (only if we really have no clue)
+        # --------------------------------------------------------------
         if len(text) > 50:
             prompt = f"""
-You are a strict JSON classifier. Return ONLY valid JSON.
-Rules:
-- "ANDALUSIA" → if mentions: Odisia, Estepona, Andalusia, Costa del Sol + Ikos
-- "PORTO PETRO" → if mentions: Porto Petro, Portopetro, Mallorca + Ikos
-- "IKOS SPANISH HOTEL MANAGEMENT" → if mentions: Spanish Hotel Management, Ikos Resorts Spain
-- Otherwise → "OTHER"
-Text:
-{text[:3000]}
+You are a JSON classifier. Return **only** valid JSON.
+
+Text (first 6000 chars):
+{text[:6000]}
+
+Rules (exact phrase match):
+- "ANDALUSIA"  → contains "IKOS" AND any of: Odisia, Estepona, Andalusia, Costa del Sol, Malaga
+- "PORTO PETRO" → contains **both** "IKOS" **and** the exact phrase "PORTO PETRO"
+- "IKOS SPANISH HOTEL MANAGEMENT" → contains any of: Spanish Hotel, Ikos Resorts Spain, hotel management
+- otherwise → "OTHER"
+
 Return ONLY:
 {{"keyword": "ANDALUSIA" | "PORTO PETRO" | "IKOS SPANISH HOTEL MANAGEMENT" | "OTHER"}}
 """
@@ -161,10 +77,5 @@ Return ONLY:
                 return JSONResponse({"keyword": "OTHER", "error": f"LLM failed: {str(e)[:100]}"})
 
         return JSONResponse({"keyword": "OTHER", "error": "Empty PDF - no text extracted"})
-
     except Exception as e:
         return JSONResponse({"keyword": "OTHER", "error": f"Server error: {str(e)[:100]}"})
-
-@app.get("/ping")
-async def ping():
-    return JSONResponse({"status": "ok", "message": "Server reachable"})
