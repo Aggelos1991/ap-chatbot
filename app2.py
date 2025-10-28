@@ -603,7 +603,7 @@ if uploaded_erp and uploaded_vendor:
                 use_container_width=True
             )
 # ---------- EXPORT ----------
-st.markdown('<h2 style="color: #FF6B35;">Download Missing Items</h2>', unsafe_allow_html=True)
+    st.markdown('<h2 style="color: #FF6B35;">Download Excel</h2>', unsafe_allow_html=True)
 try:
     # Check if there is anything to export
     if final_erp_miss.empty and final_ven_miss.empty:
