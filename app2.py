@@ -709,7 +709,6 @@ try:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 
-except Exception as e:
+except Exception as e:   # ← MUST BE AT SAME LEVEL AS `try:`
     st.error(f"Error: {e}")
     st.info("Check that your files contain required columns")
-
