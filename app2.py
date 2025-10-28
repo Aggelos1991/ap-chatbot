@@ -701,7 +701,7 @@ try:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
-except Exception as e:
-    st.error(f"Error: {e}")
-    st.info("Check that your files contain required columns")
+    except Exception as e:
+        st.error(f"Error: {e}")
+        st.info("Check that your files contain required columns")
 
