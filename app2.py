@@ -632,7 +632,7 @@ if uploaded_erp and uploaded_vendor:
         st.download_button(
             label="Download Excel",
             data=export_unmatched_simple(final_erp_miss, final_ven_miss),
-            file_name="Unmatched_Only.xlsx",
+            file_name="Missing_Tables.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
