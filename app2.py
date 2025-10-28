@@ -628,7 +628,7 @@ if uploaded_erp and uploaded_vendor:
             )
 
         # =============== DOWNLOAD: UNMATCHED ONLY (1 TAB, 2 TABLES) ==============
-        st.markdown("### Download excel")
+        st.markdown("### Download Excel")
         st.download_button(
             label="Download Excel",
             data=export_unmatched_simple(final_erp_miss, final_ven_miss),
