@@ -1,9 +1,7 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-import base64, io, os, pdfplumber, openpyxl, json
-import fitz  # PyMuPDF for OCR fallback
-import pytesseract
+import base64, io, os, pdfplumber, openpyxl, json, fitz, pytesseract
 from PIL import Image
 from openai import OpenAI
 from dotenv import load_dotenv
@@ -23,7 +21,7 @@ class FilePayload(BaseModel):
     content: str  # base64 string
 
 # ==========================
-# MIDDLEWARE (Power Automate compatibility)
+# MIDDLEWARE (for Power Automate)
 # ==========================
 @app.middleware("http")
 async def allow_chunked_requests(request: Request, call_next):
@@ -33,26 +31,26 @@ async def allow_chunked_requests(request: Request, call_next):
     return await call_next(request)
 
 # ==========================
-# FILE PARSING HELPER
+# FILE PARSER
 # ==========================
 def extract_text_from_file(file_bytes: bytes, filename: str) -> str:
     text = ""
     filename = filename.lower()
+
     try:
         # --- PDF FILES ---
         if filename.endswith(".pdf"):
-            # Try normal text extraction
             with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
                 for page in pdf.pages[:3]:
                     page_text = page.extract_text()
                     if page_text:
                         text += page_text + "\n"
 
-            # Fallback to OCR if text is empty or too short
-            if len(text.strip()) < 20:
+            # OCR fallback
+            if len(text.strip()) < 30:
                 doc = fitz.open(stream=file_bytes, filetype="pdf")
-                for page_index in range(min(3, len(doc))):
-                    pix = doc[page_index].get_pixmap(dpi=200)
+                for i in range(min(3, len(doc))):
+                    pix = doc[i].get_pixmap(dpi=200)
                     img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
                     ocr_text = pytesseract.image_to_string(img, lang="eng")
                     text += ocr_text + "\n"
@@ -63,16 +61,16 @@ def extract_text_from_file(file_bytes: bytes, filename: str) -> str:
             for sheet in wb.sheetnames:
                 ws = wb[sheet]
                 for row in ws.iter_rows(values_only=True):
-                    text += " ".join([str(cell) for cell in row if cell]) + "\n"
+                    text += " ".join([str(c) for c in row if c]) + "\n"
 
-        # --- OTHER TEXT FILES ---
+        # --- TXT / OTHER ---
         else:
             text = file_bytes.decode(errors="ignore")
 
     except Exception as e:
         text = f"Error reading file: {e}"
 
-    return text[:6000]  # Limit to first 6000 chars to control token usage
+    return text[:6000]
 
 # ==========================
 # ROUTE
@@ -80,7 +78,7 @@ def extract_text_from_file(file_bytes: bytes, filename: str) -> str:
 @app.post("/analyze")
 async def analyze(request: Request):
     try:
-        # 1️⃣ Read JSON payload safely
+        # --- Read payload ---
         try:
             data = await request.json()
         except Exception:
@@ -89,52 +87,48 @@ async def analyze(request: Request):
 
         filename = data.get("filename", "unknown")
         content_b64 = data.get("content", "")
-
         if not content_b64:
             return JSONResponse({"keyword": "OTHER", "error": "Empty content"})
 
-        # 2️⃣ Decode file and extract text
         file_bytes = base64.b64decode(content_b64)
         text = extract_text_from_file(file_bytes, filename)
-        upper_text = text.upper()
+        upper_text = text.upper().replace("Í", "I").replace("Á", "A").replace("É", "E")
 
-        # 3️⃣ Fast local detection (before LLM)
-        if any(k in upper_text for k in ["ANDALUSIA", "IKOS ANDALUSIA"]):
+        # --- Fast Local Match ---
+        if "ANDALUSIA" in upper_text or "IKOS ANDALUSIA" in upper_text or "ANDALUCIA" in upper_text:
             return JSONResponse({"keyword": "ANDALUSIA", "error": ""})
-        elif any(k in upper_text for k in ["PORTO PETRO", "IKOS PORTO"]):
+        elif any(k in upper_text for k in ["PORTO PETRO", "IKOS PORTO", "PORTOPETRO"]):
             return JSONResponse({"keyword": "PORTO PETRO", "error": ""})
-        elif "IKOS SPANISH" in upper_text or "SPANISH HOTEL MANAGEMENT" in upper_text:
+        elif any(k in upper_text for k in ["IKOS SPANISH", "SPANISH HOTEL MANAGEMENT"]):
             return JSONResponse({"keyword": "IKOS SPANISH HOTEL MANAGEMENT", "error": ""})
 
-        # 4️⃣ Fallback to LLM classification if no local match
+        # --- GPT Classification ---
         prompt = f"""
-You are a strict JSON classifier for hotel identification.
+You are a strict JSON classifier that identifies which IKOS hotel a text belongs to.
 
-Analyze the following text and detect which known entity it belongs to.
-Return ONE valid JSON object with two fields: "keyword" and "error".
-Never include explanations or text outside JSON.
+Analyze the text below and output **only** one valid JSON object in this exact format:
+{{
+  "keyword": "ANDALUSIA" | "PORTO PETRO" | "IKOS SPANISH HOTEL MANAGEMENT" | "OTHER",
+  "error": ""
+}}
 
-Possible keyword values (case-insensitive, accept fuzzy mentions like 'Ikos Andalusia', 'Andalusía', etc.):
-- "ANDALUSIA"
-- "PORTO PETRO"
-- "IKOS SPANISH HOTEL MANAGEMENT"
-- "OTHER"  (use only if none of the above appear)
+Rules:
+- Classify as "ANDALUSIA" if you see "Ikos Andalusia", "Andalucía", or similar.
+- Classify as "PORTO PETRO" if you see "Ikos Porto Petro", "PortoPetro", or "Ikos Porto".
+- Classify as "IKOS SPANISH HOTEL MANAGEMENT" if you see "Ikos Spanish Hotels Management".
+- Otherwise, use "OTHER".
 
-Return format example:
-{{"keyword": "ANDALUSIA", "error": ""}}
-
-Text to analyze:
+Text:
 {text[:3500]}
         """
 
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
-            temperature=0
+            temperature=0,
         )
 
         raw = response.choices[0].message.content.strip()
-
         try:
             parsed = json.loads(raw)
             keyword = parsed.get("keyword", "OTHER").upper()
@@ -149,7 +143,7 @@ Text to analyze:
                 keyword = "IKOS SPANISH HOTEL MANAGEMENT"
             else:
                 keyword = "OTHER"
-            error = f"Unstructured response: {raw}"
+            error = f"Unstructured LLM output: {raw}"
 
         return JSONResponse({"keyword": keyword, "error": error})
 
