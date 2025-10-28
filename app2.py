@@ -9,18 +9,33 @@ from openpyxl.styles import PatternFill, Font, Alignment
 from difflib import SequenceMatcher
 
 # ==================== PAGE CONFIG & CSS ======================
-st.set_page_config(page_title="ReconRaptor", layout="wide")
+st.set_page_config(page_title="ReconRaptor — Vendor Reconciliation", layout="wide")
 st.markdown(
     """
 <style>
-    .big-title {font-size: 3rem !important; font-weight: 700; text-align: center;
-                background: linear-gradient(90deg, #1E88E5, #42A5F5);
-                -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-                margin-bottom: 1rem;}
-    .section-title {font-size: 1.8rem !important; font-weight: 600; color: #1565C0;
-                    border-bottom: 2px solid #42A5F5; padding-bottom: 0.5rem; margin-top: 2rem;}
-    .metric-container {padding: 1.2rem !important; border-radius: 12px !important;
-                       margin-bottom: 1rem; box-shadow: 0 4px 6px rgba(0,0,0,0.1);}
+    .big-title {
+        font-size: 3rem !important;
+        font-weight: 700;
+        text-align: center;
+        background: linear-gradient(90deg, #1E88E5, #42A5F5);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        margin-bottom: 1rem;
+    }
+    .section-title {
+        font-size: 1.8rem !important;
+        font-weight: 600;
+        color: #1565C0;
+        border-bottom: 2px solid #42A5F5;
+        padding-bottom: 0.5rem;
+        margin-top: 2rem;
+    }
+    .metric-container {
+        padding: 1.2rem !important;
+        border-radius: 12px !important;
+        margin-bottom: 1rem;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
     .perfect-match {background:#2E7D32;color:#fff;font-weight:bold;}
     .difference-match{background:#FF8F00;color:#fff;font-weight:bold;}
     .tier2-match {background:#26A69A;color:#fff;font-weight:bold;}
@@ -32,11 +47,14 @@ st.markdown(
 """,
     unsafe_allow_html=True,
 )
+
+# ==================== TITLES =========================
 st.markdown('<h1 class="big-title">ReconRaptor</h1>', unsafe_allow_html=True)
 st.markdown("<p style='text-align: center; font-size: 1.3rem; color: #555;'>Intelligent Vendor Invoice Reconciliation</p>", unsafe_allow_html=True)
 
-# ==================== HELPERS ==========================
-def fuzzy_ratio(a, b): return SequenceMatcher(None, str(a), str(b)).ratio()
+# ====================== HELPERS ==========================
+def fuzzy_ratio(a, b):
+    return SequenceMatcher(None, str(a), str(b)).ratio()
 
 def normalize_number(v):
     if pd.isna(v) or str(v).strip() == "": return 0.0
@@ -114,7 +132,7 @@ def normalize_columns(df, tag):
 
 def style(df, css): return df.style.apply(lambda _: [css] * len(_), axis=1)
 
-# ==================== CONSOLIDATION FUNCTION ==========================
+# ==================== CONSOLIDATION ==========================
 def consolidate_by_invoice(df: pd.DataFrame, inv_col: str) -> pd.DataFrame:
     records = []
     if inv_col not in df.columns:
@@ -137,7 +155,7 @@ def consolidate_by_invoice(df: pd.DataFrame, inv_col: str) -> pd.DataFrame:
         records.append(base)
     return pd.DataFrame(records).reset_index(drop=True)
 
-# ==================== MATCHING CORE (FIXED: 100% MATCHES STAY IN TIER-1) ==========================
+# ==================== MATCHING CORE (TIER-1 FIXED) ==========================
 def match_invoices(erp_df, ven_df):
     matched = []; used_vendor = set()
 
@@ -158,16 +176,12 @@ def match_invoices(erp_df, ven_df):
     ven_df["__type"] = ven_df.apply(lambda r: doc_type(r, "ven"), axis=1)
 
     erp_df["__amt"] = erp_df.apply(
-        lambda r: abs(normalize_number(r.get("debit_erp", 0)) -
-                      normalize_number(r.get("credit_erp", 0))), axis=1)
+        lambda r: abs(normalize_number(r.get("debit_erp", 0)) - normalize_number(r.get("credit_erp", 0))), axis=1)
     ven_df["__amt"] = ven_df.apply(
-        lambda r: abs(normalize_number(r.get("debit_ven", 0)) -
-                      normalize_number(r.get("credit_ven", 0))), axis=1)
+        lambda r: abs(normalize_number(r.get("debit_ven", 0)) - normalize_number(r.get("credit_ven", 0))), axis=1)
 
-    erp_use = consolidate_by_invoice(
-        erp_df[erp_df["__type"] != "IGNORE"].copy(), "invoice_erp")
-    ven_use = consolidate_by_invoice(
-        ven_df[ven_df["__type"] != "IGNORE"].copy(), "invoice_ven")
+    erp_use = consolidate_by_invoice(erp_df[erp_df["__type"] != "IGNORE"].copy(), "invoice_erp")
+    ven_use = consolidate_by_invoice(ven_df[ven_df["__type"] != "IGNORE"].copy(), "invoice_ven")
 
     for e_idx, e in erp_use.iterrows():
         e_inv = str(e.get("invoice_erp", "")).strip().upper()
@@ -204,12 +218,8 @@ def match_invoices(erp_df, ven_df):
     miss_erp = erp_use[~erp_use["invoice_erp"].isin(matched_ven)].copy()
     miss_ven = ven_use[~ven_use["invoice_ven"].isin(matched_erp)].copy()
 
-    miss_erp = miss_erp.rename(columns={"invoice_erp": "Invoice",
-                                        "__amt": "Amount",
-                                        "date_erp": "Date"})
-    miss_ven = miss_ven.rename(columns={"invoice_ven": "Invoice",
-                                        "__amt": "Amount",
-                                        "date_ven": "Date"})
+    miss_erp = miss_erp.rename(columns={"invoice_erp": "Invoice", "__amt": "Amount", "date_erp": "Date"})
+    miss_ven = miss_ven.rename(columns={"invoice_ven": "Invoice", "__amt": "Amount", "date_ven": "Date"})
 
     keep = ["Invoice", "Amount", "Date"]
     miss_erp = miss_erp[[c for c in keep if c in miss_erp.columns]].reset_index(drop=True)
