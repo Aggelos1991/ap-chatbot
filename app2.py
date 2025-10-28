@@ -195,35 +195,45 @@ def match_invoices(erp_df, ven_df):
     ven_use = ven_df[ven_df["__type"] != "IGNORE"].copy()
 
     # Consolidate duplicates/corrections into ONE line per invoice (INV total minus CN total)
-    def consolidate_by_invoice(df, inv_col):
-        if inv_col not in df.columns:
-            # if no invoice column found, just return empty structure
-            return pd.DataFrame(columns=df.columns)
+   def consolidate_by_invoice(df, inv_col):
+    if inv_col not in df.columns:
+        return pd.DataFrame(columns=df.columns)
+    
         records = []
+        cancel_kw = [
+            "cancel", "cancellation", "correct", "correction", "storno",
+            "reversal", "void", "αντιλογισ", "ακυρω", "διόρθωση"
+        ]
+    
         for inv, group in df.groupby(inv_col, dropna=False):
             if group.empty:
                 continue
-           # try to derive a signed net amount:
-            total = 0
+    
+            total = 0.0
             for _, row in group.iterrows():
                 amt = normalize_number(row.get("__amt", 0))
-                typ = row.get("__type", "INV")
-                if typ == "CN":
+                reason = str(row.get(f"reason_erp", "")) + " " + str(row.get(f"reason_ven", ""))
+                reason = reason.lower()
+    
+                # Detect negative corrections based on text keywords
+                if any(k in reason for k in cancel_kw):
+                    total -= amt
+                elif row.get("__type", "INV") == "CN":
                     total -= amt
                 else:
                     total += amt
     
             net = round(total, 2)
             if abs(net) < 0.01:
-                # skip fully offset invoices (e.g. 1000 - 1000)
-                continue
-
+                continue  # skip fully offset (1000 - 1000)
+    
             base = group.iloc[0].copy()
             base["__amt"] = abs(net)
             base["__type"] = "INV" if net > 0 else "CN"
             records.append(base)
     
         return pd.DataFrame(records).reset_index(drop=True)
+
     erp_use = consolidate_by_invoice(erp_use, "invoice_erp")
     ven_use = consolidate_by_invoice(ven_use, "invoice_ven")
 
