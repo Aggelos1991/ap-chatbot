@@ -167,21 +167,37 @@ def match_invoices(erp_df, ven_df):
     erp_use = erp_df[erp_df["__type"] != "IGNORE"].copy()
     ven_use = ven_df[ven_df["__type"] != "IGNORE"].copy()
 
-    # UPDATED: consolidate duplicates & corrections (sum INVs minus sum CNs) into a single line per invoice
+        # UPDATED: Consolidate all duplicate/corrected invoices into one final record
     def consolidate_by_invoice(df, inv_col):
-        rows = []
-        for inv, g in df.groupby(inv_col, dropna=False):
-            if g.empty:
+        records = []
+        for inv, group in df.groupby(inv_col, dropna=False):
+            if group.empty:
                 continue
-            sum_inv = g.loc[g["__type"] == "INV", "__amt"].sum()
-            sum_cn  = g.loc[g["__type"] == "CN", "__amt"].sum()
-            net_amt = round(abs(sum_inv - sum_cn), 2) if (sum_inv or sum_cn) else round(g["__amt"].sum(), 2)
-            base = g.iloc[-1].copy()
-            base["__amt"] = net_amt
-            # Αν δεν υπάρχει καθόλου τύπος, κρατάμε INV ως default όταν υπάρχει χρέωση
-            base["__type"] = "INV" if sum_inv >= sum_cn else ("CN" if sum_cn > sum_inv else base["__type"])
-            rows.append(base)
-        return pd.DataFrame(rows).reset_index(drop=True)
+
+            # Separate by document type
+            inv_rows = group[group["__type"] == "INV"]
+            cn_rows = group[group["__type"] == "CN"]
+
+            # Calculate total invoice minus total credit
+            total_inv = inv_rows["__amt"].sum()
+            total_cn = cn_rows["__amt"].sum()
+            net_amount = round(total_inv - total_cn, 2)
+
+            # Create one consolidated entry if net amount ≠ 0
+            if abs(net_amount) > 0.00:
+                base = group.iloc[0].copy()
+                base["__amt"] = abs(net_amount)
+                base["__type"] = "INV" if net_amount > 0 else "CN"
+                records.append(base)
+            else:
+                # If the net = 0, still show one entry to prove full cancellation
+                base = group.iloc[0].copy()
+                base["__amt"] = 0.00
+                base["__type"] = "INV"
+                records.append(base)
+
+        return pd.DataFrame(records).reset_index(drop=True)
+
 
     erp_use = consolidate_by_invoice(erp_use, "invoice_erp")
     ven_use = consolidate_by_invoice(ven_use, "invoice_ven")
