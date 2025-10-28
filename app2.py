@@ -109,7 +109,7 @@ def normalize_columns(df, tag):
 # ==================== CONSOLIDATION ==========================
 payment_keywords = [
     "remittances to suppliers", "payment receipts", "payments", "remesa", "pago", "recibo de pago",
-    "πληρωμή", "απόδειξη πληρωμής", "εισπράξεις", "εξόφληση", "πληρωμές", "remittance", "pay", "receipt"
+    "πληρωμή", "απόδειξη πληρωμής", "εισπράξεις", "εξόφληση", "πληρωμές", "remittance", "pay", "receipt", "payment"
 ]
 
 def consolidate_by_invoice(df: pd.DataFrame, inv_col: str, tag: str) -> pd.DataFrame:
@@ -242,12 +242,13 @@ def match_invoices(erp_use, ven_use):
     remain_erp = inv_erp[~inv_erp.index.isin(used_erp_inv)]
     remain_ven = inv_ven[~inv_ven.index.isin(used_ven_inv)]
 
-    # Tier 3: Fuzzy (>=85%), exact date + amount
+    # Tier 3: Fuzzy (>=85%), exact amount + date (both must be present and match)
     for e_idx, e in remain_erp.iterrows():
         if e_idx in used_erp_inv: continue
         e_inv = e["invoice_erp"]
         e_amt = round(e["__amt"], 2)
         e_date = e.get("date_erp", "")
+        if not e_date: continue  # Skip if no date
         best_vidx = None
         best_ratio = 0
         for v_idx, v in remain_ven.iterrows():
@@ -255,6 +256,7 @@ def match_invoices(erp_use, ven_use):
             v_inv = v["invoice_ven"]
             v_amt = round(v["__amt"], 2)
             v_date = v.get("date_ven", "")
+            if not v_date: continue  # Skip if no date
             if e_date == v_date and abs(e_amt - v_amt) <= 0.01:
                 ratio = fuzzy_ratio(e_inv, v_inv)
                 if ratio >= 0.85 and ratio > best_ratio:
@@ -280,7 +282,7 @@ def match_invoices(erp_use, ven_use):
         columns={"invoice_ven": "Invoice", "__amt": "Amount", "date_ven": "Date"}
     )[['Invoice', 'Amount', 'Date']]
 
-    # Payments
+    # Payments - match by amount only (no invoice)
     matched_pay = []
     used_erp_pay = set()
     used_ven_pay = set()
@@ -347,7 +349,7 @@ if uploaded_erp and uploaded_vendor:
 
     # --- SUMMARY ---
     with tab1:
-        c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
+        c1, c2, c3, c4, c5, c6,—no c7 = st.columns(7)
         c1.markdown(f"<div class='metric-box green'>Perfect<br><h2>{len(t1_perfect)}</h2></div>", unsafe_allow_html=True)
         c2.markdown(f"<div class='metric-box orange'>Diff (±1)<br><h2>{len(t1_diff)}</h2></div>", unsafe_allow_html=True)
         c3.markdown(f"<div class='metric-box teal'>Tier-2<br><h2>{len(t2_fuzzy)}</h2></div>", unsafe_allow_html=True)
