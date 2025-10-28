@@ -604,7 +604,6 @@ if uploaded_erp and uploaded_vendor:
             )
 # ---------- EXPORT ----------
     
-try:
     st.markdown('<h2 style="color: #FF6B35;">Download Excel</h2>', unsafe_allow_html=True)
     # Check if there is anything to export
     if final_erp_miss.empty and final_ven_miss.empty:
@@ -633,6 +632,4 @@ try:
             file_name="Missing_Items.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
-except Exception as e:  # ← FIXED: Now aligned with `try:`
-    st.error(f"Error: {e}")
-    st.info("Check that your files contain required columns")
+
