@@ -181,16 +181,20 @@ def match_invoices(erp_df, ven_df):
         return "UNKNOWN"
     erp_df["__type"] = erp_df.apply(lambda r: doc_type(r, "erp"), axis=1)
     ven_df["__type"] = ven_df.apply(lambda r: doc_type(r, "ven"), axis=1)
+    # === FIX: Use SIGNED net amount (debit - credit) ===
     erp_df["__amt"] = erp_df.apply(
-        lambda r: abs(normalize_number(r.get("debit_erp", 0)) - normalize_number(r.get("credit_erp", 0))), axis=1
+        lambda r: normalize_number(r.get("debit_erp", 0)) - normalize_number(r.get("credit_erp", 0)), axis=1
+    )
+    ven_df["__amt"] = ven_df.apply(
+        lambda r: normalize_number(r.get("debit_ven", 0)) - normalize_number(r.get("credit_ven", 0)), axis=1
     )
     ven_df["__amt"] = ven_df.apply(
         lambda r: abs(normalize_number(r.get("debit_ven", 0)) - normalize_number(r.get("credit_ven", 0))), axis=1
     )
     erp_use = erp_df[erp_df["__type"] != "IGNORE"].copy()
     ven_use = ven_df[ven_df["__type"] != "IGNORE"].copy()
-
-    # Consolidate duplicates/corrections into ONE line per invoice
+    
+    # ADD THIS NEW VERSION (PRESERVES SIGN!)
     def consolidate_by_invoice(df, inv_col):
         records = []
         if inv_col not in df.columns:
@@ -198,16 +202,16 @@ def match_invoices(erp_df, ven_df):
         for inv, group in df.groupby(inv_col, dropna=False):
             if group.empty:
                 continue
+            # Sum signed amounts: INV = positive, CN = negative
             sum_inv = group.loc[group["__type"] == "INV", "__amt"].sum()
             sum_cn = group.loc[group["__type"] == "CN", "__amt"].sum()
             net = round(sum_inv - sum_cn, 2)
             base = group.iloc[0].copy()
-            base["__amt"] = abs(net)
+            base["__amt"] = net  # KEEP SIGN (no abs!)
             base["__type"] = "INV" if net >= 0 else "CN"
             records.append(base)
         out = pd.DataFrame(records).reset_index(drop=True)
         return out
-
     erp_use = consolidate_by_invoice(erp_use, "invoice_erp")
     ven_use = consolidate_by_invoice(ven_use, "invoice_ven")
 
