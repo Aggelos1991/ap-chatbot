@@ -159,6 +159,7 @@ def consolidate_by_invoice(df: pd.DataFrame, inv_col: str) -> pd.DataFrame:
 def match_invoices(erp_df, ven_df):
     matched = []; used_vendor = set()
 
+    # ---- classify rows -------------------------------------------------
     def doc_type(row, tag):
         r = str(row.get(f"reason_{tag}", "")).lower()
         pay_pat = [r"^πληρωμ", r"^απόδειξη\s*πληρωμ", r"^payment", r"^payment\s*remittance",
@@ -176,21 +177,27 @@ def match_invoices(erp_df, ven_df):
     ven_df["__type"] = ven_df.apply(lambda r: doc_type(r, "ven"), axis=1)
 
     erp_df["__amt"] = erp_df.apply(
-        lambda r: abs(normalize_number(r.get("debit_erp", 0)) - normalize_number(r.get("credit_erp", 0))), axis=1)
+        lambda r: abs(normalize_number(r.get("debit_erp", 0)) -
+                      normalize_number(r.get("credit_erp", 0))), axis=1)
     ven_df["__amt"] = ven_df.apply(
-        lambda r: abs(normalize_number(r.get("debit_ven", 0)) - normalize_number(r.get("credit_ven", 0))), axis=1)
+        lambda r: abs(normalize_number(r.get("debit_ven", 0)) -
+                      normalize_number(r.get("credit_ven", 0))), axis=1)
 
-    erp_use = consolidate_by_invoice(erp_df[erp_df["__type"] != "IGNORE"].copy(), "invoice_erp")
-    ven_use = consolidate_by_invoice(ven_df[ven_df["__type"] != "IGNORE"].copy(), "invoice_ven")
+    # ---- consolidate (one net line per invoice) ------------------------
+    erp_use = consolidate_by_invoice(
+        erp_df[erp_df["__type"] != "IGNORE"].copy(), "invoice_erp")
+    ven_use = consolidate_by_invoice(
+        ven_df[ven_df["__type"] != "IGNORE"].copy(), "invoice_ven")
 
+    # ---- TIER-1: EXACT MATCH -------------------------------------------
     for e_idx, e in erp_use.iterrows():
-        e_inv = str(e.get("invoice_erp", "")).strip().upper()
+        e_inv = str(e.get("invoice_erp", "")).strip().upper()   # <-- normalised
         e_amt = round(float(e.get("__amt", 0.0)), 2)
         e_typ = e.get("__type", "INV")
 
         for v_idx, v in ven_use.iterrows():
             if v_idx in used_vendor: continue
-            v_inv = str(v.get("invoice_ven", "")).strip().upper()
+            v_inv = str(v.get("invoice_ven", "")).strip().upper()   # <-- normalised
             v_amt = round(float(v.get("__amt", 0.0)), 2)
             v_typ = v.get("__type", "INV")
 
@@ -199,9 +206,10 @@ def match_invoices(erp_df, ven_df):
             diff = abs(e_amt - v_amt)
             status = ("Perfect Match" if diff <= 0.01
                       else "Difference Match" if diff < 1.0 else None)
+
             if status:
                 matched.append({
-                    "ERP Invoice": e.get("invoice_erp"),
+                    "ERP Invoice": e.get("invoice_erp"),      # original value
                     "Vendor Invoice": v.get("invoice_ven"),
                     "ERP Amount": e_amt,
                     "Vendor Amount": v_amt,
@@ -209,8 +217,9 @@ def match_invoices(erp_df, ven_df):
                     "Status": status
                 })
                 used_vendor.add(v_idx)
-                break
+                break   # <-- 1-to-1, prevents Tier-2 stealing
 
+    # ---- return results ------------------------------------------------
     matched_df = pd.DataFrame(matched)
     matched_erp = set(matched_df["ERP Invoice"]) if not matched_df.empty else set()
     matched_ven = set(matched_df["Vendor Invoice"]) if not matched_df.empty else set()
