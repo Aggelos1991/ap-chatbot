@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-import base64, io, os, pdfplumber, openpyxl, json, fitz, pytesseract
+import base64, io, os, json, re, pdfplumber, openpyxl, fitz, pytesseract
 from PIL import Image
 from openai import OpenAI
 from dotenv import load_dotenv
@@ -21,7 +21,7 @@ class FilePayload(BaseModel):
     content: str  # base64 string
 
 # ==========================
-# MIDDLEWARE (for Power Automate)
+# MIDDLEWARE (Power Automate support)
 # ==========================
 @app.middleware("http")
 async def allow_chunked_requests(request: Request, call_next):
@@ -46,10 +46,10 @@ def extract_text_from_file(file_bytes: bytes, filename: str) -> str:
                     if page_text:
                         text += page_text + "\n"
 
-            # OCR fallback
+            # OCR fallback if text is short
             if len(text.strip()) < 30:
                 doc = fitz.open(stream=file_bytes, filetype="pdf")
-                for i in range(min(3, len(doc))):
+                for i in range(min(5, len(doc))):  # up to 5 pages
                     pix = doc[i].get_pixmap(dpi=200)
                     img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
                     ocr_text = pytesseract.image_to_string(img, lang="eng")
@@ -90,33 +90,53 @@ async def analyze(request: Request):
         if not content_b64:
             return JSONResponse({"keyword": "OTHER", "error": "Empty content"})
 
+        # --- Decode and extract text ---
         file_bytes = base64.b64decode(content_b64)
         text = extract_text_from_file(file_bytes, filename)
-        upper_text = text.upper().replace("Í", "I").replace("Á", "A").replace("É", "E")
 
-        # --- Fast Local Match ---
-        if "ANDALUSIA" in upper_text or "IKOS ANDALUSIA" in upper_text or "ANDALUCIA" in upper_text:
+        # --- Normalize text (handles accents, newlines, invisible spaces) ---
+        upper_text = (
+            text.upper()
+            .replace("Í", "I").replace("Á", "A").replace("É", "E")
+            .replace("\n", " ").replace("\r", " ")
+            .replace("\xa0", " ").replace("\u00a0", " ")
+        )
+        upper_text = re.sub(r"\s+", " ", upper_text)
+
+        # print sample for debugging
+        print("=== DEBUG TEXT SAMPLE ===")
+        print(upper_text[:500])
+
+        # =============================
+        # FAST LOCAL CLASSIFICATION
+        # =============================
+        if any(k in upper_text for k in ["ANDALUSIA", "IKOS ANDALUSIA", "ANDALUCIA"]):
             return JSONResponse({"keyword": "ANDALUSIA", "error": ""})
-        elif any(k in upper_text for k in ["PORTO PETRO", "IKOS PORTO", "PORTOPETRO"]):
+        elif any(k in upper_text for k in [
+            "PORTO PETRO", "IKOS PORTO PETRO", "PORTOPETRO", "IKOS PORTO", "IKOS PORTO PETR0"
+        ]):
             return JSONResponse({"keyword": "PORTO PETRO", "error": ""})
         elif any(k in upper_text for k in ["IKOS SPANISH", "SPANISH HOTEL MANAGEMENT"]):
             return JSONResponse({"keyword": "IKOS SPANISH HOTEL MANAGEMENT", "error": ""})
 
-        # --- GPT Classification ---
+        # =============================
+        # GPT CLASSIFICATION (Fallback)
+        # =============================
         prompt = f"""
-You are a strict JSON classifier that identifies which IKOS hotel a text belongs to.
+You are a strict JSON classifier that identifies which IKOS hotel a document belongs to.
 
-Analyze the text below and output **only** one valid JSON object in this exact format:
+Analyze the text below and return exactly one valid JSON object:
+
 {{
   "keyword": "ANDALUSIA" | "PORTO PETRO" | "IKOS SPANISH HOTEL MANAGEMENT" | "OTHER",
   "error": ""
 }}
 
 Rules:
-- Classify as "ANDALUSIA" if you see "Ikos Andalusia", "Andalucía", or similar.
-- Classify as "PORTO PETRO" if you see "Ikos Porto Petro", "PortoPetro", or "Ikos Porto".
-- Classify as "IKOS SPANISH HOTEL MANAGEMENT" if you see "Ikos Spanish Hotels Management".
-- Otherwise, use "OTHER".
+- If you see "Ikos Andalusia" or "Andalucía" → ANDALUSIA
+- If you see "Ikos Porto Petro", "PortoPetro", "Ikos Porto" → PORTO PETRO
+- If you see "Ikos Spanish Hotels Management" → IKOS SPANISH HOTEL MANAGEMENT
+- Otherwise → OTHER
 
 Text:
 {text[:3500]}
