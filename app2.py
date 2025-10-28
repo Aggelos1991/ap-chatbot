@@ -658,38 +658,17 @@ if uploaded_erp and uploaded_vendor:
                 pay_match.style.apply(lambda _: ['background:#004D40;color:#fff;font-weight:bold'] * len(_), axis=1),
                 use_container_width=True
             )
-        # ... your helper functions ...
-        
-        def export_excel(miss_erp, miss_ven):
-            wb = Workbook()
-            ws = wb.active
-            ws.title = "Missing"
-            current_row = 1
-            # same function as before
-            # ...
-            buf = BytesIO()
-            wb.save(buf)
-            buf.seek(0)
-            return buf
-        
-        
-        # ==================== UI =========================
-        st.markdown("### Upload Your Files")
-        uploaded_erp = st.file_uploader("ERP Export (Excel)", type=["xlsx"], key="erp")
-        uploaded_vendor = st.file_uploader("Vendor Statement (Excel)", type=["xlsx"], key="vendor")
-        
-        if uploaded_erp and uploaded_vendor:
-            try:
-                erp_raw = pd.read_excel(uploaded_erp, dtype=str)
-                ven_raw = pd.read_excel(uploaded_vendor, dtype=str)
-                ...
-                excel_buf = export_excel(final_erp_miss, final_ven_miss)
-                st.download_button(
-                    label="Download Full Excel Report",
-                    data=excel_buf,
-                    file_name="ReconRaptor_Report.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-        
-            except Exception as e:
-                st.error(f"Error: {e}")
+
+        # ---------- EXPORT ----------
+        st.markdown('<h2 class="section-title">Download Report</h2>', unsafe_allow_html=True)
+        excel_buf = export_excel(tier1, tier2, tier3, final_erp_miss, final_ven_miss, pay_match)
+        st.download_button(
+            label="Download Full Excel Report",
+            data=excel_buf,
+            file_name="ReconRaptor_Report.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+    except Exception as e:
+        st.error(f"Error: {e}")
+        st.info("Check that your files contain columns like: **invoice**, **debit/credit**, **date**, **reason**")
