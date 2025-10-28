@@ -354,7 +354,7 @@ def tier3_match(erp_miss, ven_miss):
                 continue
 
             sim = fuzzy_ratio(e_code, v_code)
-            if e_date == v_date and sim >= 0.90:
+            if e_date == v_date and sim >= 0.75:
                 diff = abs(e_amt - v_amt)
                 matches.append({
                     "ERP Invoice": e_inv,
@@ -507,7 +507,7 @@ if uploaded_erp and uploaded_vendor:
 
         # ---------- METRICS ----------
         st.markdown('<h2 class="section-title">Reconciliation Summary</h2>', unsafe_allow_html=True)
-        c1, c2, c3, c4, c5, c6 = st.columns(6)
+        c1, c2, c3, c4, c5, c6,c7= st.columns(7)
         perf = tier1[tier1["Status"] == "Perfect Match"] if not tier1.empty else pd.DataFrame()
         diff = tier1[tier1["Status"] == "Difference Match"] if not tier1.empty else pd.DataFrame()
 
@@ -569,10 +569,10 @@ if uploaded_erp and uploaded_vendor:
             st.metric("Unmatched Vendor", len(final_ven_miss))
             st.markdown(f"**Total:** {final_ven_miss['Amount'].sum():,.2f}" if "Amount" in final_ven_miss else "**Total:** 0.00", unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
-
-        st.markdown('<div class="metric-container payment-match">', unsafe_allow_html=True)
-        st.metric("New Payment Matches", len(pay_match) if not pay_match.empty else 0)
-        st.markdown('</div>', unsafe_allow_html=True)
+        with c7:
+            st.markdown('<div class="metric-container payment-match">', unsafe_allow_html=True)
+            st.metric("New Payment Matches", len(pay_match) if not pay_match.empty else 0)
+            st.markdown('</div>', unsafe_allow_html=True)
 
         st.markdown("---")
 
