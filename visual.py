@@ -61,8 +61,17 @@ if uploaded_file:
         df = df.drop(columns=['AF', 'AH', 'AJ', 'AN', 'BD'])
 
         if df.empty:
-            st.warning("No invoices match the priority filter.")
-            st.stop()
+            st.warning("No invoices match the priority filter. Showing all instead.")
+            # Reload full dataframe without the YES/BD filters
+            df = df_raw.iloc[start_row:].copy().reset_index(drop=True)
+            df.columns = [
+                'Vendor_Name', 'VAT_ID', 'Due_Date', 'Open_Amount',
+                'Alt_Document', 'Vendor_Email', 'Account_Email',
+                'AF', 'AH', 'AJ', 'AN', 'BD'
+            ]
+            # Keep all vendors
+            df = df.drop(columns=['AF', 'AH', 'AJ', 'AN', 'BD'])
+
 
         # Clean
         df['Due_Date'] = pd.to_datetime(df['Due_Date'], errors='coerce')
