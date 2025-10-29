@@ -1,20 +1,24 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-import base64, io, os, json, re, pdfplumber, openpyxl, fitz, pytesseract
+import base64, io, os, json, re, pdfplumber, openpyxl, fitz, pytesseract, hashlib, time
 from PIL import Image
 from openai import OpenAI
 from dotenv import load_dotenv
 
-
-
+# ================== SETUP =====================
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 app = FastAPI()
 
+# cache for duplicate prevention
+recent_hashes = {}  # {hash: timestamp}
+CACHE_TTL = 300  # 5 minutes
+
 class FilePayload(BaseModel):
     filename: str
     content: str
+
 
 @app.middleware("http")
 async def allow_chunked_requests(request: Request, call_next):
@@ -23,9 +27,10 @@ async def allow_chunked_requests(request: Request, call_next):
         request._body = body
     return await call_next(request)
 
+
+# ================== HELPERS =====================
 def extract_text_from_pdf_all(file_bytes: bytes) -> str:
     text = ""
-    # 1. pdfplumber
     try:
         with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
             for page in pdf.pages:
@@ -34,7 +39,7 @@ def extract_text_from_pdf_all(file_bytes: bytes) -> str:
                     text += t + "\n"
     except Exception as e:
         print(f"[PDFPlumber Error] {e}")
-    # 2. PyMuPDF
+
     try:
         doc = fitz.open(stream=file_bytes, filetype="pdf")
         for page in doc:
@@ -42,7 +47,7 @@ def extract_text_from_pdf_all(file_bytes: bytes) -> str:
         doc.close()
     except Exception as e:
         print(f"[PyMuPDF Error] {e}")
-    # 3. OCR fallback
+
     if len(text.strip()) < 50:
         try:
             doc = fitz.open(stream=file_bytes, filetype="pdf")
@@ -55,6 +60,7 @@ def extract_text_from_pdf_all(file_bytes: bytes) -> str:
         except Exception as e:
             print(f"[OCR Error] {e}")
     return text.strip()
+
 
 def extract_text_from_file(file_bytes: bytes, filename: str) -> str:
     filename = filename.lower()
@@ -76,6 +82,7 @@ def extract_text_from_file(file_bytes: bytes, filename: str) -> str:
     else:
         return file_bytes.decode("utf-8", errors="ignore")
 
+
 def normalize(txt: str) -> str:
     txt = txt.upper()
     txt = re.sub(r"[ÁÀÂÃÄÅ]", "A", txt)
@@ -90,55 +97,76 @@ def normalize(txt: str) -> str:
     txt = re.sub(r"\s+", " ", txt)
     return txt.strip()
 
+
 def detect_ikos_hotel(text: str) -> str:
     norm = normalize(text)
-    if "IKOS" in norm and any(kw in norm for kw in [ "ANDALUSIA", "ANDALUCIA"):
+    if "IKOS" in norm and any(kw in norm for kw in ["ANDALUSIA", "ANDALUCIA"]):
         return "ANDALUSIA"
-    if "IKOS" in norm and any(kw in norm for kw in ["PORTO PETRO", "porto petro"]):
+    if "IKOS" in norm and "PORTO PETRO" in norm:
         return "PORTO PETRO"
-    if any(kw in norm for kw in ["IKOS SPANISH HOTEL MANAGEMENT","ikos spanish hotel management","ISHM" , "IKOS HOTELS SPAIN"]):
+    if any(kw in norm for kw in ["IKOS SPANISH HOTEL MANAGEMENT", "ISHM", "IKOS HOTELS SPAIN"]):
         return "IKOS SPANISH HOTEL MANAGEMENT"
     return None
 
+
+# ================== MAIN ROUTE =====================
 @app.post("/analyze")
 async def analyze(request: Request):
     try:
+        # Parse input safely
         try:
             data = await request.json()
         except Exception:
             body = await request.body()
-            return JSONResponse({"keyword": "OTHER", "error": f"Invalid JSON: {body[:100].decode(errors='ignore')}"})
+            return JSONResponse({"keyword": "OTHER", "error": "Invalid JSON"})
+
         filename = data.get("filename", "unknown")
         content_b64 = data.get("content", "")
+
         if not content_b64:
             return JSONResponse({"keyword": "OTHER", "error": "Empty content"})
+
+        # ✅ Prevent infinite "Apply to each" — deduplicate based on file hash
+        file_hash = hashlib.md5(content_b64.encode()).hexdigest()
+        now = time.time()
+
+        # remove expired entries
+        for k, v in list(recent_hashes.items()):
+            if now - v > CACHE_TTL:
+                del recent_hashes[k]
+
+        if file_hash in recent_hashes:
+            return JSONResponse({"keyword": "OTHER", "error": "Duplicate request ignored"})
+
+        recent_hashes[file_hash] = now
+
+        # Decode and analyze
         file_bytes = base64.b64decode(content_b64)
         raw_text = extract_text_from_file(file_bytes, filename)
         text = normalize(raw_text)
-        print(f"\n[DEBUG] File: {filename}")
+        print(f"\n[DEBUG] File: {filename} | Hash: {file_hash}")
         print(f"[DEBUG] Text length: {len(text)}")
-        print(f"[DEBUG] Sample: {text[:500]}\n")
 
-        # FILENAME DETECTION (BACKUP)
+        # Filename hints
         filename_lower = filename.lower()
         if any(kw in filename_lower for kw in ["andalusia", "odisia", "estepona"]):
             return JSONResponse({"keyword": "ANDALUSIA", "error": ""})
         if any(kw in filename_lower for kw in ["porto petro", "portopetro", "mallorca"]):
             return JSONResponse({"keyword": "PORTO PETRO", "error": ""})
 
-        # TEXT DETECTION
+        # Text detection
         local_result = detect_ikos_hotel(text)
         if local_result:
             return JSONResponse({"keyword": local_result, "error": ""})
 
-        # LLM FALLBACK
+        # Fallback to GPT if needed
         if len(text) > 50:
             prompt = f"""
 You are a strict JSON classifier. Return ONLY valid JSON.
 Rules:
-- "ANDALUSIA" → if mentions: ANDALUSIA or andalusia
-- "PORTO PETRO" → if mentions: Porto Petro, PORTO PETRO
-- "IKOS SPANISH HOTEL MANAGEMENT" → if mentions: IKOS SPANISH HOTEL MANAGEMENT, ikos spanish hotel management, ISHM
+- "ANDALUSIA" → if mentions: ANDALUSIA or ANDALUCIA
+- "PORTO PETRO" → if mentions: PORTO PETRO
+- "IKOS SPANISH HOTEL MANAGEMENT" → if mentions: IKOS SPANISH HOTEL MANAGEMENT or ISHM
 - Otherwise → "OTHER"
 Text:
 {text[:3000]}
@@ -160,13 +188,14 @@ Return ONLY:
                     keyword = "OTHER"
                 return JSONResponse({"keyword": keyword, "error": ""})
             except Exception as e:
-                return JSONResponse({"keyword": "OTHER", "error": f"LLM failed: {str(e)[:100]}"})
+                return JSONResponse({"keyword": "OTHER", "error": f"LLM failed: {str(e)[:80]}"})
 
-        return JSONResponse({"keyword": "OTHER", "error": "Empty PDF - no text extracted"})
+        return JSONResponse({"keyword": "OTHER", "error": "Empty or unreadable file"})
 
     except Exception as e:
         return JSONResponse({"keyword": "OTHER", "error": f"Server error: {str(e)[:100]}"})
 
+# ================== HEALTH CHECK =====================
 @app.get("/ping")
 async def ping():
     return JSONResponse({"status": "ok", "message": "Server reachable"})
