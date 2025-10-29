@@ -269,6 +269,11 @@ def match_invoices(erp_df, ven_df):
     matched_erp = set(matched_df["ERP Invoice"]) if not matched_df.empty else set()
     matched_ven = set(matched_df["Vendor Invoice"]) if not matched_df.empty else set()
 
+    erp_use["invoice_erp"] = erp_use["invoice_erp"].astype(str).str.strip()
+    ven_use["invoice_ven"] = ven_use["invoice_ven"].astype(str).str.strip()
+    matched_df["ERP Invoice"] = matched_df["ERP Invoice"].astype(str).str.strip()
+    matched_df["Vendor Invoice"] = matched_df["Vendor Invoice"].astype(str).str.strip()
+
     miss_erp = erp_use[~erp_use["invoice_erp"].isin(matched_ven)].copy()
     miss_ven = ven_use[~ven_use["invoice_ven"].isin(matched_erp)].copy()
 
