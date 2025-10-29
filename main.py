@@ -90,13 +90,35 @@ def normalize(txt: str) -> str:
 
 def detect_ikos_hotel(text: str) -> str:
     norm = normalize(text)
-    if "IKOS" in norm and any(kw in norm for kw in ["ODISIA", "ESTEPONA", "ANDALUSIA", "ANDALUCIA", "COSTA DEL SOL", "MALAGA"]):
+
+    # normalize spaces for safer matching
+    norm = re.sub(r"\s+", " ", norm)
+
+    # IKOS ANDALUSIA
+    if "IKOS" in norm and any(kw in norm for kw in ["ANDALUSIA", "ANDALUCIA", "COSTA DEL SOL"]):
         return "ANDALUSIA"
-    if "IKOS" in norm and any(kw in norm for kw in ["PORTO PETRO", "PORTOPETRO", "MALLORCA", "CALA DOR", "SANTANYI"]):
+
+    # IKOS PORTO PETRO
+    if "IKOS" in norm and any(kw in norm for kw in [
+        "PORTO PETRO", "PORTOPETRO", "MALLORCA", "S A", "SA"
+    ]):
+        # Extra safeguard: detect Porto Petro account or tax ID if present
+        if any(k in norm for k in ["4300013961", "430013961", "B57558610"]):
+            return "PORTO PETRO"
         return "PORTO PETRO"
-    if any(kw in norm for kw in ["SPANISH HOTEL", "HOTEL MANAGEMENT", "IKOS RESORTS SPAIN", "IKOS GROUP", "IKOS INTERNATIONAL", "SANI IKOS", "IKOS HOTELS SPAIN"]):
+
+    # IKOS SPANISH HOTEL MANAGEMENT
+    if any(kw in norm for kw in [
+        "IKOS SPANISH HOTEL MANAGEMENT",
+        "IKOS RESORTS SPAIN",
+        "IKOS HOTELS SPAIN",
+        "ISHM",
+        "SPANISH HOTEL MANAGEMENT"
+    ]):
         return "IKOS SPANISH HOTEL MANAGEMENT"
+
     return None
+
 
 @app.post("/analyze")
 async def analyze(request: Request):
