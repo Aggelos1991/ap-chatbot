@@ -61,7 +61,7 @@ if uploaded_file:
         df = df.drop(columns=['AF', 'AH', 'AJ', 'AN', 'BD'])
 
         if df.empty:
-            st.warning("No invoices match the priority filter. Showing all instead.")
+            st.warning("No invoices match the priority filter.")
             # Reload full dataframe without the YES/BD filters
             df = df_raw.iloc[start_row:].copy().reset_index(drop=True)
             df.columns = [
