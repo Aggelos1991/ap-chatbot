@@ -107,8 +107,8 @@ if pay_file:
 
     # ---- Apply CN logic only if CN file exists ----
     if cn is not None:
-    cn_alt_col = find_col(cn, ["Alt.Document", "Alt. Document"])
-    cn_val_col = find_col(cn, ["Amount"])
+        cn_alt_col = find_col(cn, ["Alt.Document", "Alt. Document"])
+        cn_val_col = find_col(cn, ["Amount"])
 
     if cn_alt_col and cn_val_col:
         cn[cn_val_col] = cn[cn_val_col].apply(parse_amount)
