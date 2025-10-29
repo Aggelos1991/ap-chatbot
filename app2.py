@@ -307,8 +307,16 @@ def tier2_match(erp_miss, ven_miss):
             v_code = clean_invoice_code(v_inv)
 
             diff = abs(e_amt - v_amt)
-            sim = fuzzy_ratio(e_code, v_code)
-            if diff <= 1.00 and sim >= 0.40:
+
+            # 🩵 one-line auto-rescue for ERP invoices that are substrings (e.g. 000370 inside 25/034/000370)
+            if e_code in v_code or v_code in e_code:
+                sim = 1.0
+            else:
+                sim = fuzzy_ratio(e_code, v_code)
+            
+            if diff <= 1.00 and sim >= 0.75:  # keep your low threshold
+
+
                 matches.append({
                     "ERP Invoice": e_inv,
                     "Vendor Invoice": v_inv,
