@@ -116,30 +116,23 @@ if pay_file:
         # 🔹 Keep only the last occurrence of each CN number
         cn = cn.drop_duplicates(subset=[cn_alt_col], keep="last").reset_index(drop=True)
 
-        used_cns = set()  # Track CNs already included
-
         for _, row in subset.iterrows():
             payment_val = row["Payment Value"]
             invoice_val = row["Invoice Value"]
             diff = round(payment_val - invoice_val, 2)
 
             if abs(diff) > 0.01:
-                # Find CNs matching the difference, excluding already used ones
-                match = cn[
-                    (cn[cn[cn_val_col].abs().round(2) == abs(diff)]) &
-                    (~cn[cn_alt_col].isin(used_cns))
-                ]
+                # Find matching CN (based on amount)
+                match = cn[cn[cn_val_col].abs().round(2) == abs(diff)]
 
+                # Take only the LAST CN if multiple exist
                 if not match.empty:
-                    for _, cn_row in match.iterrows():
-                        cn_no = str(cn_row[cn_alt_col])
-                        if cn_no in used_cns:
-                            continue  # Skip already used CNs
-                        cn_amt = -abs(cn_row[cn_val_col])
-                        cn_rows.append(
-                            {"Alt. Document": f"{cn_no} (CN)", "Invoice Value": cn_amt}
-                        )
-                        used_cns.add(cn_no)  # Mark as used
+                    last_cn = match.iloc[-1]
+                    cn_no = str(last_cn[cn_alt_col])
+                    cn_amt = -abs(last_cn[cn_val_col])
+                    cn_rows.append(
+                        {"Alt. Document": f"{cn_no} (CN)", "Invoice Value": cn_amt}
+                    )
 
     else:
         st.warning("⚠️ CN file missing expected columns ('Alt.Document', 'Amount'). CN logic skipped.")
