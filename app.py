@@ -107,30 +107,32 @@ if pay_file:
 
     # ---- Apply CN logic only if CN file exists ----
     if cn is not None:
-        cn_alt_col = find_col(cn, ["Alt.Document", "Alt. Document"])
-        cn_val_col = find_col(cn, ["Amount"])
+    cn_alt_col = find_col(cn, ["Alt.Document", "Alt. Document"])
+    cn_val_col = find_col(cn, ["Amount"])
 
-        if cn_alt_col and cn_val_col:
-            cn[cn_val_col] = cn[cn_val_col].apply(parse_amount)
+    if cn_alt_col and cn_val_col:
+        cn[cn_val_col] = cn[cn_val_col].apply(parse_amount)
 
-            for _, row in subset.iterrows():
-                payment_val = row["Payment Value"]
-                invoice_val = row["Invoice Value"]
-                diff = round(payment_val - invoice_val, 2)
+        for _, row in subset.iterrows():
+            payment_val = row["Payment Value"]
+            invoice_val = row["Invoice Value"]
+            diff = round(payment_val - invoice_val, 2)
 
-                if abs(diff) > 0.01:
-                    # Find matching CN
-                    match = cn[cn[cn_val_col].abs().round(2) == abs(diff)]
-                    if not match.empty:
-                        # Take only the last match
-                        last_cn = match.iloc[-1]
-                        cn_no = str(last_cn[cn_alt_col])
-                        cn_amt = -abs(last_cn[cn_val_col])
-                        cn_rows = [
+            if abs(diff) > 0.01:
+                # Find all matching CNs that together equal the difference
+                match = cn[cn[cn_val_col].abs().round(2) == abs(diff)]
+
+                if not match.empty:
+                    for _, cn_row in match.iterrows():
+                        cn_no = str(cn_row[cn_alt_col])
+                        cn_amt = -abs(cn_row[cn_val_col])
+                        cn_rows.append(
                             {"Alt. Document": f"{cn_no} (CN)", "Invoice Value": cn_amt}
-                        ]
-        else:
-            st.warning("⚠️ CN file missing expected columns ('Alt.Document', 'Amount'). CN logic skipped.")
+                        )
+
+    else:
+        st.warning("⚠️ CN file missing expected columns ('Alt.Document', 'Amount'). CN logic skipped.")
+
 
     # ---- Add CNs ----
     if cn_rows:
