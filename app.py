@@ -106,7 +106,7 @@ if pay_file:
     cn_rows = []
 
     # ---- Apply CN logic only if CN file exists ----
-   if cn is not None:
+if cn is not None:
         cn_alt_col = find_col(cn, ["Alt.Document", "Alt. Document"])
         cn_val_col = find_col(cn, ["Amount"])
 
