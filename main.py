@@ -103,7 +103,7 @@ def detect_ikos_hotel(text: str) -> str:
         "PORTO PETRO", "PORTOPETRO", "MALLORCA", "S A", "SA"
     ]):
         # Extra safeguard: detect Porto Petro account or tax ID if present
-        if any(k in norm for k in ["4300013961", "430013961", "B57558610"]):
+        if any(k in norm for k in ["B57558610"]):
             return "PORTO PETRO"
         return "PORTO PETRO"
 
