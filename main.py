@@ -6,6 +6,8 @@ from PIL import Image
 from openai import OpenAI
 from dotenv import load_dotenv
 
+//comments
+
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 app = FastAPI()
