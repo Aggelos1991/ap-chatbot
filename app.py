@@ -113,13 +113,16 @@ if pay_file:
     if cn_alt_col and cn_val_col:
         cn[cn_val_col] = cn[cn_val_col].apply(parse_amount)
 
+        # 🔹 Keep only the last occurrence of each CN number
+        cn = cn.drop_duplicates(subset=[cn_alt_col], keep="last")
+
         for _, row in subset.iterrows():
             payment_val = row["Payment Value"]
             invoice_val = row["Invoice Value"]
             diff = round(payment_val - invoice_val, 2)
 
             if abs(diff) > 0.01:
-                # Find all matching CNs that together equal the difference
+                # Find CNs whose amount matches the difference
                 match = cn[cn[cn_val_col].abs().round(2) == abs(diff)]
 
                 if not match.empty:
@@ -132,6 +135,7 @@ if pay_file:
 
     else:
         st.warning("⚠️ CN file missing expected columns ('Alt.Document', 'Amount'). CN logic skipped.")
+
 
 
     # ---- Add CNs ----
