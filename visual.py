@@ -1,6 +1,10 @@
 # ===============================================================
-# Overdue Invoices – Priority Vendors Dashboard
-# (AY=0 filter + BFP Dashboard + Email Copy Feature + Vendor Selector)
+# Overdue Invoices – Priority Vendors Dashboard (FINAL STABLE)
+# Includes:
+# - AY=0 Filter
+# - BFP Radio Mode
+# - Email Copy Feature
+# - Vendor Dropdown for Details (no broken click)
 # ===============================================================
 
 import streamlit as st
@@ -24,9 +28,11 @@ if uploaded_file:
                 st.error("Sheet 'Outstanding Invoices IB' not found.")
                 st.stop()
 
-            # ADD columns AY (50) and BT (71)
+            # Include AY (50) + BT (71)
             keep_cols = [0, 1, 4, 6, 10, 29, 30, 31, 33, 35, 39, 50, 55, 71]
-            df_raw = pd.read_excel(xls, sheet_name='Outstanding Invoices IB', header=None, usecols=keep_cols)
+            df_raw = pd.read_excel(
+                xls, sheet_name='Outstanding Invoices IB', header=None, usecols=keep_cols
+            )
 
         # Find header row
         header_row = df_raw[df_raw.iloc[:, 0].astype(str).str.contains("VENDOR", case=False, na=False)].index
@@ -44,7 +50,7 @@ if uploaded_file:
             'AF', 'AH', 'AJ', 'AN', 'AY', 'BD', 'BT'
         ]
 
-        # === FILTERS: YES + BD + AY ===
+        # === FILTER: YES + BD keywords + AY=0 ===
         yes_mask = (
             (df['AF'].astype(str).str.strip().str.upper() == 'YES') &
             (df['AH'].astype(str).str.strip().str.upper() == 'YES') &
@@ -55,13 +61,19 @@ if uploaded_file:
         bd_keywords = ['ENTERTAINMENT', 'FALSE', 'REGULAR', 'PRIORITY VENDOR', 'PRIORITY VENDOR OS&E']
         bd_mask = df['BD'].astype(str).str.upper().apply(lambda x: any(k in x for k in bd_keywords))
 
-        # AY = 0
-        ay_mask = df['AY'].astype(str).str.replace(",", ".").str.strip().apply(
-            lambda x: float(x) if x.replace(".", "", 1).isdigit() else None
-        ).fillna(0) == 0.0
+        # AY = 0 filter
+        def is_zero(v):
+            try:
+                v = str(v).replace(",", ".").strip()
+                return float(v) == 0.0
+            except:
+                return False
+
+        ay_mask = df['AY'].apply(is_zero)
 
         df = df[yes_mask & bd_mask & ay_mask].reset_index(drop=True)
 
+        # Clean
         df['Due_Date'] = pd.to_datetime(df['Due_Date'], errors='coerce')
         df['Open_Amount'] = pd.to_numeric(df['Open_Amount'], errors='coerce')
         df = df.dropna(subset=['Vendor_Name', 'Open_Amount', 'Due_Date'])
@@ -205,7 +217,7 @@ if uploaded_file:
                 use_container_width=True
             )
 
-            # Optional: export selected vendor to Excel
+            # Export selected vendor to Excel
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
                 vendor_data.to_excel(writer, sheet_name='Vendor_Invoices', index=False)
@@ -219,3 +231,8 @@ if uploaded_file:
         else:
             st.info("Select a vendor above to view invoice details below.")
 
+    except Exception as e:
+        st.error(f"Error: {str(e)}")
+        st.stop()
+else:
+    st.info("Upload Excel to start.")
