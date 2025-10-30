@@ -27,3 +27,4 @@ python-Levenshtein
 
 # --- Visualization / Plotting ---
 plotly
+streamlit-plotly-events
