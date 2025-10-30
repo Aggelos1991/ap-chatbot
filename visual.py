@@ -1,6 +1,6 @@
 # ===============================================================
 # Overdue Invoices – Priority Vendors Dashboard
-# (AY=0 filter + BFP Dashboard + Email Copy Feature + Click Fix)
+# (AY=0 filter + BFP Dashboard + Email Copy Feature + Vendor Selector)
 # ===============================================================
 
 import streamlit as st
@@ -175,7 +175,6 @@ if uploaded_file:
             title=title + (" – BFP Only" if mode == "BFP Only" else ""),
             color_discrete_map={'Overdue': '#8B0000', 'Not Overdue': '#4682B4'},
             height=max(500, len(plot_df) * 45),
-            custom_data=['Vendor_Name', 'Type']
         )
 
         fig.update_layout(
@@ -188,33 +187,34 @@ if uploaded_file:
             margin=dict(l=160, r=50, t=80, b=50)
         )
 
-        # === CLICK HANDLER (Streamlit standard way) ===
-        st.markdown("### 📊 Click a bar to view detailed invoices below")
+        st.markdown("### 📊 Vendor Chart (select below to view details)")
+        st.plotly_chart(fig, use_container_width=True)
 
-        clicked_vendor = st.session_state.get("clicked_vendor", None)
-        click = st.plotly_chart(fig, use_container_width=True, key="bfp_chart", on_click="rerun")
-
-        # Capture clickData event
-        click_data = st.session_state.get("bfp_chart.click_event", None)
-        if click_data and "points" in click_data:
-            clicked_vendor = click_data["points"][0]["y"]
-            st.session_state["clicked_vendor"] = clicked_vendor
+        # === NEW DROPDOWN FOR DETAILS ===
+        vendor_options = sorted(df['Vendor_Name'].unique().tolist())
+        selected_vendor = st.selectbox("Select Vendor to View Details", [""] + vendor_options)
 
         st.markdown("---")
         st.subheader("📋 Invoice Details")
 
-        if clicked_vendor:
-            vendor_data = df[df['Vendor_Name'] == clicked_vendor].copy()
+        if selected_vendor:
+            vendor_data = df[df['Vendor_Name'] == selected_vendor].copy()
             vendor_data['Due_Date'] = vendor_data['Due_Date'].dt.strftime('%Y-%m-%d')
             st.dataframe(
                 vendor_data[['Vendor_Name', 'VAT_ID', 'Due_Date', 'Open_Amount', 'Status', 'Alt_Document']],
                 use_container_width=True
             )
-        else:
-            st.info("Click on a vendor bar above to view details below.")
 
-    except Exception as e:
-        st.error(f"Error: {str(e)}")
-        st.stop()
-else:
-    st.info("Upload Excel to start.")
+            # Optional: export selected vendor to Excel
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+                vendor_data.to_excel(writer, sheet_name='Vendor_Invoices', index=False)
+            buffer.seek(0)
+            st.download_button(
+                label=f"💾 Download {selected_vendor} Invoices",
+                data=buffer,
+                file_name=f"{selected_vendor.replace(' ', '_')}_Invoices.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        else:
+            st.info("Select a vendor above to view invoice
