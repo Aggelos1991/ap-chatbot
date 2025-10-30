@@ -61,7 +61,7 @@ def extract_raw_lines(uploaded_pdf):
     return all_lines
 
 # ==========================================================
-# GPT EXTRACTOR — FINAL REVISION (STRICT INVOICE/PAYMENT/CN LOGIC)
+# GPT EXTRACTOR — IMPROVED PROMPT (FIXED CLASSIFICATION RULES)
 # ==========================================================
 def extract_with_gpt(lines):
     """Use GPT to detect Debit (DEBE) and Credit (HABER) from vendor statements."""
@@ -73,7 +73,7 @@ def extract_with_gpt(lines):
         text_block = "\n".join(batch)
         
         prompt = f"""
-You are a financial data extractor for vendor statements in Spanish or English.
+You are a financial data extractor for Spanish vendor statements.
 
 Each line usually contains:
 - Fecha (Date)
@@ -81,26 +81,26 @@ Each line usually contains:
 - Comentario / Concepto / Descripción (may include the invoice number)
 - DEBE (Invoice amounts)
 - HABER / CRÉDITO (Payments or credit notes)
-- SALDO (running balance — IGNORE COMPLETELY)
+- SALDO (running balance — ignore completely)
 
-Your job:
-Extract only valid accounting transactions and ignore any totals or balances.
+**GOAL:** Extract only valid accounting transactions and output structured JSON data.
 
 **COLUMN RULES**
-- "Alternative Document": The document number. If missing, extract invoice-like codes from the text (e.g. “fra. GG 209”, “FAC123”, “1775/24”, “INV-2024-01”).
-- "Date": dd/mm/yy format if available.
-- "Reason": One of: "Invoice", "Payment", or "Credit Note".
+- "Alternative Document": Use the document number. If missing, extract invoice-like references from the comment (e.g. “fra. GG 209”, “FAC1234”, “1775/24”, “INV-2024-01”).
+- "Date": The transaction date in dd/mm/yy format.
+- "Reason": Must be one of: "Invoice", "Payment", or "Credit Note".
 - "Debit": Value under DEBE (Invoice).
 - "Credit": Value under HABER or CRÉDITO (Payment or Credit Note).
 
 **CLASSIFICATION RULES**
-1. DEBIT always means an **Invoice** — never anything else.
-2. CREDIT normally means a **Payment**.
-3. If CREDIT line includes words like *abono*, *nota de crédito*, *crédito*, *descuento*, classify as **Credit Note**.
-4. If CREDIT line includes words like *pago*, *transferencia*, *trf*, *remesa*, *bank*, *paid*, classify as **Payment**.
-5. Ignore any line containing *asiento*, *saldo*, *total*, or *iva*.
-6. Never output summary or SALDO lines.
-7. Return only a JSON array:
+1. DEBIT always means an **Invoice** — never Payment or Credit Note.
+2. CREDIT means **Payment**, unless the text includes words like *abono*, *nota de crédito*, *crédito*, or *descuento*, in which case it is a **Credit Note**.
+3. Never use or output SALDO lines.
+4. Never include totals or headers.
+5. Never use "Asiento" as document number — ignore such rows completely.
+6. Output only valid transaction lines with their values and reasons.
+
+**OUTPUT FORMAT (only JSON):**
 [
   {{
     "Alternative Document": "...",
@@ -111,7 +111,7 @@ Extract only valid accounting transactions and ignore any totals or balances.
   }}
 ]
 
-Now extract all valid transactions from this text:
+Text to analyze:
 {text_block}
 """
         
@@ -123,7 +123,8 @@ Now extract all valid transactions from this text:
             )
             content = response.choices[0].message.content.strip()
             
-            if i == 0:
+            # Debug
+            if i == 0:  # Only show first batch
                 st.text_area("GPT Response (Batch 1):", content, height=200, key="debug_1")
             
             json_match = re.search(r'\[.*\]', content, re.DOTALL)
@@ -137,32 +138,28 @@ Now extract all valid transactions from this text:
                 for row in data:
                     alt_doc = str(row.get("Alternative Document", "")).strip()
                     
-                    # FILTER OUT invalid or summary rows
+                    # Skip invalid or unwanted lines
                     if not alt_doc or re.search(r"(asiento|saldo|total|iva)", alt_doc, re.IGNORECASE):
                         continue
                     
                     debit_raw = row.get("Debit", "")
                     credit_raw = row.get("Credit", "")
+                    
                     debit_val = normalize_number(debit_raw)
                     credit_val = normalize_number(credit_raw)
-                    reason = row.get("Reason", "").strip()
                     
-                    # Enforce correct logic
-                    if debit_val and (credit_val == "" or credit_val == 0):
+                    reason = row.get("Reason", "Invoice").strip()
+                    
+                    # Final enforcement of your rules
+                    if debit_val and not credit_val:
                         reason = "Invoice"
-                    elif credit_val and (debit_val == "" or debit_val == 0):
+                    elif credit_val and not debit_val:
                         if re.search(r"abono|nota|crédit|descuento", str(row), re.IGNORECASE):
                             reason = "Credit Note"
                         else:
                             reason = "Payment"
                     else:
                         continue
-                    
-                    # Normalize document pattern if empty
-                    if not alt_doc:
-                        match = re.search(r"(fra\.?\s*[A-Z]{1,3}\s*\d+|fac\w*\s*\d+|inv[-/ ]?\d+|\d{3,5}/\d{2,4})", str(row), re.IGNORECASE)
-                        if match:
-                            alt_doc = match.group(0)
                     
                     all_records.append({
                         "Alternative Document": alt_doc,
@@ -211,6 +208,7 @@ if uploaded_pdf:
             st.success(f"✅ Extraction complete — {len(df)} valid records found!")
             st.dataframe(df, use_container_width=True, hide_index=True)
             
+            # Totals
             try:
                 total_debit = df["Debit"].apply(pd.to_numeric, errors="coerce").sum()
                 total_credit = df["Credit"].apply(pd.to_numeric, errors="coerce").sum()
