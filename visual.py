@@ -217,4 +217,5 @@ if uploaded_file:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
         else:
-            st.info("Select a vendor above to view invoice
+            st.info("Select a vendor above to view invoice details below.")
+
