@@ -1,5 +1,5 @@
 # ===============================================================
-# Overdue Invoices – Priority Vendors Dashboard (CLICKABLE + EMAIL + BFP + AY=0)
+# Overdue Invoices – Priority Vendors Dashboard (CLICKABLE + EMAIL + BFP + AY=0 + Individual Vendor)
 # ===============================================================
 
 import streamlit as st
@@ -120,8 +120,15 @@ if uploaded_file:
 
         n = 30 if top_n_option == "Top 30" else 20
 
+        # === Individual Vendor Selector ===
+        vendor_list = sorted(df['Vendor_Name'].dropna().unique().tolist())
+        selected_vendor = st.selectbox("Or Select Individual Vendor", [""] + vendor_list, key="vendor_select")
+
         # === TOP N logic ===
-        if status_filter == "All Open":
+        if selected_vendor and selected_vendor != "":
+            top_df = full_summary[full_summary['Vendor_Name'] == selected_vendor].copy()
+            title = f"Vendor: {selected_vendor}"
+        elif status_filter == "All Open":
             top_df = full_summary.nlargest(n, 'Total').copy()
             title = f"{top_n_option} Vendors (All Open)"
         elif status_filter == "Overdue Only":
