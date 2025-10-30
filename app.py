@@ -28,7 +28,6 @@ def parse_amount(v):
     except:
         return 0.0
 
-
 def find_col(df, names):
     """Find a column name that loosely matches one of the candidates."""
     for c in df.columns:
@@ -37,7 +36,6 @@ def find_col(df, names):
             if n.replace(" ", "").replace(".", "").lower() in name:
                 return c
     return None
-
 
 # ===== Streamlit Config =====
 st.set_page_config(page_title="The Remitator", layout="wide")
@@ -107,19 +105,23 @@ if pay_file:
     cn_rows = []
 
     # ==============================================================
-    # ✅ ADVANCED CN LOGIC – exact + combination matching
+    # ✅ ADVANCED CN LOGIC – exact + 2/3-combo matching (fixed filter)
     # ==============================================================
     if cn is not None:
         cn_alt_col = find_col(cn, ["Alt.Document", "Alt. Document"])
         cn_val_col = find_col(cn, ["Amount", "Debit", "Charge", "Cargo", "DEBE"])
 
         if cn_alt_col and cn_val_col:
+            # Normalize numeric
             cn[cn_val_col] = cn[cn_val_col].apply(parse_amount)
-            cn = cn[cn[cn[cn_val_col].abs() > 0.01].index].reset_index(drop=True)
+
+            # ✨ FIXED: proper non-zero filter (previous version raised KeyError)
+            cn = cn[cn[cn_val_col].abs() > 0.01].reset_index(drop=True)
 
             # Keep only the last instance of each CN number
             cn = cn.drop_duplicates(subset=[cn_alt_col], keep="last").reset_index(drop=True)
 
+            # Track used CN rows so we don't reuse the same CN across invoices
             used_indices = set()
 
             for _, row in subset.iterrows():
@@ -131,7 +133,7 @@ if pay_file:
 
                 match_found = False
 
-                # 1️⃣ Try single CN
+                # 1) Try single CN exact match
                 for i, r in cn.iterrows():
                     if i in used_indices:
                         continue
@@ -143,13 +145,13 @@ if pay_file:
                         match_found = True
                         break
 
-                # 2️⃣ Try combinations of 2 or 3 CNs
+                # 2) Try combinations of 2 or 3 CNs
                 if not match_found:
                     available = [(i, abs(r[cn_val_col]), r) for i, r in cn.iterrows() if i not in used_indices]
                     for n in [2, 3]:
                         for combo in combinations(available, n):
                             total = round(sum(x[1] for x in combo), 2)
-                            if abs(total - abs(diff)) < 0.02:  # tolerance ±0.02
+                            if abs(total - abs(diff)) < 0.02:  # tolerance
                                 for i, _, r in combo:
                                     cn_no = str(r[cn_alt_col])
                                     cn_amt = -abs(r[cn_val_col])
@@ -177,9 +179,7 @@ if pay_file:
     summary = pd.concat([summary, total_row], ignore_index=True)
 
     # ---- Format ----
-    summary["Invoice Value (€)"] = summary["Invoice Value"].apply(
-        lambda v: f"€{v:,.2f}"
-    )
+    summary["Invoice Value (€)"] = summary["Invoice Value"].apply(lambda v: f"€{v:,.2f}")
     summary = summary[["Alt. Document", "Invoice Value (€)"]]
 
     # ---- Display ----
