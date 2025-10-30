@@ -100,11 +100,10 @@ if pay_file:
     email = subset["Supplier's Email"].iloc[0]
 
     summary = subset[["Alt. Document", "Invoice Value"]].copy()
-    cn_rows = []
-    debug_rows = []
+    cn_rows, debug_rows = [], []
 
     # ==============================================================
-    # ✅ ADVANCED CN LOGIC with debug table
+    # ✅ ADVANCED CN LOGIC + DEBUG + UNMATCHED REPORT
     # ==============================================================
     if cn is not None:
         cn_alt_col = find_col(cn, ["Alt.Document", "Alt. Document"])
@@ -168,13 +167,21 @@ if pay_file:
                     "Matched?": "✅" if match_found else "❌"
                 })
 
-            st.success(f"✅ Applied {len(cn_rows)} CNs (single/combo)")
+            # 🧾 Unmatched CNs
+            unmatched_cns = cn.loc[~cn.index.isin(used_indices), [cn_alt_col, cn_val_col]].copy()
+            unmatched_cns.rename(columns={cn_alt_col: "CN Number", cn_val_col: "Amount"}, inplace=True)
+            unmatched_cns["Amount"] = unmatched_cns["Amount"].apply(lambda v: f"€{v:,.2f}")
 
-            # ---- Debug breakdown
+            st.success(f"✅ Applied {len(cn_rows)} CNs (single/combo)")
             debug_df = pd.DataFrame(debug_rows)
+
             if not debug_df.empty:
                 st.subheader("🔍 Debug breakdown — invoice vs. CN matching")
                 st.dataframe(debug_df, use_container_width=True)
+
+            if not unmatched_cns.empty:
+                st.subheader("🚫 Unused Credit Notes (not matched)")
+                st.dataframe(unmatched_cns, use_container_width=True)
         else:
             st.warning("⚠️ CN file missing expected columns ('Alt.Document', 'Amount/Debit'). CN logic skipped.")
     else:
