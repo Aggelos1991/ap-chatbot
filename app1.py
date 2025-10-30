@@ -67,50 +67,47 @@ def extract_with_gpt(lines):
     """Use GPT to detect Debit (DEBE) and Credit (HABER) from vendor statements."""
     BATCH_SIZE = 100
     all_records = []
-    
+
     for i in range(0, len(lines), BATCH_SIZE):
         batch = lines[i:i + BATCH_SIZE]
         text_block = "\n".join(batch)
-        
+
         prompt = f"""
 You are a financial data extractor specialized in Spanish vendor statements.
 
-Your task is to extract all accounting transactions line by line in structured JSON format.
+Your task is to extract all accounting transactions line by line in **clean JSON**.
 
-Each line usually includes columns like:
+Each line usually includes:
 - Fecha (Date)
 - N° DOC or Documento (Document number)
 - Comentario / Concepto / Descripción (may include invoice numbers or payment info)
 - DEBE (Invoice amounts)
 - HABER / CRÉDITO (Payments or credit notes)
-- SALDO (running balance — IGNORE)
+- SALDO (running balance — IGNORE COMPLETELY)
 
-**VERY IMPORTANT RULES:**
-1. "Asiento" is NOT a document number. Never use it as "Alternative Document".
-2. "Saldo" or "Total" are not transactions. Ignore them.
-3. If the "N° DOC" field is empty, look inside the "Comentario" or "Concepto" text for an invoice-like pattern (for example: FAC12345, FACTURA 123, INV-2024-001, 1775/2024, etc.) and use that as "Alternative Document".
-4. DEBE means an **Invoice** (money owed).
-5. HABER or CRÉDITO means a **Payment** (if referring to a transfer or payment word) or a **Credit Note** (if the comment indicates an abono, nota de crédito, descuento, etc.).
-6. Detect reason automatically based on keywords:
-   - "pago", "transferencia", "trf", "remesa", "bank", "paid" → Payment
-   - "abono", "nota de crédito", "crédito" → Credit Note
-   - Otherwise, DEBE → Invoice
-7. Never include SALDO or totals.
-8. Output ONLY structured JSON array like this:
+**RULES:**
+1. Never use "Asiento", "Saldo", "IVA" or "Total" as document or transaction lines — ignore them completely.
+2. If "N° DOC" is missing, extract invoice-like pattern from "Comentario" or "Concepto" (examples: FAC1234, FACTURA 209, INV-2024-05, 1775/2024, etc.).
+3. DEBE → always "Invoice".
+4. HABER / CRÉDITO → "Payment" unless text mentions *abono*, *nota de crédito*, *crédito*, *descuento* → then "Credit Note".
+5. If there is no value in DEBE or HABER, leave it empty (do not invent numbers).
+6. Always return valid JSON array — no text, no commentary, only structured output.
+
+**OUTPUT FORMAT:**
 [
   {{
     "Alternative Document": "...",
     "Date": "dd/mm/yy",
     "Reason": "Invoice | Payment | Credit Note",
-    "Debit": "DEBE amount",
-    "Credit": "HABER amount"
+    "Debit": "DEBE amount or empty string",
+    "Credit": "HABER amount or empty string"
   }}
 ]
 
 Text to analyze:
 {text_block}
 """
-        
+
         try:
             response = client.chat.completions.create(
                 model=MODEL,
@@ -118,52 +115,40 @@ Text to analyze:
                 temperature=0.0
             )
             content = response.choices[0].message.content.strip()
-            
-            # Debug
-            if i == 0: # Only show first batch
+
+            if i == 0:
                 st.text_area("GPT Response (Batch 1):", content, height=200, key="debug_1")
-            
+
             json_match = re.search(r'\[.*\]', content, re.DOTALL)
             if not json_match:
                 json_match = re.search(r'(\[.*?\])', content, re.DOTALL)
-            
+
             if json_match:
                 json_str = json_match.group(0)
                 data = json.loads(json_str)
-                
+
                 for row in data:
                     alt_doc = str(row.get("Alternative Document", "")).strip()
-                    
-                    # Skip invalid documents
                     if not alt_doc or re.search(r"(asiento|saldo|total|iva)", alt_doc, re.IGNORECASE):
                         continue
-                    
-                    debit_raw = row.get("Debit", "")
-                    credit_raw = row.get("Credit", "")
-                    
-                    debit_val = normalize_number(debit_raw)
-                    credit_val = normalize_number(credit_raw)
-                    
-                    reason = row.get("Reason", "Invoice").strip()
-                    
-                    # FIXED: Handle negative DEBE as Credit Note
-                    if debit_val != "" and float(debit_val) < 0:
-                        credit_val = abs(float(debit_val))
-                        debit_val = ""
-                        reason = "Credit Note"
-                    
-                    # FIXED: ONLY classify as Payment if GPT already marked it as Payment
-                    # Don't override Credit Notes or Invoices
-                    if reason == "Payment" and credit_val != "" and float(credit_val) > 0:
-                        pass  # Keep as Payment
-                    elif reason == "Credit Note" or (debit_val != "" and float(debit_val) < 0):
-                        reason = "Credit Note"
-                        if credit_val == "":
-                            credit_val = abs(float(debit_val)) if debit_val != "" else ""
-                            debit_val = ""
-                    elif debit_val != "" and float(debit_val) > 0:
+
+                    debit_val = normalize_number(row.get("Debit", ""))
+                    credit_val = normalize_number(row.get("Credit", ""))
+                    reason = row.get("Reason", "").strip()
+
+                    # Enforce proper classification logic
+                    if debit_val and not credit_val:
                         reason = "Invoice"
-                    
+                    elif credit_val and not debit_val:
+                        if re.search(r"abono|nota|crédit|descuento", str(row), re.IGNORECASE):
+                            reason = "Credit Note"
+                        else:
+                            reason = "Payment"
+                    else:
+                        # if both missing, skip
+                        if debit_val == "" and credit_val == "":
+                            continue
+
                     all_records.append({
                         "Alternative Document": alt_doc,
                         "Date": str(row.get("Date", "")).strip(),
@@ -173,11 +158,11 @@ Text to analyze:
                     })
             else:
                 st.warning(f"No JSON found in batch {i//BATCH_SIZE + 1}")
-                
+
         except Exception as e:
             st.warning(f"GPT error batch {i//BATCH_SIZE + 1}: {e}")
             continue
-    
+
     return all_records
 
 # ==========================================================
@@ -198,33 +183,32 @@ uploaded_pdf = st.file_uploader("📂 Upload Vendor Statement (PDF)", type=["pdf
 if uploaded_pdf:
     with st.spinner("📄 Extracting text from all pages..."):
         lines = extract_raw_lines(uploaded_pdf)
-    
+
     st.success(f"✅ Found {len(lines)} lines of text!")
     st.text_area("📄 Preview (first 30 lines):", "\n".join(lines[:30]), height=300)
-    
+
     if st.button("🤖 Run Hybrid Extraction", type="primary"):
         with st.spinner("Analyzing with GPT-4o-mini..."):
             data = extract_with_gpt(lines)
-        
+
         if data:
             df = pd.DataFrame(data)
             st.success(f"✅ Extraction complete — {len(df)} valid records found!")
             st.dataframe(df, use_container_width=True, hide_index=True)
-            
-            # Totals
+
             try:
                 total_debit = df["Debit"].apply(pd.to_numeric, errors="coerce").sum()
                 total_credit = df["Credit"].apply(pd.to_numeric, errors="coerce").sum()
                 net = round(total_debit - total_credit, 2)
-                
+
                 col1, col2, col3 = st.columns(3)
                 col1.metric("💰 Total Debit", f"{total_debit:,.2f}")
                 col2.metric("💳 Total Credit", f"{total_credit:,.2f}")
                 col3.metric("⚖️ Net", f"{net:,.2f}")
-                
+
             except Exception as e:
                 st.error(f"Totals error: {e}")
-            
+
             st.download_button(
                 "⬇️ Download Excel",
                 data=to_excel_bytes(data),
