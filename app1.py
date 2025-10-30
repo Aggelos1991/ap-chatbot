@@ -61,7 +61,7 @@ def extract_raw_lines(uploaded_pdf):
     return all_lines
 
 # ==========================================================
-# GPT EXTRACTOR — UPDATED PROMPT (Spanish logic)
+# GPT EXTRACTOR — FIXED + SALDO FILTER
 # ==========================================================
 def extract_with_gpt(lines):
     """Use GPT to detect Debit (DEBE) and Credit (HABER) from vendor statements."""
@@ -91,7 +91,8 @@ Each line usually includes:
 3. DEBE → always "Invoice".
 4. HABER / CRÉDITO → "Payment" unless text mentions *abono*, *nota de crédito*, *crédito*, *descuento* → then "Credit Note".
 5. If there is no value in DEBE or HABER, leave it empty (do not invent numbers).
-6. Always return valid JSON array — no text, no commentary, only structured output.
+6. Never include or use SALDO values.
+7. Always return valid JSON array — no text, no commentary, only structured output.
 
 **OUTPUT FORMAT:**
 [
@@ -123,41 +124,54 @@ Text to analyze:
             if not json_match:
                 json_match = re.search(r'(\[.*?\])', content, re.DOTALL)
 
-            if json_match:
-                json_str = json_match.group(0)
-                data = json.loads(json_str)
-
-                for row in data:
-                    alt_doc = str(row.get("Alternative Document", "")).strip()
-                    if not alt_doc or re.search(r"(asiento|saldo|total|iva)", alt_doc, re.IGNORECASE):
-                        continue
-
-                    debit_val = normalize_number(row.get("Debit", ""))
-                    credit_val = normalize_number(row.get("Credit", ""))
-                    reason = row.get("Reason", "").strip()
-
-                    # Enforce proper classification logic
-                    if debit_val and not credit_val:
-                        reason = "Invoice"
-                    elif credit_val and not debit_val:
-                        if re.search(r"abono|nota|crédit|descuento", str(row), re.IGNORECASE):
-                            reason = "Credit Note"
-                        else:
-                            reason = "Payment"
-                    else:
-                        # if both missing, skip
-                        if debit_val == "" and credit_val == "":
-                            continue
-
-                    all_records.append({
-                        "Alternative Document": alt_doc,
-                        "Date": str(row.get("Date", "")).strip(),
-                        "Reason": reason,
-                        "Debit": debit_val,
-                        "Credit": credit_val
-                    })
-            else:
+            if not json_match:
                 st.warning(f"No JSON found in batch {i//BATCH_SIZE + 1}")
+                continue
+
+            data = json.loads(json_match.group(0))
+
+            for row in data:
+                alt_doc = str(row.get("Alternative Document", "")).strip()
+                if not alt_doc or re.search(r"(asiento|saldo|total|iva)", alt_doc, re.IGNORECASE):
+                    continue
+
+                debit_val = normalize_number(row.get("Debit", ""))
+                credit_val = normalize_number(row.get("Credit", ""))
+                reason = row.get("Reason", "").strip()
+
+                # === SALDO / DOUBLE-SIDE CLEANUP LOGIC ===
+                # Case 1: Both filled → keep correct side only
+                if debit_val and credit_val:
+                    if reason.lower() in ["payment", "credit note"]:
+                        debit_val = ""  # keep only credit side
+                    elif reason.lower() == "invoice":
+                        credit_val = ""  # keep only debit side
+                    # If both are suspiciously small → drop one likely SALDO
+                    elif abs(debit_val - credit_val) < 0.01 or min(debit_val, credit_val) / max(debit_val, credit_val) < 0.3:
+                        # Smaller value is most likely SALDO
+                        if debit_val < credit_val:
+                            debit_val = ""
+                        else:
+                            credit_val = ""
+
+                # Case 2: Enforce one-sided rule
+                if debit_val and not credit_val:
+                    reason = "Invoice"
+                elif credit_val and not debit_val:
+                    if re.search(r"abono|nota|crédit|descuento", str(row), re.IGNORECASE):
+                        reason = "Credit Note"
+                    else:
+                        reason = "Payment"
+                elif debit_val == "" and credit_val == "":
+                    continue  # ignore empty line
+
+                all_records.append({
+                    "Alternative Document": alt_doc,
+                    "Date": str(row.get("Date", "")).strip(),
+                    "Reason": reason,
+                    "Debit": debit_val,
+                    "Credit": credit_val
+                })
 
         except Exception as e:
             st.warning(f"GPT error batch {i//BATCH_SIZE + 1}: {e}")
@@ -205,7 +219,6 @@ if uploaded_pdf:
                 col1.metric("💰 Total Debit", f"{total_debit:,.2f}")
                 col2.metric("💳 Total Credit", f"{total_credit:,.2f}")
                 col3.metric("⚖️ Net", f"{net:,.2f}")
-
             except Exception as e:
                 st.error(f"Totals error: {e}")
 
