@@ -1,6 +1,6 @@
 # ===============================================================
 # Overdue Invoices – Priority Vendors Dashboard
-# (AY=0 filter + BFP filter + Email Copy Feature)
+# (AY=0 filter + BFP Dashboard + Email Copy Feature)
 # ===============================================================
 
 import streamlit as st
@@ -12,7 +12,7 @@ import io
 st.set_page_config(page_title="Overdue Invoices", layout="wide")
 
 st.title("Overdue Invoices – Priority Vendors Dashboard")
-st.markdown("**Click a bar segment to see only that data | Export to Filtered Excel**")
+st.markdown("**Select a view, upload Excel, and explore interactive charts.**")
 
 # Session state
 if 'clicked_vendor' not in st.session_state:
@@ -43,7 +43,7 @@ if uploaded_file:
         start_row = header_row[0] + 1
         df = df_raw.iloc[start_row:].copy().reset_index(drop=True)
 
-        # Assign column names (include AY + BT)
+        # Assign column names
         df.columns = [
             'Vendor_Name', 'VAT_ID', 'Due_Date', 'Open_Amount',
             'Alt_Document', 'Vendor_Email', 'Account_Email',
@@ -67,26 +67,14 @@ if uploaded_file:
         ).fillna(0) == 0.0
 
         df = df[yes_mask & bd_mask & ay_mask].reset_index(drop=True)
-        df = df.drop(columns=['AF', 'AH', 'AJ', 'AN', 'AY', 'BD'])
 
-        if df.empty:
-            st.warning("No invoices match the priority + AY=0 filter.")
-            df = df_raw.iloc[start_row:].copy().reset_index(drop=True)
-            df.columns = [
-                'Vendor_Name', 'VAT_ID', 'Due_Date', 'Open_Amount',
-                'Alt_Document', 'Vendor_Email', 'Account_Email',
-                'AF', 'AH', 'AJ', 'AN', 'AY', 'BD', 'BT'
-            ]
-            df = df.drop(columns=['AF', 'AH', 'AJ', 'AN', 'AY', 'BD'])
-
-        # Clean
         df['Due_Date'] = pd.to_datetime(df['Due_Date'], errors='coerce')
         df['Open_Amount'] = pd.to_numeric(df['Open_Amount'], errors='coerce')
         df = df.dropna(subset=['Vendor_Name', 'Open_Amount', 'Due_Date'])
         df = df[df['Open_Amount'] > 0]
 
         if df.empty:
-            st.warning("No valid open invoices.")
+            st.warning("No valid open invoices after filters.")
             st.stop()
 
         # Overdue logic
@@ -94,17 +82,15 @@ if uploaded_file:
         df['Overdue'] = df['Due_Date'] < today
         df['Status'] = df['Overdue'].map({True: 'Overdue', False: 'Not Overdue'})
 
-        # === FILTER PANEL ===
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            status_filter = st.selectbox("Show", ["All Open", "Overdue Only", "Not Overdue Only"], key="status")
-        with col2:
-            top_n_option = st.selectbox("Top N", ["Top 20", "Top 30"], key="top_n")
-        with col3:
-            bfp_only = st.checkbox("Show only BFP invoices", value=False)
+        # === MODE SELECTION ===
+        mode = st.radio(
+            "Select View Mode:",
+            ["Priority Vendors", "BFP Only"],
+            horizontal=True
+        )
 
-        # Apply BFP filter
-        if bfp_only:
+        # Filter data if BFP mode
+        if mode == "BFP Only":
             df = df[df['BT'].astype(str).str.upper().str.contains("BFP", na=False)]
             if df.empty:
                 st.warning("No BFP invoices found.")
@@ -121,35 +107,32 @@ if uploaded_file:
             if col not in summary.columns:
                 summary[col] = 0
         summary['Total'] = summary['Overdue'] + summary['Not Overdue']
-        full_summary = summary
+
+        # === FILTERS ===
+        col1, col2 = st.columns(2)
+        with col1:
+            status_filter = st.selectbox("Show", ["All Open", "Overdue Only", "Not Overdue Only"], key="status")
+        with col2:
+            top_n_option = st.selectbox("Top N", ["Top 20", "Top 30"], key="top_n")
 
         n = 30 if top_n_option == "Top 30" else 20
 
+        # === TOP N LOGIC ===
         if status_filter == "All Open":
-            top_df = full_summary.nlargest(n, 'Total').copy()
+            top_df = summary.nlargest(n, 'Total').copy()
             title = f"{top_n_option} Vendors (All Open)"
         elif status_filter == "Overdue Only":
-            top_df = full_summary.nlargest(n, 'Overdue').copy()
+            top_df = summary.nlargest(n, 'Overdue').copy()
             top_df['Not Overdue'] = 0
             title = f"{top_n_option} Vendors (Overdue Only)"
         else:
-            top_df = full_summary.nlargest(n, 'Not Overdue').copy()
+            top_df = summary.nlargest(n, 'Not Overdue').copy()
             top_df['Overdue'] = 0
             title = f"{top_n_option} Vendors (Not Overdue Only)"
 
-        # === VENDOR SELECT ===
-        vendor_list = sorted(df['Vendor_Name'].unique().tolist())
-        selected_vendor = st.selectbox("Or Select Vendor", [""] + vendor_list, key="vendor_select")
-
-        if selected_vendor and selected_vendor != "":
-            base_df = full_summary[full_summary['Vendor_Name'] == selected_vendor]
-        else:
-            base_df = top_df
-
-        # === EMAIL EXTRACTION SECTION ===
+        # === EMAIL SECTION ===
         st.markdown("### 📧 Extract Vendor Emails for Outlook")
-        vendor_subset = df[df['Vendor_Name'].isin(base_df['Vendor_Name'])].copy()
-
+        vendor_subset = df[df['Vendor_Name'].isin(top_df['Vendor_Name'])].copy()
         emails = pd.concat([
             vendor_subset['Vendor_Email'],
             vendor_subset['Account_Email']
@@ -157,12 +140,8 @@ if uploaded_file:
         emails = [e.strip() for e in emails if e.strip() and e.lower() != "nan"]
         email_list = "; ".join(sorted(set(emails)))
 
-        if not email_list:
-            st.info("No emails found for this selection.")
-        else:
-            st.text_area("Emails (ready to copy for Outlook):", email_list, height=150)
-
-            # Copy to Clipboard via JS
+        if email_list:
+            st.text_area("Emails (ready to copy):", email_list, height=150)
             copy_js = f"""
             <script>
             function copyEmails() {{
@@ -181,16 +160,11 @@ if uploaded_file:
             ">📋 Copy to Clipboard</button>
             """
             st.markdown(copy_js, unsafe_allow_html=True)
-
-            st.download_button(
-                label="💾 Download Emails (.txt)",
-                data=email_list,
-                file_name="emails_for_outlook.txt",
-                mime="text/plain"
-            )
+        else:
+            st.info("No emails found for this selection.")
 
         # === PLOT DATA ===
-        plot_df = base_df.melt(
+        plot_df = top_df.melt(
             id_vars='Vendor_Name',
             value_vars=['Overdue', 'Not Overdue'],
             var_name='Type',
@@ -204,21 +178,10 @@ if uploaded_file:
             y='Vendor_Name',
             color='Type',
             orientation='h',
-            title=title + (" – BFP Only" if bfp_only else ""),
+            title=title + (" – BFP Only" if mode == "BFP Only" else ""),
             color_discrete_map={'Overdue': '#8B0000', 'Not Overdue': '#4682B4'},
-            height=max(500, len(plot_df) * 45)
-        )
-
-        totals = plot_df.groupby('Vendor_Name')['Amount'].sum().reset_index()
-        fig.add_scatter(
-            x=totals['Amount'],
-            y=totals['Vendor_Name'],
-            mode='text',
-            text=totals['Amount'].apply(lambda x: f'€{x:,.0f}'),
-            textposition='top center',
-            textfont=dict(size=14, color='white', family='Arial Black'),
-            showlegend=False,
-            hoverinfo='skip'
+            height=max(500, len(plot_df) * 45),
+            custom_data=['Vendor_Name', 'Type']
         )
 
         fig.update_layout(
@@ -231,10 +194,30 @@ if uploaded_file:
             margin=dict(l=160, r=50, t=80, b=50)
         )
 
-        st.plotly_chart(fig, use_container_width=True)
+        st.markdown("### 📊 Click a bar to see detailed invoices below")
+        selected = st.plotly_chart(fig, use_container_width=True, key="bfp_chart")
+
+        # === CLICK TO SHOW TABLE ===
+        st.markdown("---")
+        st.subheader("📋 Invoice Details")
+
+        clicked_vendor = None
+        if selected.selection and 'points' in selected.selection and selected.selection['points']:
+            point = selected.selection['points'][0]
+            clicked_vendor = point['y'] if 'y' in point else None
+
+        if clicked_vendor:
+            vendor_data = df[df['Vendor_Name'] == clicked_vendor].copy()
+            vendor_data['Due_Date'] = vendor_data['Due_Date'].dt.strftime('%Y-%m-%d')
+            st.dataframe(
+                vendor_data[['Vendor_Name', 'VAT_ID', 'Due_Date', 'Open_Amount', 'Status', 'Alt_Document']],
+                use_container_width=True
+            )
+        else:
+            st.info("Click on a vendor bar above to view details below.")
 
     except Exception as e:
         st.error(f"Error: {str(e)}")
         st.stop()
 else:
-    st.info("Upload Excel to view overdue invoices and export email lists.")
+    st.info("Upload Excel to start.")
