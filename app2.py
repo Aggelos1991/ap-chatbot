@@ -373,7 +373,7 @@ def extract_payments(erp_df, ven_df):
     pay_kw = [
         "πληρωμή", "payment", "payment remittance", "remittance", "bank transfer",
         "transferencia", "trf", "remesa", "pago", "deposit", "μεταφορά", "έμβασμα",
-        "εξοφληση", "pagado", "paid", "Cobro","cobro"  # ✅ Added "cobro"
+        "εξοφληση", "pagado", "paid", "cobro"
     ]
     excl_kw = [
         "invoice of expenses", "expense invoice", "τιμολόγιο εξόδων", "διόρθωση",
@@ -381,10 +381,9 @@ def extract_payments(erp_df, ven_df):
     ]
 
     def is_pay(row, tag):
-        txt = str(row.get(f"reason_{tag}", "")).lower()
-        return any(k in txt for k in pay_kw) and not any(b in txt for b in excl_kw) \
-               and ((tag == "erp" and normalize_number(row.get("debit_erp", 0)) > 0) or
-                    (tag == "ven" and normalize_number(row.get("credit_ven", 0)) > 0))
+        txt = (str(row.get(f"reason_{tag}", "")) + " " + str(row.get(f"invoice_{tag}", ""))).lower()
+        # ✅ now also searches inside the invoice text
+        return any(k in txt for k in pay_kw) and not any(b in txt for b in excl_kw)
 
     erp_pay = erp_df[erp_df.apply(lambda r: is_pay(r, "erp"), axis=1)].copy() if "reason_erp" in erp_df.columns else pd.DataFrame()
     ven_pay = ven_df[ven_df.apply(lambda r: is_pay(r, "ven"), axis=1)].copy() if "reason_ven" in ven_df.columns else pd.DataFrame()
@@ -410,7 +409,9 @@ def extract_payments(erp_df, ven_df):
                 })
                 used.add(vi)
                 break
+
     return erp_pay, ven_pay, pd.DataFrame(matched)
+
 
 # ==================== EXCEL EXPORT ==========================
 def export_excel(miss_erp, miss_ven):
