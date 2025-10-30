@@ -3,14 +3,16 @@ import json
 from io import BytesIO
 import fitz  # PyMuPDF
 import pandas as pd
+import pytesseract
+from PIL import Image
 import streamlit as st
 from openai import OpenAI
 
 # ==========================
 # STREAMLIT CONFIG
 # ==========================
-st.set_page_config(page_title="📄 Vendor Statement Extractor", layout="wide")
-st.title("📄 Vendor Statement → Excel Extractor (Spanish PDFs)")
+st.set_page_config(page_title="📄 Vendor Statement Extractor (OCR Ready)", layout="wide")
+st.title("📄 Vendor Statement Extractor (with OCR fallback)")
 
 # ==========================
 # LOAD OPENAI API KEY SAFELY
@@ -28,11 +30,27 @@ MODEL = "gpt-4.1-mini"
 # HELPER FUNCTIONS
 # ==========================
 def extract_text_from_pdf(file):
-    """Extract text from all PDF pages."""
+    """Extract text from PDF, with OCR fallback for scanned pages."""
     text = ""
+    ocr_pages = 0
+
     with fitz.open(stream=file.read(), filetype="pdf") as doc:
-        for page in doc:
-            text += page.get_text("text") + "\n"
+        for page_number, page in enumerate(doc, start=1):
+            page_text = page.get_text("text")
+
+            # If no text found (scanned image), run OCR
+            if not page_text.strip():
+                pix = page.get_pixmap(dpi=300)
+                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                ocr_text = pytesseract.image_to_string(img, lang="spa")  # OCR in Spanish
+                text += ocr_text + "\n"
+                ocr_pages += 1
+            else:
+                text += page_text + "\n"
+
+    if ocr_pages > 0:
+        st.warning(f"⚙️ {ocr_pages} page(s) processed via OCR (image-based PDF).")
+
     return text
 
 def clean_text(text):
@@ -81,7 +99,7 @@ def to_excel_bytes(records):
 uploaded_pdf = st.file_uploader("📂 Upload a vendor statement (PDF)", type=["pdf"])
 
 if uploaded_pdf:
-    with st.spinner("📄 Extracting text from PDF..."):
+    with st.spinner("📄 Extracting text from PDF (auto OCR if needed)..."):
         text = extract_text_from_pdf(uploaded_pdf)
         cleaned = clean_text(text)
 
@@ -109,3 +127,5 @@ if uploaded_pdf:
             )
         else:
             st.warning("⚠️ No structured data found. Try another PDF or verify text extraction.")
+else:
+    st.info("Please upload a vendor statement PDF to begin.")
