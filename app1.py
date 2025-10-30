@@ -61,7 +61,7 @@ def extract_raw_lines(uploaded_pdf):
     return all_lines
 
 # ==========================================================
-# GPT EXTRACTOR — FIXED + SALDO FILTER
+# GPT EXTRACTOR — Enhanced with Comentario / Concepto logic
 # ==========================================================
 def extract_with_gpt(lines):
     """Use GPT to detect Debit (DEBE) and Credit (HABER) from vendor statements."""
@@ -75,26 +75,30 @@ def extract_with_gpt(lines):
         prompt = f"""
 You are a financial data extractor specialized in Spanish vendor statements.
 
-Your task is to extract all accounting transactions line by line in **clean JSON**.
-
-Each line usually includes:
+Each line contains:
 - Fecha (Date)
 - N° DOC or Documento (Document number)
-- Comentario / Concepto / Descripción (may include invoice numbers or payment info)
+- Comentario / Concepto / Descripción (text with context — may contain invoice or payment details)
 - DEBE (Invoice amounts)
 - HABER / CRÉDITO (Payments or credit notes)
 - SALDO (running balance — IGNORE COMPLETELY)
 
-**RULES:**
-1. Never use "Asiento", "Saldo", "IVA" or "Total" as document or transaction lines — ignore them completely.
-2. If "N° DOC" is missing, extract invoice-like pattern from "Comentario" or "Concepto" (examples: FAC1234, FACTURA 209, INV-2024-05, 1775/2024, etc.).
-3. DEBE → always "Invoice".
-4. HABER / CRÉDITO → "Payment" unless text mentions *abono*, *nota de crédito*, *crédito*, *descuento* → then "Credit Note".
-5. If there is no value in DEBE or HABER, leave it empty (do not invent numbers).
-6. Never include or use SALDO values.
-7. Always return valid JSON array — no text, no commentary, only structured output.
+Your task: extract all valid transactions and classify them precisely.
 
-**OUTPUT FORMAT:**
+**CLASSIFICATION RULES:**
+1. Never use "Asiento", "Saldo", "IVA" or "Total" as document or transaction lines — ignore them.
+2. If "N° DOC" is empty, look for an invoice-like pattern in the "Comentario" text (examples: FRA 209, FAC1234, FACTURA 1775, INV-2024-01, etc.) and use that as Alternative Document.
+3. Use **Comentario / Concepto / Descripción** text to detect the reason:
+   - If it contains "Cobro", "Pago", "Transferencia", "Remesa", "Bank", "Trf", "Pagado" → it's a **Payment**.
+   - If it contains "Abono", "Nota de crédito", "Crédito", "Descuento" → it's a **Credit Note**.
+   - If it contains "Fra.", "Factura", "FRA", "Factura Proveedor" → it's an **Invoice**.
+4. DEBE → always "Invoice".
+5. HABER / CRÉDITO → "Payment" or "Credit Note" based on keywords.
+6. If both DEBE and HABER appear, only one should be used — keep the correct side based on reason.
+7. Never use SALDO values.
+8. Leave blank if value is missing; never invent numbers.
+
+**OUTPUT FORMAT (JSON only):**
 [
   {{
     "Alternative Document": "...",
@@ -122,9 +126,6 @@ Text to analyze:
 
             json_match = re.search(r'\[.*\]', content, re.DOTALL)
             if not json_match:
-                json_match = re.search(r'(\[.*?\])', content, re.DOTALL)
-
-            if not json_match:
                 st.warning(f"No JSON found in batch {i//BATCH_SIZE + 1}")
                 continue
 
@@ -140,21 +141,20 @@ Text to analyze:
                 reason = row.get("Reason", "").strip()
 
                 # === SALDO / DOUBLE-SIDE CLEANUP LOGIC ===
-                # Case 1: Both filled → keep correct side only
                 if debit_val and credit_val:
                     if reason.lower() in ["payment", "credit note"]:
-                        debit_val = ""  # keep only credit side
+                        debit_val = ""  # keep only credit
                     elif reason.lower() == "invoice":
-                        credit_val = ""  # keep only debit side
-                    # If both are suspiciously small → drop one likely SALDO
-                    elif abs(debit_val - credit_val) < 0.01 or min(debit_val, credit_val) / max(debit_val, credit_val) < 0.3:
-                        # Smaller value is most likely SALDO
-                        if debit_val < credit_val:
-                            debit_val = ""
-                        else:
-                            credit_val = ""
+                        credit_val = ""  # keep only debit
+                    else:
+                        # smaller one likely SALDO or duplicate
+                        if abs(debit_val - credit_val) < 0.01 or min(debit_val, credit_val) / max(debit_val, credit_val) < 0.3:
+                            if debit_val < credit_val:
+                                debit_val = ""
+                            else:
+                                credit_val = ""
 
-                # Case 2: Enforce one-sided rule
+                # Enforce one-sided rule
                 if debit_val and not credit_val:
                     reason = "Invoice"
                 elif credit_val and not debit_val:
@@ -163,7 +163,7 @@ Text to analyze:
                     else:
                         reason = "Payment"
                 elif debit_val == "" and credit_val == "":
-                    continue  # ignore empty line
+                    continue
 
                 all_records.append({
                     "Alternative Document": alt_doc,
