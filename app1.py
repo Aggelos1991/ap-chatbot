@@ -76,7 +76,7 @@ def parse_gpt_response(content, batch_num):
         return []
 
 # ==========================================================
-# GPT EXTRACTOR — Enhanced + Auto-Retry
+# GPT EXTRACTOR — Enhanced + Auto-Retry (Clean Display)
 # ==========================================================
 def extract_with_gpt(lines):
     """Use GPT to detect Debit (DEBE) and Credit (HABER) from vendor statements."""
@@ -127,6 +127,8 @@ Text to analyze:
 {text_block}
 """
 
+        data = []
+        # Try GPT-4o-mini first, fallback to GPT-4o if no results
         for model in [PRIMARY_MODEL, BACKUP_MODEL]:
             try:
                 response = client.chat.completions.create(
@@ -135,12 +137,14 @@ Text to analyze:
                     temperature=0.0
                 )
                 content = response.choices[0].message.content.strip()
-                if i == 0:
-                    st.text_area(f"🧠 GPT Response (Batch 1 – {model})", content, height=250, key=f"debug_{model}")
+
+                # Show only GPT-4o response if it's the first batch and non-empty
+                if model == BACKUP_MODEL and i == 0:
+                    st.text_area(f"🤖 GPT Response (Batch 1 – {model})", content, height=250, key=f"debug_{model}")
 
                 data = parse_gpt_response(content, i // BATCH_SIZE + 1)
                 if data:
-                    break  # exit retry loop if successful
+                    break
             except Exception as e:
                 st.warning(f"❌ GPT error with {model}: {e}")
                 data = []
@@ -148,7 +152,6 @@ Text to analyze:
         if not data:
             continue
 
-        # === Post-process records ===
         for row in data:
             alt_doc = str(row.get("Alternative Document", "")).strip()
             if not alt_doc or re.search(r"(asiento|saldo|total|iva)", alt_doc, re.IGNORECASE):
@@ -158,7 +161,6 @@ Text to analyze:
             credit_val = normalize_number(row.get("Credit", ""))
             reason = row.get("Reason", "").strip()
 
-            # === SALDO / DOUBLE-SIDE CLEANUP ===
             if debit_val and credit_val:
                 if reason.lower() in ["payment", "credit note"]:
                     debit_val = ""
@@ -171,7 +173,6 @@ Text to analyze:
                         else:
                             credit_val = ""
 
-            # === Classification correction ===
             if debit_val and not credit_val:
                 reason = "Invoice"
             elif credit_val and not debit_val:
