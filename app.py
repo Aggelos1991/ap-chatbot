@@ -28,6 +28,7 @@ def parse_amount(v):
     except:
         return 0.0
 
+
 def find_col(df, names):
     """Find a column name that loosely matches one of the candidates."""
     for c in df.columns:
@@ -36,6 +37,7 @@ def find_col(df, names):
             if n.replace(" ", "").replace(".", "").lower() in name:
                 return c
     return None
+
 
 # ===== Streamlit Config =====
 st.set_page_config(page_title="The Remitator", layout="wide")
@@ -56,7 +58,6 @@ if pay_file:
         st.error(f"❌ Error loading Payment Excel: {e}")
         st.stop()
 
-    # ---- Required columns in Payment file ----
     req = [
         "Payment Document Code",
         "Alt. Document",
@@ -79,7 +80,6 @@ if pay_file:
         st.warning("⚠️ No rows found for this Payment Document Code.")
         st.stop()
 
-    # ---- Optional Credit Note file ----
     cn = None
     if cn_file:
         try:
@@ -93,47 +93,42 @@ if pay_file:
     else:
         st.info("ℹ️ No Credit Note file uploaded — showing payments only.")
 
-    # ---- Parse numeric columns ----
     subset["Invoice Value"] = subset["Invoice Value"].apply(parse_amount)
     subset["Payment Value"] = subset["Payment Value"].apply(parse_amount)
 
     vendor = subset["Supplier Name"].iloc[0]
     email = subset["Supplier's Email"].iloc[0]
 
-    # ---- Base summary ----
     summary = subset[["Alt. Document", "Invoice Value"]].copy()
     cn_rows = []
+    debug_rows = []
 
     # ==============================================================
-    # ✅ ADVANCED CN LOGIC – exact + 2/3-combo matching (fixed filter)
+    # ✅ ADVANCED CN LOGIC with debug table
     # ==============================================================
     if cn is not None:
         cn_alt_col = find_col(cn, ["Alt.Document", "Alt. Document"])
         cn_val_col = find_col(cn, ["Amount", "Debit", "Charge", "Cargo", "DEBE"])
 
         if cn_alt_col and cn_val_col:
-            # Normalize numeric
             cn[cn_val_col] = cn[cn_val_col].apply(parse_amount)
-
-            # ✨ FIXED: proper non-zero filter (previous version raised KeyError)
             cn = cn[cn[cn_val_col].abs() > 0.01].reset_index(drop=True)
-
-            # Keep only the last instance of each CN number
             cn = cn.drop_duplicates(subset=[cn_alt_col], keep="last").reset_index(drop=True)
 
-            # Track used CN rows so we don't reuse the same CN across invoices
             used_indices = set()
 
             for _, row in subset.iterrows():
+                inv = str(row["Alt. Document"])
                 payment_val = row["Payment Value"]
                 invoice_val = row["Invoice Value"]
                 diff = round(payment_val - invoice_val, 2)
+                matched_cns = []
                 if abs(diff) < 0.01:
                     continue
 
                 match_found = False
 
-                # 1) Try single CN exact match
+                # 1️⃣ Try single CN
                 for i, r in cn.iterrows():
                     if i in used_indices:
                         continue
@@ -141,48 +136,61 @@ if pay_file:
                         cn_no = str(r[cn_alt_col])
                         cn_amt = -abs(r[cn_val_col])
                         cn_rows.append({"Alt. Document": f"{cn_no} (CN)", "Invoice Value": cn_amt})
+                        matched_cns.append(cn_no)
                         used_indices.add(i)
                         match_found = True
                         break
 
-                # 2) Try combinations of 2 or 3 CNs
+                # 2️⃣ Try 2–3 CN combinations
                 if not match_found:
                     available = [(i, abs(r[cn_val_col]), r) for i, r in cn.iterrows() if i not in used_indices]
                     for n in [2, 3]:
                         for combo in combinations(available, n):
                             total = round(sum(x[1] for x in combo), 2)
-                            if abs(total - abs(diff)) < 0.02:  # tolerance
+                            if abs(total - abs(diff)) < 0.05:  # ±0.05 tolerance
                                 for i, _, r in combo:
                                     cn_no = str(r[cn_alt_col])
                                     cn_amt = -abs(r[cn_val_col])
                                     cn_rows.append({"Alt. Document": f"{cn_no} (CN)", "Invoice Value": cn_amt})
+                                    matched_cns.append(cn_no)
                                     used_indices.add(i)
                                 match_found = True
                                 break
                         if match_found:
                             break
 
-            st.success(f"✅ Applied {len(cn_rows)} credit notes (single or combo matches).")
+                debug_rows.append({
+                    "Invoice": inv,
+                    "Invoice Value": invoice_val,
+                    "Payment Value": payment_val,
+                    "Difference": diff,
+                    "Matched CNs": ", ".join(matched_cns) if matched_cns else "—",
+                    "Matched?": "✅" if match_found else "❌"
+                })
+
+            st.success(f"✅ Applied {len(cn_rows)} CNs (single/combo)")
+
+            # ---- Debug breakdown
+            debug_df = pd.DataFrame(debug_rows)
+            if not debug_df.empty:
+                st.subheader("🔍 Debug breakdown — invoice vs. CN matching")
+                st.dataframe(debug_df, use_container_width=True)
         else:
             st.warning("⚠️ CN file missing expected columns ('Alt.Document', 'Amount/Debit'). CN logic skipped.")
     else:
         st.info("ℹ️ No Credit Note file uploaded — showing payments only.")
     # ==============================================================
 
-    # ---- Add CNs ----
     if cn_rows:
         summary = pd.concat([summary, pd.DataFrame(cn_rows)], ignore_index=True)
 
-    # ---- Add total ----
     total_val = summary["Invoice Value"].sum()
     total_row = pd.DataFrame([{"Alt. Document": "TOTAL", "Invoice Value": total_val}])
     summary = pd.concat([summary, total_row], ignore_index=True)
 
-    # ---- Format ----
     summary["Invoice Value (€)"] = summary["Invoice Value"].apply(lambda v: f"€{v:,.2f}")
     summary = summary[["Alt. Document", "Invoice Value (€)"]]
 
-    # ---- Display ----
     st.divider()
     st.subheader(f"📋 Summary for Payment Code: {pay_code}")
     st.write(f"**Vendor:** {vendor}")
@@ -196,7 +204,6 @@ if pay_file:
     for r in dataframe_to_rows(summary, index=False, header=True):
         ws.append(r)
 
-    # ---- Hidden meta table ----
     ws_hidden = wb.create_sheet("HiddenMeta")
     meta_data = [
         ["Vendor", vendor],
@@ -206,14 +213,12 @@ if pay_file:
     ]
     for row in meta_data:
         ws_hidden.append(row)
-
     tab = Table(displayName="MetaTable", ref=f"A1:B{len(meta_data)}")
     style = TableStyleInfo(name="TableStyleMedium2", showRowStripes=True)
     tab.tableStyleInfo = style
     ws_hidden.add_table(tab)
     ws_hidden.sheet_state = "hidden"
 
-    # ---- Save ----
     folder = os.path.join(os.getcwd(), "exports")
     os.makedirs(folder, exist_ok=True)
     file_path = os.path.join(folder, f"{vendor}_Payment_{pay_code}.xlsx")
@@ -222,7 +227,6 @@ if pay_file:
     buffer = BytesIO()
     wb.save(buffer)
     buffer.seek(0)
-
     st.download_button(
         "💾 Download Excel Summary",
         buffer,
