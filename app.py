@@ -60,7 +60,7 @@ if pay_file:
 
     req = [
         "Payment Document Code",
-        "Altenative Document",
+        "Alternative Document",
         "Invoice Value",
         "Payment Value",
         "Supplier Name",
@@ -99,15 +99,15 @@ if pay_file:
     vendor = subset["Supplier Name"].iloc[0]
     email = subset["Supplier's Email"].iloc[0]
 
-    summary = subset[["Alt. Document", "Invoice Value"]].copy()
+    summary = subset[["Alternative Document", "Invoice Value"]].copy()
     cn_rows, debug_rows, unmatched_invoices = [], [], []
 
     # ============================================================== #
     # ✅ ADVANCED CN LOGIC + INCLUDE UNMATCHED DIFFERENCES IN SUMMARY
     # ============================================================== #
     if cn is not None:
-        cn_alt_col = find_col(cn, ["Alt.Document", "Alt. Document"])
-        cn_val_col = find_col(cn, ["Charge", "Debit", "Charge", "Cargo", "DEBE"])
+        cn_alt_col = find_col(cn, ["Alternative Document", "Alt.Document", "Alt. Document"])
+        cn_val_col = find_col(cn, ["Charge", "Debit", "Amount", "Cargo", "DEBE"])
 
         if cn_alt_col and cn_val_col:
             cn[cn_val_col] = cn[cn_val_col].apply(parse_amount)
@@ -117,7 +117,7 @@ if pay_file:
             used_indices = set()
 
             for _, row in subset.iterrows():
-                inv = str(row["Alt. Document"])
+                inv = str(row["Alternative Document"])
                 payment_val = row["Payment Value"]
                 invoice_val = row["Invoice Value"]
                 diff = round(payment_val - invoice_val, 2)
@@ -134,7 +134,7 @@ if pay_file:
                     if round(abs(r[cn_val_col]), 2) == round(abs(diff), 2):
                         cn_no = str(r[cn_alt_col])
                         cn_amt = -abs(r[cn_val_col])
-                        cn_rows.append({"Alt. Document": f"{cn_no} (CN)", "Invoice Value": cn_amt})
+                        cn_rows.append({"Alternative Document": f"{cn_no} (CN)", "Invoice Value": cn_amt})
                         matched_cns.append(cn_no)
                         used_indices.add(i)
                         match_found = True
@@ -150,7 +150,7 @@ if pay_file:
                                 for i, _, r in combo:
                                     cn_no = str(r[cn_alt_col])
                                     cn_amt = -abs(r[cn_val_col])
-                                    cn_rows.append({"Alt. Document": f"{cn_no} (CN)", "Invoice Value": cn_amt})
+                                    cn_rows.append({"Alternative Document": f"{cn_no} (CN)", "Invoice Value": cn_amt})
                                     matched_cns.append(cn_no)
                                     used_indices.add(i)
                                 match_found = True
@@ -161,7 +161,7 @@ if pay_file:
                 # If not matched — record difference as its own row
                 if not match_found:
                     unmatched_invoices.append({
-                        "Alt. Document": f"{inv} (Unmatched Diff)",
+                        "Alternative Document": f"{inv} (Unmatched Diff)",
                         "Invoice Value": diff
                     })
 
@@ -176,8 +176,8 @@ if pay_file:
 
             # 🧾 Unused CNs
             unmatched_cns = cn.loc[~cn.index.isin(used_indices), [cn_alt_col, cn_val_col]].copy()
-            unmatched_cns.rename(columns={cn_alt_col: "CN Number", cn_val_col: "Amount"}, inplace=True)
-            unmatched_cns["Amount"] = unmatched_cns["Amount"].apply(lambda v: f"€{v:,.2f}")
+            unmatched_cns.rename(columns={cn_alt_col: "CN Number", cn_val_col: "Charge"}, inplace=True)
+            unmatched_cns["Charge"] = unmatched_cns["Charge"].apply(lambda v: f"€{v:,.2f}")
 
             st.success(f"✅ Applied {len(cn_rows)} CNs (single/combo)")
             debug_df = pd.DataFrame(debug_rows)
@@ -185,7 +185,7 @@ if pay_file:
                 st.subheader("🔍 Debug breakdown — invoice vs. CN matching")
                 st.dataframe(debug_df, use_container_width=True)
         else:
-            st.warning("⚠️ CN file missing expected columns ('Alt.Document', 'Amount/Debit'). CN logic skipped.")
+            st.warning("⚠️ CN file missing expected columns ('Alternative Document', 'Charge'). CN logic skipped.")
     else:
         st.info("ℹ️ No Credit Note file uploaded — showing payments only.")
 
@@ -199,11 +199,11 @@ if pay_file:
         all_rows = pd.concat([all_rows, pd.DataFrame(unmatched_invoices)], ignore_index=True)
 
     total_val = all_rows["Invoice Value"].sum()
-    total_row = pd.DataFrame([{"Alt. Document": "TOTAL", "Invoice Value": total_val}])
+    total_row = pd.DataFrame([{"Alternative Document": "TOTAL", "Invoice Value": total_val}])
     all_rows = pd.concat([all_rows, total_row], ignore_index=True)
 
     all_rows["Invoice Value (€)"] = all_rows["Invoice Value"].apply(lambda v: f"€{v:,.2f}")
-    all_rows = all_rows[["Alt. Document", "Invoice Value (€)"]]
+    all_rows = all_rows[["Alternative Document", "Invoice Value (€)"]]
 
     st.divider()
     st.subheader(f"📋 Final Summary for Payment Code: {pay_code}")
