@@ -79,9 +79,11 @@ def extract_with_gpt(lines):
 - DEBE → Invoice amounts (Debit)
 - HABER/CREDIT → Payment amounts (Credit) 
 - SALDO → Running balance (IGNORE for extraction)
+- COMENTARIO / DESCRIPCIÓN → You can find here sometimes the invoice number
+- Don't count Asiento for document number
 
 **For each transaction:**
-{{"Alternative Document": "N° DOC number", 
+{{"Alternative Document": "N° DOC number,OR invoice number found inside COMENTARIO if N° DOC missing"
  "Date": "dd/mm/yy", 
  "Reason": "Invoice|Payment|Credit Note",
  "Debit": "DEBE amount", 
