@@ -4,6 +4,9 @@ import pandas as pd
 import streamlit as st
 from io import BytesIO
 from openai import OpenAI
+import fitz  # PyMuPDF for OCR fallback
+import pytesseract
+from PIL import Image
 
 # ==========================================================
 # CONFIGURATION
@@ -47,17 +50,35 @@ def normalize_number(value):
         return ""
 
 def extract_raw_lines(uploaded_pdf):
-    """Extract ALL text lines from every page of the PDF."""
+    """Extract ALL text lines from every page of the PDF, with OCR fallback."""
     all_lines = []
-    with pdfplumber.open(uploaded_pdf) as pdf:
-        for page in pdf.pages:
+
+    # Save uploaded file temporarily for PyMuPDF to open
+    temp_bytes = uploaded_pdf.read()
+    uploaded_pdf.seek(0)
+
+    with pdfplumber.open(BytesIO(temp_bytes)) as pdf:
+        for i, page in enumerate(pdf.pages):
             text = page.extract_text()
-            if not text:
-                continue
-            for line in text.split("\n"):
-                clean_line = " ".join(line.split())
-                if clean_line.strip():
-                    all_lines.append(clean_line)
+            if text:
+                # ✅ Normal text-based PDF
+                for line in text.split("\n"):
+                    clean_line = " ".join(line.split())
+                    if clean_line.strip():
+                        all_lines.append(clean_line)
+            else:
+                # ⚙️ OCR fallback using PyMuPDF + pytesseract
+                with fitz.open(stream=temp_bytes, filetype="pdf") as doc:
+                    try:
+                        pix = doc.load_page(i).get_pixmap()
+                        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                        ocr_text = pytesseract.image_to_string(img, lang="eng")
+                        for line in ocr_text.split("\n"):
+                            clean_line = " ".join(line.split())
+                            if clean_line.strip():
+                                all_lines.append(clean_line)
+                    except Exception as e:
+                        st.warning(f"OCR failed on page {i+1}: {e}")
     return all_lines
 
 # ==========================================================
@@ -183,7 +204,7 @@ def to_excel_bytes(records):
 uploaded_pdf = st.file_uploader("📂 Upload Vendor Statement (PDF)", type=["pdf"])
 
 if uploaded_pdf:
-    with st.spinner("📄 Extracting text from all pages..."):
+    with st.spinner("📄 Extracting text (with OCR fallback if needed)..."):
         lines = extract_raw_lines(uploaded_pdf)
     
     st.success(f"✅ Found {len(lines)} lines of text!")
