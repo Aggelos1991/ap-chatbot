@@ -61,7 +61,7 @@ def extract_raw_lines(uploaded_pdf):
     return all_lines
 
 # ==========================================================
-# GPT EXTRACTOR — FIXED CREDIT NOTE HANDLING
+# GPT EXTRACTOR — FIXED CREDIT NOTE + FILTER HANDLING
 # ==========================================================
 def extract_with_gpt(lines):
     """Use GPT to detect Debit (DEBE) and Credit (HABER) from vendor statements."""
@@ -75,10 +75,11 @@ def extract_with_gpt(lines):
         prompt = f"""Extract accounting transactions from this text.
 
 **COLUMNS:**
-- N° DOC → Document number (1729, 1775, etc.)
+- N° DOC → Document number (1729, 1775, etc.) , COMENTARIO -> You can find here sometimes the invoice number
 - DEBE → Invoice amounts (Debit)
 - HABER/CREDIT → Payment amounts (Credit) 
 - SALDO → Running balance (IGNORE for extraction)
+- Don't count Asiento for Document number
 
 **For each transaction:**
 {{"Alternative Document": "N° DOC number"
@@ -107,8 +108,8 @@ Text:
             )
             content = response.choices[0].message.content.strip()
             
-            # Debug
-            if i == 0: # Only show first batch
+            # Show only first GPT batch for debug
+            if i == 0:
                 st.text_area("GPT Response (Batch 1):", content, height=200, key="debug_1")
             
             json_match = re.search(r'\[.*\]', content, re.DOTALL)
@@ -121,17 +122,16 @@ Text:
                 
                 for row in data:
                     alt_doc = str(row.get("Alternative Document", "")).strip()
-                    
-                    # Skip invalid documents
-                    if not alt_doc or re.search(r"concil|saldo|total|iva", alt_doc, re.IGNORECASE):
+
+                    # ✅ FILTER FIX: skip Asiento, Saldo, Comentario, Total, IVA
+                    if not alt_doc or re.search(r"(asiento|saldo|comentario|total|iva)", alt_doc, re.IGNORECASE):
                         continue
-                    
+
                     debit_raw = row.get("Debit", "")
                     credit_raw = row.get("Credit", "")
                     
                     debit_val = normalize_number(debit_raw)
                     credit_val = normalize_number(credit_raw)
-                    
                     reason = row.get("Reason", "Invoice").strip()
                     
                     # FIXED: Handle negative DEBE as Credit Note
@@ -140,10 +140,9 @@ Text:
                         debit_val = ""
                         reason = "Credit Note"
                     
-                    # FIXED: ONLY classify as Payment if GPT already marked it as Payment
-                    # Don't override Credit Notes or Invoices
+                    # Keep GPT classification for Payment
                     if reason == "Payment" and credit_val != "" and float(credit_val) > 0:
-                        pass  # Keep as Payment
+                        pass
                     elif reason == "Credit Note" or (debit_val != "" and float(debit_val) < 0):
                         reason = "Credit Note"
                         if credit_val == "":
