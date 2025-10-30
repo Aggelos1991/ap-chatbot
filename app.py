@@ -7,6 +7,7 @@ from openpyxl.utils.dataframe import dataframe_to_rows
 from openpyxl.worksheet.table import Table, TableStyleInfo
 import os
 from datetime import datetime
+from itertools import combinations
 
 # ===== Helper functions =====
 def parse_amount(v):
@@ -105,41 +106,66 @@ if pay_file:
     summary = subset[["Alt. Document", "Invoice Value"]].copy()
     cn_rows = []
 
-    # ---- Apply CN logic only if CN file exists ----
+    # ==============================================================
+    # ✅ ADVANCED CN LOGIC – exact + combination matching
+    # ==============================================================
     if cn is not None:
         cn_alt_col = find_col(cn, ["Alt.Document", "Alt. Document"])
-        cn_val_col = find_col(cn, ["Amount"])
+        cn_val_col = find_col(cn, ["Amount", "Debit", "Charge", "Cargo", "DEBE"])
 
-    if cn_alt_col and cn_val_col:
-        cn[cn_val_col] = cn[cn_val_col].apply(parse_amount)
+        if cn_alt_col and cn_val_col:
+            cn[cn_val_col] = cn[cn_val_col].apply(parse_amount)
+            cn = cn[cn[cn[cn_val_col].abs() > 0.01].index].reset_index(drop=True)
 
-        # 🔹 Keep only the last occurrence of each CN number
-        cn = cn.drop_duplicates(subset=[cn_alt_col], keep="last").reset_index(drop=True)
+            # Keep only the last instance of each CN number
+            cn = cn.drop_duplicates(subset=[cn_alt_col], keep="last").reset_index(drop=True)
 
-        for _, row in subset.iterrows():
-            payment_val = row["Payment Value"]
-            invoice_val = row["Invoice Value"]
-            diff = round(payment_val - invoice_val, 2)
+            used_indices = set()
 
-            if abs(diff) > 0.01:
-                # Find matching CN (based on amount)
-                match = cn[cn[cn_val_col].abs().round(2) == abs(diff)]
+            for _, row in subset.iterrows():
+                payment_val = row["Payment Value"]
+                invoice_val = row["Invoice Value"]
+                diff = round(payment_val - invoice_val, 2)
+                if abs(diff) < 0.01:
+                    continue
 
-                # Take only the LAST CN if multiple exist
-                if not match.empty:
-                    last_cn = match.iloc[-1]
-                    cn_no = str(last_cn[cn_alt_col])
-                    cn_amt = -abs(last_cn[cn_val_col])
-                    cn_rows.append(
-                        {"Alt. Document": f"{cn_no} (CN)", "Invoice Value": cn_amt}
-                    )
+                match_found = False
 
+                # 1️⃣ Try single CN
+                for i, r in cn.iterrows():
+                    if i in used_indices:
+                        continue
+                    if round(abs(r[cn_val_col]), 2) == round(abs(diff), 2):
+                        cn_no = str(r[cn_alt_col])
+                        cn_amt = -abs(r[cn_val_col])
+                        cn_rows.append({"Alt. Document": f"{cn_no} (CN)", "Invoice Value": cn_amt})
+                        used_indices.add(i)
+                        match_found = True
+                        break
+
+                # 2️⃣ Try combinations of 2 or 3 CNs
+                if not match_found:
+                    available = [(i, abs(r[cn_val_col]), r) for i, r in cn.iterrows() if i not in used_indices]
+                    for n in [2, 3]:
+                        for combo in combinations(available, n):
+                            total = round(sum(x[1] for x in combo), 2)
+                            if abs(total - abs(diff)) < 0.02:  # tolerance ±0.02
+                                for i, _, r in combo:
+                                    cn_no = str(r[cn_alt_col])
+                                    cn_amt = -abs(r[cn_val_col])
+                                    cn_rows.append({"Alt. Document": f"{cn_no} (CN)", "Invoice Value": cn_amt})
+                                    used_indices.add(i)
+                                match_found = True
+                                break
+                        if match_found:
+                            break
+
+            st.success(f"✅ Applied {len(cn_rows)} credit notes (single or combo matches).")
+        else:
+            st.warning("⚠️ CN file missing expected columns ('Alt.Document', 'Amount/Debit'). CN logic skipped.")
     else:
-        st.warning("⚠️ CN file missing expected columns ('Alt.Document', 'Amount'). CN logic skipped.")
-
-
-
-
+        st.info("ℹ️ No Credit Note file uploaded — showing payments only.")
+    # ==============================================================
 
     # ---- Add CNs ----
     if cn_rows:
