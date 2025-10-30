@@ -75,15 +75,14 @@ def extract_with_gpt(lines):
         prompt = f"""Extract accounting transactions from this text.
 
 **COLUMNS:**
-- N° DOC → Document number (1729, 1775, etc.)
+- N° DOC → Document number (1729, 1775, etc.) , COMENTARIO -> You can find here sometimes the invoice number
 - DEBE → Invoice amounts (Debit)
 - HABER/CREDIT → Payment amounts (Credit) 
 - SALDO → Running balance (IGNORE for extraction)
-- COMENTARIO / DESCRIPCIÓN → You can find here sometimes the invoice number
-- Don't count Asiento for document number
+- Don't count Asiento for Document number
 
 **For each transaction:**
-{{"Alternative Document": "N° DOC number,OR invoice number found inside COMENTARIO if N° DOC missing"
+{{"Alternative Document": "N° DOC number"
  "Date": "dd/mm/yy", 
  "Reason": "Invoice|Payment|Credit Note",
  "Debit": "DEBE amount", 
