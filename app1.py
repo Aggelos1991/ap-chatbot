@@ -23,7 +23,8 @@ if not api_key:
     st.stop()
 
 client = OpenAI(api_key=api_key)
-MODEL = "gpt-4o-mini"
+PRIMARY_MODEL = "gpt-4o-mini"
+BACKUP_MODEL = "gpt-4o"
 
 # ==========================================================
 # HELPERS
@@ -60,45 +61,58 @@ def extract_raw_lines(uploaded_pdf):
                     all_lines.append(clean_line)
     return all_lines
 
+def parse_gpt_response(content, batch_num):
+    """Try to extract JSON from GPT output safely."""
+    json_match = re.search(r'\[.*\]', content, re.DOTALL)
+    if not json_match:
+        st.warning(f"⚠️ Batch {batch_num}: No JSON found. First 300 chars:\n{content[:300]}")
+        return []
+
+    try:
+        data = json.loads(json_match.group(0))
+        return data
+    except json.JSONDecodeError as e:
+        st.warning(f"⚠️ Batch {batch_num}: JSON decode error → {e}")
+        return []
+
 # ==========================================================
-# GPT EXTRACTOR — Enhanced with Comentario / Concepto logic
+# GPT EXTRACTOR — Enhanced + Auto-Retry
 # ==========================================================
 def extract_with_gpt(lines):
     """Use GPT to detect Debit (DEBE) and Credit (HABER) from vendor statements."""
-    BATCH_SIZE = 100
+    BATCH_SIZE = 60
     all_records = []
 
     for i in range(0, len(lines), BATCH_SIZE):
         batch = lines[i:i + BATCH_SIZE]
         text_block = "\n".join(batch)
-
         prompt = f"""
 You are a financial data extractor specialized in Spanish vendor statements.
 
 Each line contains:
 - Fecha (Date)
 - N° DOC or Documento (Document number)
-- Comentario / Concepto / Descripción (text with context — may contain invoice or payment details)
+- Comentario / Concepto / Descripción (may contain invoice or payment details)
 - DEBE (Invoice amounts)
 - HABER / CRÉDITO (Payments or credit notes)
-- SALDO (running balance — IGNORE COMPLETELY)
+- SALDO (running balance — IGNORE)
 
 Your task: extract all valid transactions and classify them precisely.
 
-**CLASSIFICATION RULES:**
-1. Never use "Asiento", "Saldo", "IVA" or "Total" as document or transaction lines — ignore them.
-2. If "N° DOC" is empty, look for an invoice-like pattern in the "Comentario" text (examples: FRA 209, FAC1234, FACTURA 1775, INV-2024-01, etc.) and use that as Alternative Document.
-3. Use **Comentario / Concepto / Descripción** text to detect the reason:
-   - If it contains "Cobro", "Pago", "Transferencia", "Remesa", "Bank", "Trf", "Pagado" → it's a **Payment**.
-   - If it contains "Abono", "Nota de crédito", "Crédito", "Descuento" → it's a **Credit Note**.
-   - If it contains "Fra.", "Factura", "FRA", "Factura Proveedor" → it's an **Invoice**.
-4. DEBE → always "Invoice".
-5. HABER / CRÉDITO → "Payment" or "Credit Note" based on keywords.
-6. If both DEBE and HABER appear, only one should be used — keep the correct side based on reason.
-7. Never use SALDO values.
-8. Leave blank if value is missing; never invent numbers.
+CLASSIFICATION RULES:
+1. Ignore lines with Asiento, Saldo, IVA, or Total.
+2. If "N° DOC" missing, find invoice-like pattern (FRA 209, FAC1234, FACTURA 1775, INV-2024-01).
+3. Use Comentario to detect the reason:
+   - Cobro, Pago, Transferencia, Remesa, Bank, Trf, Pagado → Payment
+   - Abono, Nota de crédito, Crédito, Descuento → Credit Note
+   - Fra., Factura, FRA, Factura Proveedor → Invoice
+4. DEBE → Invoice
+5. HABER → Payment or Credit Note
+6. If both DEBE & HABER appear, keep only the correct side.
+7. Never use SALDO.
+8. Output strictly JSON array only, no explanations.
 
-**OUTPUT FORMAT (JSON only):**
+OUTPUT FORMAT:
 [
   {{
     "Alternative Document": "...",
@@ -113,69 +127,68 @@ Text to analyze:
 {text_block}
 """
 
-        try:
-            response = client.chat.completions.create(
-                model=MODEL,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.0
-            )
-            content = response.choices[0].message.content.strip()
+        for model in [PRIMARY_MODEL, BACKUP_MODEL]:
+            try:
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.0
+                )
+                content = response.choices[0].message.content.strip()
+                if i == 0:
+                    st.text_area(f"🧠 GPT Response (Batch 1 – {model})", content, height=250, key=f"debug_{model}")
 
-            if i == 0:
-                st.text_area("GPT Response (Batch 1):", content, height=200, key="debug_1")
+                data = parse_gpt_response(content, i // BATCH_SIZE + 1)
+                if data:
+                    break  # exit retry loop if successful
+            except Exception as e:
+                st.warning(f"❌ GPT error with {model}: {e}")
+                data = []
 
-            json_match = re.search(r'\[.*\]', content, re.DOTALL)
-            if not json_match:
-                st.warning(f"No JSON found in batch {i//BATCH_SIZE + 1}")
+        if not data:
+            continue
+
+        # === Post-process records ===
+        for row in data:
+            alt_doc = str(row.get("Alternative Document", "")).strip()
+            if not alt_doc or re.search(r"(asiento|saldo|total|iva)", alt_doc, re.IGNORECASE):
                 continue
 
-            data = json.loads(json_match.group(0))
+            debit_val = normalize_number(row.get("Debit", ""))
+            credit_val = normalize_number(row.get("Credit", ""))
+            reason = row.get("Reason", "").strip()
 
-            for row in data:
-                alt_doc = str(row.get("Alternative Document", "")).strip()
-                if not alt_doc or re.search(r"(asiento|saldo|total|iva)", alt_doc, re.IGNORECASE):
-                    continue
+            # === SALDO / DOUBLE-SIDE CLEANUP ===
+            if debit_val and credit_val:
+                if reason.lower() in ["payment", "credit note"]:
+                    debit_val = ""
+                elif reason.lower() == "invoice":
+                    credit_val = ""
+                else:
+                    if abs(debit_val - credit_val) < 0.01 or min(debit_val, credit_val) / max(debit_val, credit_val) < 0.3:
+                        if debit_val < credit_val:
+                            debit_val = ""
+                        else:
+                            credit_val = ""
 
-                debit_val = normalize_number(row.get("Debit", ""))
-                credit_val = normalize_number(row.get("Credit", ""))
-                reason = row.get("Reason", "").strip()
+            # === Classification correction ===
+            if debit_val and not credit_val:
+                reason = "Invoice"
+            elif credit_val and not debit_val:
+                if re.search(r"abono|nota|crédit|descuento", str(row), re.IGNORECASE):
+                    reason = "Credit Note"
+                else:
+                    reason = "Payment"
+            elif debit_val == "" and credit_val == "":
+                continue
 
-                # === SALDO / DOUBLE-SIDE CLEANUP LOGIC ===
-                if debit_val and credit_val:
-                    if reason.lower() in ["payment", "credit note"]:
-                        debit_val = ""  # keep only credit
-                    elif reason.lower() == "invoice":
-                        credit_val = ""  # keep only debit
-                    else:
-                        # smaller one likely SALDO or duplicate
-                        if abs(debit_val - credit_val) < 0.01 or min(debit_val, credit_val) / max(debit_val, credit_val) < 0.3:
-                            if debit_val < credit_val:
-                                debit_val = ""
-                            else:
-                                credit_val = ""
-
-                # Enforce one-sided rule
-                if debit_val and not credit_val:
-                    reason = "Invoice"
-                elif credit_val and not debit_val:
-                    if re.search(r"abono|nota|crédit|descuento", str(row), re.IGNORECASE):
-                        reason = "Credit Note"
-                    else:
-                        reason = "Payment"
-                elif debit_val == "" and credit_val == "":
-                    continue
-
-                all_records.append({
-                    "Alternative Document": alt_doc,
-                    "Date": str(row.get("Date", "")).strip(),
-                    "Reason": reason,
-                    "Debit": debit_val,
-                    "Credit": credit_val
-                })
-
-        except Exception as e:
-            st.warning(f"GPT error batch {i//BATCH_SIZE + 1}: {e}")
-            continue
+            all_records.append({
+                "Alternative Document": alt_doc,
+                "Date": str(row.get("Date", "")).strip(),
+                "Reason": reason,
+                "Debit": debit_val,
+                "Credit": credit_val
+            })
 
     return all_records
 
@@ -202,7 +215,7 @@ if uploaded_pdf:
     st.text_area("📄 Preview (first 30 lines):", "\n".join(lines[:30]), height=300)
 
     if st.button("🤖 Run Hybrid Extraction", type="primary"):
-        with st.spinner("Analyzing with GPT-4o-mini..."):
+        with st.spinner("Analyzing with GPT models..."):
             data = extract_with_gpt(lines)
 
         if data:
