@@ -1,12 +1,9 @@
-import os, re, json, platform, shutil
+import os, re, json
 import pdfplumber
 import pandas as pd
 import streamlit as st
 from io import BytesIO
 from openai import OpenAI
-import fitz  # PyMuPDF for OCR fallback
-import pytesseract
-from PIL import Image
 
 # ==========================================================
 # CONFIGURATION
@@ -27,43 +24,6 @@ if not api_key:
 
 client = OpenAI(api_key=api_key)
 MODEL = "gpt-4o-mini"
-
-# ==========================================================
-# TESSERACT CHECK
-# ==========================================================
-def set_windows_tesseract_path_if_exists():
-    """On Windows, set pytesseract cmd to default install path if present."""
-    if platform.system().lower().startswith("win"):
-        possible = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
-        if os.path.exists(possible):
-            pytesseract.pytesseract.tesseract_cmd = possible  # ✅ ensure always set
-
-def has_tesseract():
-    """Return True if tesseract is available on PATH or at known Windows path."""
-    set_windows_tesseract_path_if_exists()
-    if shutil.which(getattr(pytesseract.pytesseract, "tesseract_cmd", "tesseract")) is None:
-        return False
-    try:
-        _ = pytesseract.get_tesseract_version()
-        return True
-    except Exception:
-        return False
-
-TESS_AVAILABLE = has_tesseract()
-
-# Show message depending on OCR availability
-if TESS_AVAILABLE:
-    st.info("✅ OCR engine (Tesseract) detected and active — scanned PDFs supported.")
-else:
-    st.warning(
-        "🔎 OCR is disabled because **Tesseract** is not installed or not on PATH.\n\n"
-        "Install it and refresh the app to enable OCR:\n"
-        "- **macOS (Homebrew):** `brew install tesseract`\n"
-        "- **Ubuntu/Debian:** `sudo apt update && sudo apt install -y tesseract-ocr tesseract-ocr-spa tesseract-ocr-ell`\n"
-        "- **Windows:** Install from the UB Mannheim build, then restart the app.\n"
-        "Common path: `C:\\Program Files\\Tesseract-OCR\\tesseract.exe` (auto-detected).",
-        icon="⚠️"
-    )
 
 # ==========================================================
 # HELPERS
@@ -87,53 +47,31 @@ def normalize_number(value):
         return ""
 
 def extract_raw_lines(uploaded_pdf):
-    """Extract ALL text lines from every page of the PDF, with OCR fallback (if available)."""
+    """Extract ALL text lines from every page of the PDF."""
     all_lines = []
-    raw_bytes = uploaded_pdf.read()
-    uploaded_pdf.seek(0)
-
-    with pdfplumber.open(BytesIO(raw_bytes)) as pdf:
-        doc = fitz.open(stream=raw_bytes, filetype="pdf") if TESS_AVAILABLE else None
-
-        for i, page in enumerate(pdf.pages):
+    with pdfplumber.open(uploaded_pdf) as pdf:
+        for page in pdf.pages:
             text = page.extract_text()
-            if text:
-                for line in text.split("\n"):
-                    clean_line = " ".join(line.split())
-                    if clean_line.strip():
-                        all_lines.append(clean_line)
+            if not text:
                 continue
-
-            # OCR fallback if page has no text
-            if TESS_AVAILABLE and doc is not None:
-                try:
-                    pix = doc.load_page(i).get_pixmap()
-                    img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-                    ocr_text = pytesseract.image_to_string(img, lang="eng+spa+ell")
-                    for line in ocr_text.split("\n"):
-                        clean_line = " ".join(line.split())
-                        if clean_line.strip():
-                            all_lines.append(clean_line)
-                except Exception as e:
-                    st.warning(f"OCR failed on page {i+1}: {e}")
-
-        if doc is not None:
-            doc.close()
-
+            for line in text.split("\n"):
+                clean_line = " ".join(line.split())
+                if clean_line.strip():
+                    all_lines.append(clean_line)
     return all_lines
 
 # ==========================================================
-# GPT EXTRACTOR — FIXED CREDIT NOTE + FILTER HANDLING
+# GPT EXTRACTOR — FIXED CREDIT NOTE HANDLING
 # ==========================================================
 def extract_with_gpt(lines):
     """Use GPT to detect Debit (DEBE) and Credit (HABER) from vendor statements."""
     BATCH_SIZE = 100
     all_records = []
-
+    
     for i in range(0, len(lines), BATCH_SIZE):
         batch = lines[i:i + BATCH_SIZE]
         text_block = "\n".join(batch)
-
+        
         prompt = f"""Extract accounting transactions from this text.
 
 **COLUMNS:**
@@ -144,7 +82,7 @@ def extract_with_gpt(lines):
 - Don't count Asiento for Document number
 
 **For each transaction:**
-{{"Alternative Document": "N° DOC number",
+{{"Alternative Document": "N° DOC number"
  "Date": "dd/mm/yy", 
  "Reason": "Invoice|Payment|Credit Note",
  "Debit": "DEBE amount", 
@@ -161,7 +99,7 @@ def extract_with_gpt(lines):
 
 Text:
 {text_block}"""
-
+        
         try:
             response = client.chat.completions.create(
                 model=MODEL,
@@ -169,39 +107,44 @@ Text:
                 temperature=0.0
             )
             content = response.choices[0].message.content.strip()
-
-            if i == 0:
+            
+            # Debug
+            if i == 0: # Only show first batch
                 st.text_area("GPT Response (Batch 1):", content, height=200, key="debug_1")
-
+            
             json_match = re.search(r'\[.*\]', content, re.DOTALL)
             if not json_match:
                 json_match = re.search(r'(\[.*?\])', content, re.DOTALL)
-
+            
             if json_match:
                 json_str = json_match.group(0)
                 data = json.loads(json_str)
-
+                
                 for row in data:
                     alt_doc = str(row.get("Alternative Document", "")).strip()
-
-                    # FILTER: skip Asiento, Saldo, Comentario, Total, IVA
-                    if not alt_doc or re.search(r"(asiento|saldo|comentario|total|iva)", alt_doc, re.IGNORECASE):
+                    
+                    # Skip invalid documents
+                    if not alt_doc or re.search(r"concil|saldo|total|iva", alt_doc, re.IGNORECASE):
                         continue
-
+                    
                     debit_raw = row.get("Debit", "")
                     credit_raw = row.get("Credit", "")
+                    
                     debit_val = normalize_number(debit_raw)
                     credit_val = normalize_number(credit_raw)
+                    
                     reason = row.get("Reason", "Invoice").strip()
-
-                    # Negative DEBE → Credit Note
+                    
+                    # FIXED: Handle negative DEBE as Credit Note
                     if debit_val != "" and float(debit_val) < 0:
                         credit_val = abs(float(debit_val))
                         debit_val = ""
                         reason = "Credit Note"
-
+                    
+                    # FIXED: ONLY classify as Payment if GPT already marked it as Payment
+                    # Don't override Credit Notes or Invoices
                     if reason == "Payment" and credit_val != "" and float(credit_val) > 0:
-                        pass
+                        pass  # Keep as Payment
                     elif reason == "Credit Note" or (debit_val != "" and float(debit_val) < 0):
                         reason = "Credit Note"
                         if credit_val == "":
@@ -209,7 +152,7 @@ Text:
                             debit_val = ""
                     elif debit_val != "" and float(debit_val) > 0:
                         reason = "Invoice"
-
+                    
                     all_records.append({
                         "Alternative Document": alt_doc,
                         "Date": str(row.get("Date", "")).strip(),
@@ -219,11 +162,11 @@ Text:
                     })
             else:
                 st.warning(f"No JSON found in batch {i//BATCH_SIZE + 1}")
-
+                
         except Exception as e:
             st.warning(f"GPT error batch {i//BATCH_SIZE + 1}: {e}")
             continue
-
+    
     return all_records
 
 # ==========================================================
@@ -242,33 +185,35 @@ def to_excel_bytes(records):
 uploaded_pdf = st.file_uploader("📂 Upload Vendor Statement (PDF)", type=["pdf"])
 
 if uploaded_pdf:
-    with st.spinner("📄 Extracting text (OCR used if available)..."):
+    with st.spinner("📄 Extracting text from all pages..."):
         lines = extract_raw_lines(uploaded_pdf)
-
+    
     st.success(f"✅ Found {len(lines)} lines of text!")
     st.text_area("📄 Preview (first 30 lines):", "\n".join(lines[:30]), height=300)
-
+    
     if st.button("🤖 Run Hybrid Extraction", type="primary"):
         with st.spinner("Analyzing with GPT-4o-mini..."):
             data = extract_with_gpt(lines)
-
+        
         if data:
             df = pd.DataFrame(data)
             st.success(f"✅ Extraction complete — {len(df)} valid records found!")
             st.dataframe(df, use_container_width=True, hide_index=True)
-
+            
+            # Totals
             try:
                 total_debit = df["Debit"].apply(pd.to_numeric, errors="coerce").sum()
                 total_credit = df["Credit"].apply(pd.to_numeric, errors="coerce").sum()
                 net = round(total_debit - total_credit, 2)
-
+                
                 col1, col2, col3 = st.columns(3)
                 col1.metric("💰 Total Debit", f"{total_debit:,.2f}")
                 col2.metric("💳 Total Credit", f"{total_credit:,.2f}")
                 col3.metric("⚖️ Net", f"{net:,.2f}")
+                
             except Exception as e:
                 st.error(f"Totals error: {e}")
-
+            
             st.download_button(
                 "⬇️ Download Excel",
                 data=to_excel_bytes(data),
