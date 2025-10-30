@@ -15,7 +15,7 @@
 
 Text to analyze:
 {text_block}
-"""
+""
 
         try:
             response = client.chat.completions.create(
