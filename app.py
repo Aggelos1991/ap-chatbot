@@ -60,7 +60,7 @@ if pay_file:
 
     req = [
         "Payment Document Code",
-        "Alt. Document",
+        "Altenative Document",
         "Invoice Value",
         "Payment Value",
         "Supplier Name",
@@ -107,7 +107,7 @@ if pay_file:
     # ============================================================== #
     if cn is not None:
         cn_alt_col = find_col(cn, ["Alt.Document", "Alt. Document"])
-        cn_val_col = find_col(cn, ["Amount", "Debit", "Charge", "Cargo", "DEBE"])
+        cn_val_col = find_col(cn, ["Charge", "Debit", "Charge", "Cargo", "DEBE"])
 
         if cn_alt_col and cn_val_col:
             cn[cn_val_col] = cn[cn_val_col].apply(parse_amount)
