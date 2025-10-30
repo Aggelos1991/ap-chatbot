@@ -100,11 +100,11 @@ if pay_file:
     email = subset["Supplier's Email"].iloc[0]
 
     summary = subset[["Alt. Document", "Invoice Value"]].copy()
-    cn_rows, debug_rows = [], []
+    cn_rows, debug_rows, unmatched_invoices = [], [], []
 
-    # ==============================================================
-    # ✅ ADVANCED CN LOGIC + DEBUG + UNMATCHED REPORT
-    # ==============================================================
+    # ============================================================== #
+    # ✅ ADVANCED CN LOGIC + INCLUDE UNMATCHED DIFFERENCES IN SUMMARY
+    # ============================================================== #
     if cn is not None:
         cn_alt_col = find_col(cn, ["Alt.Document", "Alt. Document"])
         cn_val_col = find_col(cn, ["Amount", "Debit", "Charge", "Cargo", "DEBE"])
@@ -158,6 +158,13 @@ if pay_file:
                         if match_found:
                             break
 
+                # If not matched — record difference as its own row
+                if not match_found:
+                    unmatched_invoices.append({
+                        "Alt. Document": f"{inv} (Unmatched Diff)",
+                        "Invoice Value": diff
+                    })
+
                 debug_rows.append({
                     "Invoice": inv,
                     "Invoice Value": invoice_val,
@@ -167,48 +174,48 @@ if pay_file:
                     "Matched?": "✅" if match_found else "❌"
                 })
 
-            # 🧾 Unmatched CNs
+            # 🧾 Unused CNs
             unmatched_cns = cn.loc[~cn.index.isin(used_indices), [cn_alt_col, cn_val_col]].copy()
             unmatched_cns.rename(columns={cn_alt_col: "CN Number", cn_val_col: "Amount"}, inplace=True)
             unmatched_cns["Amount"] = unmatched_cns["Amount"].apply(lambda v: f"€{v:,.2f}")
 
             st.success(f"✅ Applied {len(cn_rows)} CNs (single/combo)")
             debug_df = pd.DataFrame(debug_rows)
-
             if not debug_df.empty:
                 st.subheader("🔍 Debug breakdown — invoice vs. CN matching")
                 st.dataframe(debug_df, use_container_width=True)
-
-            if not unmatched_cns.empty:
-                st.subheader("🚫 Unused Credit Notes (not matched)")
-                st.dataframe(unmatched_cns, use_container_width=True)
         else:
             st.warning("⚠️ CN file missing expected columns ('Alt.Document', 'Amount/Debit'). CN logic skipped.")
     else:
         st.info("ℹ️ No Credit Note file uploaded — showing payments only.")
+
     # ==============================================================
-
+    # ✅ Combine all into final summary (invoices + CNs + unmatched)
+    # ==============================================================
+    all_rows = summary.copy()
     if cn_rows:
-        summary = pd.concat([summary, pd.DataFrame(cn_rows)], ignore_index=True)
+        all_rows = pd.concat([all_rows, pd.DataFrame(cn_rows)], ignore_index=True)
+    if unmatched_invoices:
+        all_rows = pd.concat([all_rows, pd.DataFrame(unmatched_invoices)], ignore_index=True)
 
-    total_val = summary["Invoice Value"].sum()
+    total_val = all_rows["Invoice Value"].sum()
     total_row = pd.DataFrame([{"Alt. Document": "TOTAL", "Invoice Value": total_val}])
-    summary = pd.concat([summary, total_row], ignore_index=True)
+    all_rows = pd.concat([all_rows, total_row], ignore_index=True)
 
-    summary["Invoice Value (€)"] = summary["Invoice Value"].apply(lambda v: f"€{v:,.2f}")
-    summary = summary[["Alt. Document", "Invoice Value (€)"]]
+    all_rows["Invoice Value (€)"] = all_rows["Invoice Value"].apply(lambda v: f"€{v:,.2f}")
+    all_rows = all_rows[["Alt. Document", "Invoice Value (€)"]]
 
     st.divider()
-    st.subheader(f"📋 Summary for Payment Code: {pay_code}")
+    st.subheader(f"📋 Final Summary for Payment Code: {pay_code}")
     st.write(f"**Vendor:** {vendor}")
     st.write(f"**Vendor Email:** {email}")
-    st.dataframe(summary, use_container_width=True)
+    st.dataframe(all_rows, use_container_width=True)
 
     # ---- Export Excel ----
     wb = Workbook()
     ws = wb.active
-    ws.title = "Summary"
-    for r in dataframe_to_rows(summary, index=False, header=True):
+    ws.title = "Final Summary"
+    for r in dataframe_to_rows(all_rows, index=False, header=True):
         ws.append(r)
 
     ws_hidden = wb.create_sheet("HiddenMeta")
