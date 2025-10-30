@@ -29,16 +29,6 @@ def parse_amount(v):
         return 0.0
 
 
-def find_col(df, names):
-    """Find a column name that loosely matches one of the candidates."""
-    for c in df.columns:
-        name = c.strip().lower().replace(" ", "").replace(".", "")
-        for n in names:
-            if n.replace(" ", "").replace(".", "").lower() in name:
-                return c
-    return None
-
-
 # ===== Streamlit Config =====
 st.set_page_config(page_title="The Remitator", layout="wide")
 st.title("💀 The Remitator — Hasta la vista, payment remittance. 💀")
@@ -58,7 +48,7 @@ if pay_file:
         st.error(f"❌ Error loading Payment Excel: {e}")
         st.stop()
 
-    req = [
+    required_cols = [
         "Payment Document Code",
         "Alternative Document",
         "Invoice Value",
@@ -66,7 +56,7 @@ if pay_file:
         "Supplier Name",
         "Supplier's Email",
     ]
-    missing = [c for c in req if c not in df.columns]
+    missing = [c for c in required_cols if c not in df.columns]
     if missing:
         st.error(f"❌ Missing columns in Payment Excel: {missing}")
         st.stop()
@@ -103,16 +93,13 @@ if pay_file:
     cn_rows, debug_rows, unmatched_invoices = [], [], []
 
     # ============================================================== #
-    # ✅ ADVANCED CN LOGIC + INCLUDE UNMATCHED DIFFERENCES IN SUMMARY
+    # ✅ CN LOGIC + INCLUDE UNMATCHED DIFFERENCES IN FINAL TOTAL
     # ============================================================== #
     if cn is not None:
-        cn_alt_col = find_col(cn, ["Alternative Document", "Alt.Document", "Alt. Document"])
-        cn_val_col = find_col(cn, ["Charge", "Debit", "Amount", "Cargo", "DEBE"])
-
-        if cn_alt_col and cn_val_col:
-            cn[cn_val_col] = cn[cn_val_col].apply(parse_amount)
-            cn = cn[cn[cn_val_col].abs() > 0.01].reset_index(drop=True)
-            cn = cn.drop_duplicates(subset=[cn_alt_col], keep="last").reset_index(drop=True)
+        if "Alternative Document" in cn.columns and "Charge" in cn.columns:
+            cn["Charge"] = cn["Charge"].apply(parse_amount)
+            cn = cn[cn["Charge"].abs() > 0.01].reset_index(drop=True)
+            cn = cn.drop_duplicates(subset=["Alternative Document"], keep="last").reset_index(drop=True)
 
             used_indices = set()
 
@@ -127,29 +114,29 @@ if pay_file:
 
                 match_found = False
 
-                # 1️⃣ Try single CN
+                # 1️⃣ Single CN match
                 for i, r in cn.iterrows():
                     if i in used_indices:
                         continue
-                    if round(abs(r[cn_val_col]), 2) == round(abs(diff), 2):
-                        cn_no = str(r[cn_alt_col])
-                        cn_amt = -abs(r[cn_val_col])
+                    if round(abs(r["Charge"]), 2) == round(abs(diff), 2):
+                        cn_no = str(r["Alternative Document"])
+                        cn_amt = -abs(r["Charge"])
                         cn_rows.append({"Alternative Document": f"{cn_no} (CN)", "Invoice Value": cn_amt})
                         matched_cns.append(cn_no)
                         used_indices.add(i)
                         match_found = True
                         break
 
-                # 2️⃣ Try 2–3 CN combinations
+                # 2️⃣ 2–3 CN combinations
                 if not match_found:
-                    available = [(i, abs(r[cn_val_col]), r) for i, r in cn.iterrows() if i not in used_indices]
+                    available = [(i, abs(r["Charge"]), r) for i, r in cn.iterrows() if i not in used_indices]
                     for n in [2, 3]:
                         for combo in combinations(available, n):
                             total = round(sum(x[1] for x in combo), 2)
                             if abs(total - abs(diff)) < 0.05:  # ±0.05 tolerance
                                 for i, _, r in combo:
-                                    cn_no = str(r[cn_alt_col])
-                                    cn_amt = -abs(r[cn_val_col])
+                                    cn_no = str(r["Alternative Document"])
+                                    cn_amt = -abs(r["Charge"])
                                     cn_rows.append({"Alternative Document": f"{cn_no} (CN)", "Invoice Value": cn_amt})
                                     matched_cns.append(cn_no)
                                     used_indices.add(i)
@@ -158,7 +145,7 @@ if pay_file:
                         if match_found:
                             break
 
-                # If not matched — record difference as its own row
+                # record unmatched difference
                 if not match_found:
                     unmatched_invoices.append({
                         "Alternative Document": f"{inv} (Unmatched Diff)",
@@ -174,9 +161,8 @@ if pay_file:
                     "Matched?": "✅" if match_found else "❌"
                 })
 
-            # 🧾 Unused CNs
-            unmatched_cns = cn.loc[~cn.index.isin(used_indices), [cn_alt_col, cn_val_col]].copy()
-            unmatched_cns.rename(columns={cn_alt_col: "CN Number", cn_val_col: "Charge"}, inplace=True)
+            # 🔹 Unused CNs
+            unmatched_cns = cn.loc[~cn.index.isin(used_indices), ["Alternative Document", "Charge"]].copy()
             unmatched_cns["Charge"] = unmatched_cns["Charge"].apply(lambda v: f"€{v:,.2f}")
 
             st.success(f"✅ Applied {len(cn_rows)} CNs (single/combo)")
@@ -184,8 +170,13 @@ if pay_file:
             if not debug_df.empty:
                 st.subheader("🔍 Debug breakdown — invoice vs. CN matching")
                 st.dataframe(debug_df, use_container_width=True)
+
+            if not unmatched_cns.empty:
+                st.subheader("🚫 Unused Credit Notes (not matched)")
+                st.dataframe(unmatched_cns, use_container_width=True)
+
         else:
-            st.warning("⚠️ CN file missing expected columns ('Alternative Document', 'Charge'). CN logic skipped.")
+            st.warning("⚠️ CN file missing required columns: 'Alternative Document' and 'Charge'.")
     else:
         st.info("ℹ️ No Credit Note file uploaded — showing payments only.")
 
