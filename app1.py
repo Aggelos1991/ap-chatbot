@@ -3,7 +3,7 @@ import json
 from io import BytesIO
 import fitz  # PyMuPDF
 import pandas as pd
-import pytesseract
+import easyocr
 from PIL import Image
 import streamlit as st
 from openai import OpenAI
@@ -11,8 +11,8 @@ from openai import OpenAI
 # ==========================
 # STREAMLIT CONFIG
 # ==========================
-st.set_page_config(page_title="📄 Vendor Statement Extractor (OCR Ready)", layout="wide")
-st.title("📄 Vendor Statement Extractor (with OCR fallback)")
+st.set_page_config(page_title="📄 Vendor Statement Extractor (OCR Cloud)", layout="wide")
+st.title("📄 Vendor Statement Extractor (with EasyOCR Fallback)")
 
 # ==========================
 # LOAD OPENAI API KEY SAFELY
@@ -27,10 +27,19 @@ client = OpenAI(api_key=API_KEY)
 MODEL = "gpt-4.1-mini"
 
 # ==========================
+# INITIALIZE OCR READER
+# ==========================
+@st.cache_resource
+def load_ocr_reader():
+    return easyocr.Reader(['es', 'en'], gpu=False)  # Spanish + English
+
+reader = load_ocr_reader()
+
+# ==========================
 # HELPER FUNCTIONS
 # ==========================
 def extract_text_from_pdf(file):
-    """Extract text from PDF, with OCR fallback for scanned pages."""
+    """Extract text from PDF with EasyOCR fallback for scanned pages."""
     text = ""
     ocr_pages = 0
 
@@ -38,18 +47,22 @@ def extract_text_from_pdf(file):
         for page_number, page in enumerate(doc, start=1):
             page_text = page.get_text("text")
 
-            # If no text found (scanned image), run OCR
-            if not page_text.strip():
-                pix = page.get_pixmap(dpi=300)
+            if not page_text.strip():  # Run OCR if no embedded text
+                pix = page.get_pixmap(dpi=200)
                 img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-                ocr_text = pytesseract.image_to_string(img, lang="spa")  # OCR in Spanish
+                img_bytes = BytesIO()
+                img.save(img_bytes, format="PNG")
+                img_bytes.seek(0)
+
+                result = reader.readtext(img_bytes.read(), detail=0, paragraph=True)
+                ocr_text = "\n".join(result)
                 text += ocr_text + "\n"
                 ocr_pages += 1
             else:
                 text += page_text + "\n"
 
     if ocr_pages > 0:
-        st.warning(f"⚙️ {ocr_pages} page(s) processed via OCR (image-based PDF).")
+        st.warning(f"⚙️ {ocr_pages} page(s) processed via EasyOCR (image-based PDF).")
 
     return text
 
@@ -74,13 +87,14 @@ def extract_with_llm(raw_text):
     Text:
     \"\"\"{raw_text[:12000]}\"\"\"
     """
+
     response = client.responses.create(model=MODEL, input=prompt)
     content = response.output_text.strip()
 
     try:
         data = json.loads(content)
     except Exception:
-        # Fallback in case GPT adds extra markdown fences
+        # Handle accidental markdown code blocks
         content = content.split("```")[-1]
         data = json.loads(content)
     return data
@@ -116,7 +130,7 @@ if uploaded_pdf:
         if data:
             df = pd.DataFrame(data)
             st.success("✅ Extraction complete!")
-            st.dataframe(df)
+            st.dataframe(df, use_container_width=True)
 
             excel_bytes = to_excel_bytes(data)
             st.download_button(
