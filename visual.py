@@ -1,6 +1,6 @@
 # ===============================================================
 # Overdue Invoices – Priority Vendors Dashboard
-# (AY=0 filter + BFP Dashboard + Email Copy Feature)
+# (AY=0 filter + BFP Dashboard + Email Copy Feature + Click Fix)
 # ===============================================================
 
 import streamlit as st
@@ -13,12 +13,6 @@ st.set_page_config(page_title="Overdue Invoices", layout="wide")
 
 st.title("Overdue Invoices – Priority Vendors Dashboard")
 st.markdown("**Select a view, upload Excel, and explore interactive charts.**")
-
-# Session state
-if 'clicked_vendor' not in st.session_state:
-    st.session_state.clicked_vendor = None
-if 'clicked_status' not in st.session_state:
-    st.session_state.clicked_status = None
 
 # Upload
 uploaded_file = st.file_uploader("Upload your Excel file", type=['xlsx'])
@@ -194,17 +188,20 @@ if uploaded_file:
             margin=dict(l=160, r=50, t=80, b=50)
         )
 
-        st.markdown("### 📊 Click a bar to see detailed invoices below")
-        selected = st.plotly_chart(fig, use_container_width=True, key="bfp_chart")
+        # === CLICK HANDLER (Streamlit standard way) ===
+        st.markdown("### 📊 Click a bar to view detailed invoices below")
 
-        # === CLICK TO SHOW TABLE ===
+        clicked_vendor = st.session_state.get("clicked_vendor", None)
+        click = st.plotly_chart(fig, use_container_width=True, key="bfp_chart", on_click="rerun")
+
+        # Capture clickData event
+        click_data = st.session_state.get("bfp_chart.click_event", None)
+        if click_data and "points" in click_data:
+            clicked_vendor = click_data["points"][0]["y"]
+            st.session_state["clicked_vendor"] = clicked_vendor
+
         st.markdown("---")
         st.subheader("📋 Invoice Details")
-
-        clicked_vendor = None
-        if selected.selection and 'points' in selected.selection and selected.selection['points']:
-            point = selected.selection['points'][0]
-            clicked_vendor = point['y'] if 'y' in point else None
 
         if clicked_vendor:
             vendor_data = df[df['Vendor_Name'] == clicked_vendor].copy()
