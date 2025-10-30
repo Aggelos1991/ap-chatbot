@@ -1,10 +1,10 @@
 # ===============================================================
-# Overdue Invoices – Priority Vendors Dashboard (FINAL STABLE)
+# Overdue Invoices – Priority Vendors Dashboard (CLICK ENABLED)
 # Includes:
 # - AY=0 Filter
-# - BFP Radio Mode
+# - BFP Mode
 # - Email Copy Feature
-# - Vendor Dropdown for Details (no broken click)
+# - Click Bar → Show Vendor Table Below
 # ===============================================================
 
 import streamlit as st
@@ -16,9 +16,8 @@ import io
 st.set_page_config(page_title="Overdue Invoices", layout="wide")
 
 st.title("Overdue Invoices – Priority Vendors Dashboard")
-st.markdown("**Select a view, upload Excel, and explore interactive charts.**")
+st.markdown("**Click a bar segment to see vendor details below.**")
 
-# Upload
 uploaded_file = st.file_uploader("Upload your Excel file", type=['xlsx'])
 
 if uploaded_file:
@@ -28,13 +27,11 @@ if uploaded_file:
                 st.error("Sheet 'Outstanding Invoices IB' not found.")
                 st.stop()
 
-            # Include AY (50) + BT (71)
-            keep_cols = [0, 1, 4, 6, 10, 29, 30, 31, 33, 35, 39, 50, 55, 71]
+            keep_cols = [0, 1, 4, 6, 10, 29, 30, 31, 33, 35, 39, 50, 55, 71]  # AY=50, BT=71
             df_raw = pd.read_excel(
                 xls, sheet_name='Outstanding Invoices IB', header=None, usecols=keep_cols
             )
 
-        # Find header row
         header_row = df_raw[df_raw.iloc[:, 0].astype(str).str.contains("VENDOR", case=False, na=False)].index
         if header_row.empty:
             st.error("Header 'VENDOR' not found in column A.")
@@ -43,14 +40,13 @@ if uploaded_file:
         start_row = header_row[0] + 1
         df = df_raw.iloc[start_row:].copy().reset_index(drop=True)
 
-        # Assign column names
         df.columns = [
             'Vendor_Name', 'VAT_ID', 'Due_Date', 'Open_Amount',
             'Alt_Document', 'Vendor_Email', 'Account_Email',
             'AF', 'AH', 'AJ', 'AN', 'AY', 'BD', 'BT'
         ]
 
-        # === FILTER: YES + BD keywords + AY=0 ===
+        # === FILTERS: YES + BD + AY=0 ===
         yes_mask = (
             (df['AF'].astype(str).str.strip().str.upper() == 'YES') &
             (df['AH'].astype(str).str.strip().str.upper() == 'YES') &
@@ -61,7 +57,6 @@ if uploaded_file:
         bd_keywords = ['ENTERTAINMENT', 'FALSE', 'REGULAR', 'PRIORITY VENDOR', 'PRIORITY VENDOR OS&E']
         bd_mask = df['BD'].astype(str).str.upper().apply(lambda x: any(k in x for k in bd_keywords))
 
-        # AY = 0 filter
         def is_zero(v):
             try:
                 v = str(v).replace(",", ".").strip()
@@ -70,32 +65,25 @@ if uploaded_file:
                 return False
 
         ay_mask = df['AY'].apply(is_zero)
-
         df = df[yes_mask & bd_mask & ay_mask].reset_index(drop=True)
 
-        # Clean
+        # === CLEAN ===
         df['Due_Date'] = pd.to_datetime(df['Due_Date'], errors='coerce')
         df['Open_Amount'] = pd.to_numeric(df['Open_Amount'], errors='coerce')
         df = df.dropna(subset=['Vendor_Name', 'Open_Amount', 'Due_Date'])
         df = df[df['Open_Amount'] > 0]
 
         if df.empty:
-            st.warning("No valid open invoices after filters.")
+            st.warning("No valid invoices after filters.")
             st.stop()
 
-        # Overdue logic
+        # === OVERDUE LOGIC ===
         today = pd.Timestamp.today().normalize()
         df['Overdue'] = df['Due_Date'] < today
         df['Status'] = df['Overdue'].map({True: 'Overdue', False: 'Not Overdue'})
 
         # === MODE SELECTION ===
-        mode = st.radio(
-            "Select View Mode:",
-            ["Priority Vendors", "BFP Only"],
-            horizontal=True
-        )
-
-        # Filter data if BFP mode
+        mode = st.radio("Select Mode:", ["Priority Vendors", "BFP Only"], horizontal=True)
         if mode == "BFP Only":
             df = df[df['BT'].astype(str).str.upper().str.contains("BFP", na=False)]
             if df.empty:
@@ -105,21 +93,19 @@ if uploaded_file:
         # === SUMMARY ===
         summary = (
             df.groupby(['Vendor_Name', 'Status'])['Open_Amount']
-            .sum()
-            .unstack(fill_value=0)
-            .reset_index()
+            .sum().unstack(fill_value=0).reset_index()
         )
-        for col in ['Overdue', 'Not Overdue']:
-            if col not in summary.columns:
-                summary[col] = 0
+        for c in ['Overdue', 'Not Overdue']:
+            if c not in summary.columns:
+                summary[c] = 0
         summary['Total'] = summary['Overdue'] + summary['Not Overdue']
 
         # === FILTERS ===
         col1, col2 = st.columns(2)
         with col1:
-            status_filter = st.selectbox("Show", ["All Open", "Overdue Only", "Not Overdue Only"], key="status")
+            status_filter = st.selectbox("Show:", ["All Open", "Overdue Only", "Not Overdue Only"])
         with col2:
-            top_n_option = st.selectbox("Top N", ["Top 20", "Top 30"], key="top_n")
+            top_n_option = st.selectbox("Top N Vendors:", ["Top 20", "Top 30"])
 
         n = 30 if top_n_option == "Top 30" else 20
 
@@ -136,36 +122,26 @@ if uploaded_file:
             top_df['Overdue'] = 0
             title = f"{top_n_option} Vendors (Not Overdue Only)"
 
-        # === EMAIL SECTION ===
+        # === EMAIL EXPORT ===
         st.markdown("### 📧 Extract Vendor Emails for Outlook")
         vendor_subset = df[df['Vendor_Name'].isin(top_df['Vendor_Name'])].copy()
         emails = pd.concat([
-            vendor_subset['Vendor_Email'],
-            vendor_subset['Account_Email']
+            vendor_subset['Vendor_Email'], vendor_subset['Account_Email']
         ], ignore_index=True).dropna().unique().tolist()
         emails = [e.strip() for e in emails if e.strip() and e.lower() != "nan"]
         email_list = "; ".join(sorted(set(emails)))
 
         if email_list:
             st.text_area("Emails (ready to copy):", email_list, height=150)
-            copy_js = f"""
-            <script>
-            function copyEmails() {{
-                navigator.clipboard.writeText("{email_list.replace('"', '\\"')}");
-                alert('Emails copied to clipboard!');
-            }}
-            </script>
-            <button onclick="copyEmails()" style="
-                background-color:#1f4e79;
-                color:white;
-                border:none;
-                padding:8px 16px;
-                border-radius:6px;
-                cursor:pointer;
-                font-weight:bold;
-            ">📋 Copy to Clipboard</button>
-            """
-            st.markdown(copy_js, unsafe_allow_html=True)
+            st.markdown(
+                f"""
+                <button onclick="navigator.clipboard.writeText('{email_list}')"
+                style="background-color:#1f4e79;color:white;border:none;
+                padding:8px 16px;border-radius:6px;cursor:pointer;font-weight:bold;">
+                📋 Copy to Clipboard</button>
+                """,
+                unsafe_allow_html=True,
+            )
         else:
             st.info("No emails found for this selection.")
 
@@ -180,8 +156,7 @@ if uploaded_file:
 
         fig = px.bar(
             plot_df,
-            x='Amount',
-            y='Vendor_Name',
+            x='Amount', y='Vendor_Name',
             color='Type',
             orientation='h',
             title=title + (" – BFP Only" if mode == "BFP Only" else ""),
@@ -194,45 +169,56 @@ if uploaded_file:
             yaxis_title="Vendor",
             legend_title="Status",
             barmode='stack',
+            hovermode='y unified',
             plot_bgcolor='rgba(0,0,0,0)',
             paper_bgcolor='rgba(0,0,0,0)',
-            margin=dict(l=160, r=50, t=80, b=50)
+            margin=dict(l=160, r=50, t=80, b=50),
         )
 
-        st.markdown("### 📊 Vendor Chart (select below to view details)")
-        st.plotly_chart(fig, use_container_width=True)
+        st.markdown("### 📊 Click a bar to view details below")
+        click = st.plotly_chart(fig, use_container_width=True, key="vendor_chart")
 
-        # === NEW DROPDOWN FOR DETAILS ===
-        vendor_options = sorted(df['Vendor_Name'].unique().tolist())
-        selected_vendor = st.selectbox("Select Vendor to View Details", [""] + vendor_options)
+        # === HANDLE CLICK EVENTS ===
+        click_data = st.session_state.get("vendor_chart.clickData", st.session_state.get("clickData"))
+        if click_data is None:
+            click_data = st.session_state.get("clickData")
+
+        if click_data:
+            try:
+                vendor_clicked = click_data["points"][0]["y"]
+                st.session_state["clicked_vendor"] = vendor_clicked
+            except Exception:
+                vendor_clicked = None
+        else:
+            vendor_clicked = st.session_state.get("clicked_vendor", None)
 
         st.markdown("---")
         st.subheader("📋 Invoice Details")
 
-        if selected_vendor:
-            vendor_data = df[df['Vendor_Name'] == selected_vendor].copy()
+        if vendor_clicked:
+            vendor_data = df[df['Vendor_Name'] == vendor_clicked].copy()
             vendor_data['Due_Date'] = vendor_data['Due_Date'].dt.strftime('%Y-%m-%d')
             st.dataframe(
                 vendor_data[['Vendor_Name', 'VAT_ID', 'Due_Date', 'Open_Amount', 'Status', 'Alt_Document']],
                 use_container_width=True
             )
 
-            # Export selected vendor to Excel
-            buffer = io.BytesIO()
-            with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-                vendor_data.to_excel(writer, sheet_name='Vendor_Invoices', index=False)
-            buffer.seek(0)
+            buf = io.BytesIO()
+            with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
+                vendor_data.to_excel(writer, index=False, sheet_name='Vendor_Invoices')
+            buf.seek(0)
             st.download_button(
-                label=f"💾 Download {selected_vendor} Invoices",
-                data=buffer,
-                file_name=f"{selected_vendor.replace(' ', '_')}_Invoices.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                f"💾 Download {vendor_clicked} Invoices",
+                data=buf,
+                file_name=f"{vendor_clicked.replace(' ', '_')}_Invoices.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
         else:
-            st.info("Select a vendor above to view invoice details below.")
+            st.info("Click any bar above to view its vendor’s invoice details below.")
 
     except Exception as e:
         st.error(f"Error: {str(e)}")
         st.stop()
+
 else:
     st.info("Upload Excel to start.")
