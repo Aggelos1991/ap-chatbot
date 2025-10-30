@@ -10,11 +10,10 @@ from datetime import datetime
 
 # ===== Helper functions =====
 def parse_amount(v):
-    """Parse numeric strings (EU/US formats, parentheses, unicode minus) into float."""
+    """Parse numeric strings (EU/US formats) into float."""
     if pd.isna(v):
         return 0.0
     s = str(v).strip()
-    s = s.replace("−", "-").replace("(", "-").replace(")", "")
     s = re.sub(r"[^\d,.\-]", "", s)
     if s.count(",") == 1 and s.count(".") == 1:
         if s.find(",") > s.find("."):
@@ -106,33 +105,41 @@ if pay_file:
     summary = subset[["Alt. Document", "Invoice Value"]].copy()
     cn_rows = []
 
-    # ==============================================================
-    # ✅ CN LOGIC (for DEBIT / CHARGE columns)
-    # ==============================================================
+    # ---- Apply CN logic only if CN file exists ----
     if cn is not None:
-        cn_alt_col = find_col(cn, ["Alt.Document", "Alt. Document", "Documento", "No.", "Número", "Referencia"])
-        cn_debit_col = find_col(cn, ["DEBE", "Debit", "Charge", "Cargo"])
+        cn_alt_col = find_col(cn, ["Alt.Document", "Alt. Document"])
+        cn_val_col = find_col(cn, ["Amount"])
 
-        if cn_alt_col and cn_debit_col:
-            cn[cn_debit_col] = cn[cn_debit_col].apply(parse_amount)
-            cn = cn.drop_duplicates(subset=[cn_alt_col], keep="last").reset_index(drop=True)
-            cn = cn[cn[cn_debit_col].abs() > 0.01].copy()
+    if cn_alt_col and cn_val_col:
+        cn[cn_val_col] = cn[cn_val_col].apply(parse_amount)
 
-            # Treat all debit/charge amounts as CN (negative impact)
-            for _, row in cn.iterrows():
-                cn_no = str(row[cn_alt_col])
-                cn_amt = -abs(row[cn_debit_col])
-                cn_rows.append({
-                    "Alt. Document": f"{cn_no} (CN)",
-                    "Invoice Value": cn_amt
-                })
+        # 🔹 Keep only the last occurrence of each CN number
+        cn = cn.drop_duplicates(subset=[cn_alt_col], keep="last").reset_index(drop=True)
 
-            st.success(f"✅ Applied {len(cn_rows)} credit notes from CN file (from '{cn_debit_col}' column).")
-        else:
-            st.warning("⚠️ CN file missing 'Alt.Document' and 'Debit/Charge' column. CN logic skipped.")
+        for _, row in subset.iterrows():
+            payment_val = row["Payment Value"]
+            invoice_val = row["Invoice Value"]
+            diff = round(payment_val - invoice_val, 2)
+
+            if abs(diff) > 0.01:
+                # Find matching CN (based on amount)
+                match = cn[cn[cn_val_col].abs().round(2) == abs(diff)]
+
+                # Take only the LAST CN if multiple exist
+                if not match.empty:
+                    last_cn = match.iloc[-1]
+                    cn_no = str(last_cn[cn_alt_col])
+                    cn_amt = -abs(last_cn[cn_val_col])
+                    cn_rows.append(
+                        {"Alt. Document": f"{cn_no} (CN)", "Invoice Value": cn_amt}
+                    )
+
     else:
-        st.info("ℹ️ No Credit Note file uploaded — showing payments only.")
-    # ==============================================================
+        st.warning("⚠️ CN file missing expected columns ('Alt.Document', 'Amount'). CN logic skipped.")
+
+
+
+
 
     # ---- Add CNs ----
     if cn_rows:
@@ -144,7 +151,9 @@ if pay_file:
     summary = pd.concat([summary, total_row], ignore_index=True)
 
     # ---- Format ----
-    summary["Invoice Value (€)"] = summary["Invoice Value"].apply(lambda v: f"€{v:,.2f}")
+    summary["Invoice Value (€)"] = summary["Invoice Value"].apply(
+        lambda v: f"€{v:,.2f}"
+    )
     summary = summary[["Alt. Document", "Invoice Value (€)"]]
 
     # ---- Display ----
