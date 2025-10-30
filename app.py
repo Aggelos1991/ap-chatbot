@@ -10,11 +10,16 @@ from datetime import datetime
 
 # ===== Helper functions =====
 def parse_amount(v):
-    """Parse numeric strings (EU/US formats) into float."""
+    """Parse numeric strings (EU/US formats, parentheses, unicode minus) into float."""
     if pd.isna(v):
         return 0.0
     s = str(v).strip()
+
+    # Replace Unicode minus, parentheses, and clean
+    s = s.replace("−", "-").replace("(", "-").replace(")", "")
     s = re.sub(r"[^\d,.\-]", "", s)
+
+    # Fix EU vs US
     if s.count(",") == 1 and s.count(".") == 1:
         if s.find(",") > s.find("."):
             s = s.replace(".", "").replace(",", ".")
@@ -106,23 +111,35 @@ if pay_file:
     cn_rows = []
 
     # ==============================================================
-    # ✅ REVISED CN LOGIC (adds all CNs from file, no skipping)
+    # ✅ REVISED CN LOGIC (robust detection + proper negative handling)
     # ==============================================================
     if cn is not None:
-        cn_alt_col = find_col(cn, ["Alt.Document", "Alt. Document"])
-        cn_val_col = find_col(cn, ["Amount"])
+        cn_alt_col = find_col(cn, ["Alt.Document", "Alt. Document", "Documento", "No.", "Número", "Referencia"])
+        # try to find a numeric column: HABER, DEBE, Importe, Amount, Credit, Value
+        cn_credit_col = find_col(cn, ["HABER", "Credit", "Importe", "Amount", "Value"])
+        cn_debit_col = find_col(cn, ["DEBE", "Debit", "Cargo"])
 
-        if cn_alt_col and cn_val_col:
-            # 🔹 Parse amounts
-            cn[cn_val_col] = cn[cn_val_col].apply(parse_amount)
+        if cn_alt_col and (cn_credit_col or cn_debit_col):
+            cn["__amount__"] = 0.0
 
-            # 🔹 Keep only the last occurrence of each CN number
+            if cn_credit_col and cn_debit_col:
+                # HABER (credit) positive, DEBE (debit) negative
+                cn["__amount__"] = cn[cn_credit_col].apply(parse_amount) - cn[cn_debit_col].apply(parse_amount)
+            elif cn_credit_col:
+                cn["__amount__"] = cn[cn_credit_col].apply(parse_amount)
+            elif cn_debit_col:
+                cn["__amount__"] = -cn[cn_debit_col].apply(parse_amount)
+
+            # Remove zero rows
+            cn = cn[cn["__amount__"].abs() > 0.01].copy()
+
+            # Keep only last occurrence of each CN number
             cn = cn.drop_duplicates(subset=[cn_alt_col], keep="last").reset_index(drop=True)
 
-            # 🧩 Add ALL CNs (as negative values) directly to summary
+            # Add all CNs as negative values (Credit Notes)
             for _, row in cn.iterrows():
                 cn_no = str(row[cn_alt_col])
-                cn_amt = -abs(row[cn_val_col])
+                cn_amt = -abs(row["__amount__"])
                 cn_rows.append({
                     "Alt. Document": f"{cn_no} (CN)",
                     "Invoice Value": cn_amt
@@ -131,7 +148,7 @@ if pay_file:
             st.success(f"✅ Applied {len(cn_rows)} credit notes from CN file.")
 
         else:
-            st.warning("⚠️ CN file missing expected columns ('Alt.Document', 'Amount'). CN logic skipped.")
+            st.warning("⚠️ CN file missing expected columns (Alt.Document + HABER/Importe/Amount). CN logic skipped.")
     else:
         st.info("ℹ️ No Credit Note file uploaded — showing payments only.")
     # ==============================================================
