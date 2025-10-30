@@ -61,7 +61,7 @@ def extract_raw_lines(uploaded_pdf):
     return all_lines
 
 # ==========================================================
-# GPT EXTRACTOR — FIXED CREDIT NOTE HANDLING
+# GPT EXTRACTOR — UPDATED PROMPT (Spanish logic)
 # ==========================================================
 def extract_with_gpt(lines):
     """Use GPT to detect Debit (DEBE) and Credit (HABER) from vendor statements."""
@@ -72,33 +72,44 @@ def extract_with_gpt(lines):
         batch = lines[i:i + BATCH_SIZE]
         text_block = "\n".join(batch)
         
-        prompt = f"""Extract accounting transactions from this text.
+        prompt = f"""
+You are a financial data extractor specialized in Spanish vendor statements.
 
-**COLUMNS:**
-- N° DOC → Document number (1729, 1775, etc.) , COMENTARIO -> You can find here sometimes the invoice number
-- DEBE → Invoice amounts (Debit)
-- HABER/CREDIT → Payment amounts (Credit) 
-- SALDO → Running balance (IGNORE for extraction)
-- Don't count Asiento for Document number
+Your task is to extract all accounting transactions line by line in structured JSON format.
 
-**For each transaction:**
-{{"Alternative Document": "N° DOC number"
- "Date": "dd/mm/yy", 
- "Reason": "Invoice|Payment|Credit Note",
- "Debit": "DEBE amount", 
- "Credit": "HABER amount"}}
+Each line usually includes columns like:
+- Fecha (Date)
+- N° DOC or Documento (Document number)
+- Comentario / Concepto / Descripción (may include invoice numbers or payment info)
+- DEBE (Invoice amounts)
+- HABER / CRÉDITO (Payments or credit notes)
+- SALDO (running balance — IGNORE)
 
-**RULES:**
-1. DEBE > 0 = "Invoice" 
-2. HABER/CREDIT > 0 AND contains payment keywords = "Payment"
-3. DEBE < 0 OR reason indicates credit note = "Credit Note" (put ABSOLUTE value in Credit)
-4. NEVER use SALDO values
-5. Return ONLY JSON array: []
+**VERY IMPORTANT RULES:**
+1. "Asiento" is NOT a document number. Never use it as "Alternative Document".
+2. "Saldo" or "Total" are not transactions. Ignore them.
+3. If the "N° DOC" field is empty, look inside the "Comentario" or "Concepto" text for an invoice-like pattern (for example: FAC12345, FACTURA 123, INV-2024-001, 1775/2024, etc.) and use that as "Alternative Document".
+4. DEBE means an **Invoice** (money owed).
+5. HABER or CRÉDITO means a **Payment** (if referring to a transfer or payment word) or a **Credit Note** (if the comment indicates an abono, nota de crédito, descuento, etc.).
+6. Detect reason automatically based on keywords:
+   - "pago", "transferencia", "trf", "remesa", "bank", "paid" → Payment
+   - "abono", "nota de crédito", "crédito" → Credit Note
+   - Otherwise, DEBE → Invoice
+7. Never include SALDO or totals.
+8. Output ONLY structured JSON array like this:
+[
+  {{
+    "Alternative Document": "...",
+    "Date": "dd/mm/yy",
+    "Reason": "Invoice | Payment | Credit Note",
+    "Debit": "DEBE amount",
+    "Credit": "HABER amount"
+  }}
+]
 
-**PAYMENT KEYWORDS (for Reason="Payment"):** πληρωμή,payment,bank transfer,transferencia,transfer,trf,remesa,pago,deposit,έμβασμα,εξοφληση,pagado,paid
-
-Text:
-{text_block}"""
+Text to analyze:
+{text_block}
+"""
         
         try:
             response = client.chat.completions.create(
@@ -124,7 +135,7 @@ Text:
                     alt_doc = str(row.get("Alternative Document", "")).strip()
                     
                     # Skip invalid documents
-                    if not alt_doc or re.search(r"concil|saldo|total|iva", alt_doc, re.IGNORECASE):
+                    if not alt_doc or re.search(r"(asiento|saldo|total|iva)", alt_doc, re.IGNORECASE):
                         continue
                     
                     debit_raw = row.get("Debit", "")
