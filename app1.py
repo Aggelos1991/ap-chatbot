@@ -1,4 +1,4 @@
-import os, re, json
+import os, re, json, platform, shutil
 import pdfplumber
 import pandas as pd
 import streamlit as st
@@ -29,6 +29,42 @@ client = OpenAI(api_key=api_key)
 MODEL = "gpt-4o-mini"
 
 # ==========================================================
+# TESSERACT CHECK
+# ==========================================================
+def set_windows_tesseract_path_if_exists():
+    """On Windows, set pytesseract cmd to default install path if present."""
+    if platform.system().lower().startswith("win"):
+        possible = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+        if os.path.exists(possible):
+            pytesseract.pytesseract.tesseract_cmd = possible
+
+def has_tesseract():
+    """Return True if tesseract is available on PATH or at known Windows path."""
+    set_windows_tesseract_path_if_exists()
+    # shutil.which works for PATH; then verify by asking version
+    if shutil.which(getattr(pytesseract.pytesseract, "tesseract_cmd", "tesseract")) is None:
+        return False
+    try:
+        _ = pytesseract.get_tesseract_version()
+        return True
+    except Exception:
+        return False
+
+TESS_AVAILABLE = has_tesseract()
+
+if not TESS_AVAILABLE:
+    os_name = platform.system()
+    st.warning(
+        "🔎 OCR is disabled because **Tesseract** is not installed or not on PATH.\n\n"
+        "Install it and refresh the app to enable OCR:\n"
+        f"- **macOS (Homebrew):** `brew install tesseract`\n"
+        f"- **Ubuntu/Debian:** `sudo apt update && sudo apt install -y tesseract-ocr tesseract-ocr-spa tesseract-ocr-ell`\n"
+        f"- **Windows:** Install from the UB Mannheim build, then restart the app. "
+        "Common path: `C:\\Program Files\\Tesseract-OCR\\tesseract.exe` (auto-detected).",
+        icon="⚠️"
+    )
+
+# ==========================================================
 # HELPERS
 # ==========================================================
 def normalize_number(value):
@@ -50,35 +86,45 @@ def normalize_number(value):
         return ""
 
 def extract_raw_lines(uploaded_pdf):
-    """Extract ALL text lines from every page of the PDF, with OCR fallback."""
+    """Extract ALL text lines from every page of the PDF, with OCR fallback (if available)."""
     all_lines = []
 
-    # Save uploaded file temporarily for PyMuPDF to open
-    temp_bytes = uploaded_pdf.read()
+    # Read once for both libraries
+    raw_bytes = uploaded_pdf.read()
     uploaded_pdf.seek(0)
 
-    with pdfplumber.open(BytesIO(temp_bytes)) as pdf:
+    with pdfplumber.open(BytesIO(raw_bytes)) as pdf:
+        # Open once with PyMuPDF too (only if we might OCR)
+        doc = fitz.open(stream=raw_bytes, filetype="pdf") if TESS_AVAILABLE else None
+
         for i, page in enumerate(pdf.pages):
             text = page.extract_text()
             if text:
-                # ✅ Normal text-based PDF
                 for line in text.split("\n"):
                     clean_line = " ".join(line.split())
                     if clean_line.strip():
                         all_lines.append(clean_line)
-            else:
-                # ⚙️ OCR fallback using PyMuPDF + pytesseract
-                with fitz.open(stream=temp_bytes, filetype="pdf") as doc:
-                    try:
-                        pix = doc.load_page(i).get_pixmap()
-                        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-                        ocr_text = pytesseract.image_to_string(img, lang="eng")
-                        for line in ocr_text.split("\n"):
-                            clean_line = " ".join(line.split())
-                            if clean_line.strip():
-                                all_lines.append(clean_line)
-                    except Exception as e:
-                        st.warning(f"OCR failed on page {i+1}: {e}")
+                continue
+
+            # OCR fallback
+            if TESS_AVAILABLE and doc is not None:
+                try:
+                    pix = doc.load_page(i).get_pixmap()
+                    img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                    # Use multilingual OCR (eng+spa+ell). If you didn't install extra langs,
+                    # Tesseract will simply use what it has.
+                    ocr_text = pytesseract.image_to_string(img, lang="eng+spa+ell")
+                    for line in ocr_text.split("\n"):
+                        clean_line = " ".join(line.split())
+                        if clean_line.strip():
+                            all_lines.append(clean_line)
+                except Exception as e:
+                    st.warning(f"OCR failed on page {i+1}: {e}")
+            # If no Tesseract, nothing else to do for this page
+
+        if doc is not None:
+            doc.close()
+
     return all_lines
 
 # ==========================================================
@@ -129,7 +175,6 @@ Text:
             )
             content = response.choices[0].message.content.strip()
             
-            # Show only first GPT batch for debug
             if i == 0:
                 st.text_area("GPT Response (Batch 1):", content, height=200, key="debug_1")
             
@@ -144,7 +189,7 @@ Text:
                 for row in data:
                     alt_doc = str(row.get("Alternative Document", "")).strip()
 
-                    # ✅ FILTER FIX: skip Asiento, Saldo, Comentario, Total, IVA
+                    # FILTER: skip Asiento, Saldo, Comentario, Total, IVA
                     if not alt_doc or re.search(r"(asiento|saldo|comentario|total|iva)", alt_doc, re.IGNORECASE):
                         continue
 
@@ -155,13 +200,12 @@ Text:
                     credit_val = normalize_number(credit_raw)
                     reason = row.get("Reason", "Invoice").strip()
                     
-                    # FIXED: Handle negative DEBE as Credit Note
+                    # Negative DEBE → Credit Note
                     if debit_val != "" and float(debit_val) < 0:
                         credit_val = abs(float(debit_val))
                         debit_val = ""
                         reason = "Credit Note"
                     
-                    # Keep GPT classification for Payment
                     if reason == "Payment" and credit_val != "" and float(credit_val) > 0:
                         pass
                     elif reason == "Credit Note" or (debit_val != "" and float(debit_val) < 0):
@@ -204,7 +248,7 @@ def to_excel_bytes(records):
 uploaded_pdf = st.file_uploader("📂 Upload Vendor Statement (PDF)", type=["pdf"])
 
 if uploaded_pdf:
-    with st.spinner("📄 Extracting text (with OCR fallback if needed)..."):
+    with st.spinner("📄 Extracting text (OCR used if available)..."):
         lines = extract_raw_lines(uploaded_pdf)
     
     st.success(f"✅ Found {len(lines)} lines of text!")
@@ -219,7 +263,6 @@ if uploaded_pdf:
             st.success(f"✅ Extraction complete — {len(df)} valid records found!")
             st.dataframe(df, use_container_width=True, hide_index=True)
             
-            # Totals
             try:
                 total_debit = df["Debit"].apply(pd.to_numeric, errors="coerce").sum()
                 total_credit = df["Credit"].apply(pd.to_numeric, errors="coerce").sum()
@@ -229,7 +272,6 @@ if uploaded_pdf:
                 col1.metric("💰 Total Debit", f"{total_debit:,.2f}")
                 col2.metric("💳 Total Credit", f"{total_credit:,.2f}")
                 col3.metric("⚖️ Net", f"{net:,.2f}")
-                
             except Exception as e:
                 st.error(f"Totals error: {e}")
             
