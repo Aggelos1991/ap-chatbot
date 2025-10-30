@@ -373,7 +373,7 @@ def extract_payments(erp_df, ven_df):
     pay_kw = [
         "πληρωμή", "payment", "payment remittance", "remittance", "bank transfer",
         "transferencia", "trf", "remesa", "pago", "deposit", "μεταφορά", "έμβασμα",
-        "εξοφληση", "pagado", "paid", "cobro"  # ✅ Added "cobro"
+        "εξοφληση", "pagado", "paid", "Cobro","cobro"  # ✅ Added "cobro"
     ]
     excl_kw = [
         "invoice of expenses", "expense invoice", "τιμολόγιο εξόδων", "διόρθωση",
