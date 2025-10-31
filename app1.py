@@ -4,7 +4,6 @@ from io import BytesIO
 import fitz  # PyMuPDF
 import pandas as pd
 from PIL import Image
-import pytesseract
 import streamlit as st
 from openai import OpenAI
 
@@ -12,7 +11,7 @@ from openai import OpenAI
 # STREAMLIT CONFIG
 # ==========================
 st.set_page_config(page_title="📄 Vendor Statement Extractor (OCR Cloud)", layout="wide")
-st.title("📄 Vendor Statement Extractor (with Tesseract OCR Fallback)")
+st.title("📄 Vendor Statement Extractor (with EasyOCR Fallback)")
 
 # ==========================
 # LOAD OPENAI API KEY SAFELY
@@ -27,16 +26,30 @@ client = OpenAI(api_key=API_KEY)
 MODEL = "gpt-4.1-mini"
 
 # ==========================
-# OCR HELPER
+# TRY TO LOAD EASY OCR
 # ==========================
-def ocr_image(img_bytes):
-    """Perform OCR on image bytes using pytesseract."""
-    img = Image.open(BytesIO(img_bytes))
-    return pytesseract.image_to_string(img, lang="spa+eng")  # Spanish + English
+try:
+    import easyocr
 
+    @st.cache_resource
+    def load_ocr_reader():
+        return easyocr.Reader(["es", "en"], gpu=False)
 
+    try:
+        reader = load_ocr_reader()
+        st.info("✅ EasyOCR loaded successfully. OCR fallback is enabled.")
+    except Exception as e:
+        reader = None
+        st.warning(f"⚠️ EasyOCR installed but failed to initialize: {e}")
+except Exception as e:
+    reader = None
+    st.warning(f"⚠️ EasyOCR not installed or unavailable: {e}")
+
+# ==========================
+# OCR + PDF EXTRACTION
+# ==========================
 def extract_text_from_pdf(file):
-    """Extract text from PDF, using Tesseract OCR if page has no embedded text."""
+    """Extract text from PDF with OCR fallback for image-based pages."""
     text = ""
     ocr_pages = 0
     file_bytes = file.read()
@@ -45,42 +58,45 @@ def extract_text_from_pdf(file):
         for page_number, page in enumerate(doc, start=1):
             page_text = page.get_text("text")
 
-            # If no text layer, run OCR
-            if not page_text.strip():
+            # If no text layer, fallback to OCR if available
+            if not page_text.strip() and reader:
                 pix = page.get_pixmap(dpi=200)
                 img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
                 img_bytes = BytesIO()
                 img.save(img_bytes, format="PNG")
                 img_bytes.seek(0)
-                ocr_result = ocr_image(img_bytes.read())
-                text += ocr_result + "\n"
-                ocr_pages += 1
+
+                try:
+                    result = reader.readtext(img_bytes.read(), detail=0, paragraph=True)
+                    ocr_text = "\n".join(result)
+                    text += ocr_text + "\n"
+                    ocr_pages += 1
+                except Exception as e:
+                    st.warning(f"OCR failed on page {page_number}: {e}")
             else:
                 text += page_text + "\n"
 
     if ocr_pages > 0:
-        st.warning(f"⚙️ {ocr_pages} page(s) processed via Tesseract OCR.")
+        st.warning(f"⚙️ {ocr_pages} page(s) processed via EasyOCR.")
+    elif reader is None:
+        st.info("💡 OCR not available. Using embedded text only.")
     else:
-        st.info("✅ Text extracted directly (no OCR needed).")
+        st.info("✅ Text extracted successfully without OCR.")
 
     return text
-
 
 # ==========================
 # TEXT CLEANING
 # ==========================
 def clean_text(text):
-    """Normalize spaces and symbols."""
     text = text.replace("\xa0", " ").replace("€", " EUR")
     text = " ".join(text.split())
     return text
 
-
 # ==========================
-# GPT DATA EXTRACTION
+# GPT EXTRACTION
 # ==========================
 def extract_with_llm(raw_text):
-    """Send text to GPT and return structured JSON."""
     prompt = f"""
     From the following Spanish vendor statement, extract each invoice line
     with these fields:
@@ -94,7 +110,6 @@ def extract_with_llm(raw_text):
     Text:
     \"\"\"{raw_text[:12000]}\"\"\"
     """
-
     response = client.responses.create(model=MODEL, input=prompt)
     content = response.output_text.strip()
 
@@ -105,18 +120,15 @@ def extract_with_llm(raw_text):
         data = json.loads(content)
     return data
 
-
 # ==========================
 # EXCEL EXPORT
 # ==========================
 def to_excel_bytes(records):
-    """Return Excel file in memory."""
     df = pd.DataFrame(records)
     output = BytesIO()
     df.to_excel(output, index=False)
     output.seek(0)
     return output
-
 
 # ==========================
 # STREAMLIT INTERFACE
