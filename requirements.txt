@@ -19,10 +19,7 @@ python-multipart
 requests
 
 # --- OCR + Text Extraction ---
-easyocr
-torch
-torchvision
-opencv-python-headless
+pytesseract
 
 # --- Data Processing / Matching ---
 fuzzywuzzy
