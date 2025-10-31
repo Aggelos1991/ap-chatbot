@@ -19,7 +19,7 @@ python-multipart
 requests
 
 # --- OCR + Text Extraction ---
-
+easyocr
 
 # --- Data Processing / Matching ---
 fuzzywuzzy
