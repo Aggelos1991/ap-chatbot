@@ -1,37 +1,31 @@
-# --- Streamlit Core ---
+# --- CORE FRAMEWORKS ---
 streamlit
+fastapi
+uvicorn
 plotly
-pandas
-numpy
 
-# --- OpenAI + Environment ---
+# --- OPENAI + ENVIRONMENT ---
 openai
 python-dotenv
 
-# --- File Handling ---
+# --- FILE & PDF HANDLING ---
 PyMuPDF
 pdfplumber
 Pillow
-xlsxwriter
-openpyxl
 aiofiles
 python-multipart
 requests
 
-# --- OCR (Cloud-safe Light Version) ---
-easyocr-lite
-opencv-python-headless
-
-# --- Data Processing / Matching ---
+# --- EXCEL / DATA PROCESSING ---
+pandas
+numpy
+openpyxl
+xlsxwriter
+matplotlib
 fuzzywuzzy
 python-Levenshtein
-
-# --- FastAPI Backend (for automation endpoints) ---
-fastapi
-uvicorn
-
-# --- Optional Visualization ---
-matplotlib
-
-# --- Utilities ---
 tqdm
+
+# --- LIGHT OCR OPTION (SAFE ON CLOUD) ---
+opencv-python-headless
+easyocr-lite
