@@ -3,12 +3,11 @@ import json
 from io import BytesIO
 import fitz  # PyMuPDF
 import pandas as pd
-import easyocr
 from PIL import Image
 import streamlit as st
 from openai import OpenAI
 
-# ==========================...
+# ==========================
 # STREAMLIT CONFIG
 # ==========================
 st.set_page_config(page_title="📄 Vendor Statement Extractor (OCR Cloud)", layout="wide")
@@ -27,13 +26,21 @@ client = OpenAI(api_key=API_KEY)
 MODEL = "gpt-4.1-mini"
 
 # ==========================
-# INITIALIZE OCR READER
+# TRY TO LOAD EASYOCR SAFELY
 # ==========================
-@st.cache_resource
-def load_ocr_reader():
-    return easyocr.Reader(['es', 'en'], gpu=False)  # Spanish + English
+try:
+    import easyocr
 
-reader = load_ocr_reader()
+    @st.cache_resource
+    def load_ocr_reader():
+        # Spanish + English support
+        return easyocr.Reader(['es', 'en'], gpu=False)
+
+    reader = load_ocr_reader()
+    st.info("✅ EasyOCR loaded successfully. OCR fallback is enabled.")
+except Exception as e:
+    reader = None
+    st.warning("⚠️ EasyOCR not available on this system. The app will skip OCR for scanned PDFs.")
 
 # ==========================
 # HELPER FUNCTIONS
@@ -43,17 +50,21 @@ def extract_text_from_pdf(file):
     text = ""
     ocr_pages = 0
 
-    with fitz.open(stream=file.read(), filetype="pdf") as doc:
+    # read the file bytes once
+    file_bytes = file.read()
+    with fitz.open(stream=file_bytes, filetype="pdf") as doc:
         for page_number, page in enumerate(doc, start=1):
             page_text = page.get_text("text")
 
-            if not page_text.strip():  # Run OCR if no embedded text
+            # If no embedded text and OCR available → run EasyOCR
+            if not page_text.strip() and reader:
                 pix = page.get_pixmap(dpi=200)
                 img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
                 img_bytes = BytesIO()
                 img.save(img_bytes, format="PNG")
                 img_bytes.seek(0)
 
+                # Run OCR on this page
                 result = reader.readtext(img_bytes.read(), detail=0, paragraph=True)
                 ocr_text = "\n".join(result)
                 text += ocr_text + "\n"
@@ -63,14 +74,18 @@ def extract_text_from_pdf(file):
 
     if ocr_pages > 0:
         st.warning(f"⚙️ {ocr_pages} page(s) processed via EasyOCR (image-based PDF).")
+    elif reader is None:
+        st.info("💡 OCR skipped (EasyOCR not installed). Using embedded text only.")
 
     return text
+
 
 def clean_text(text):
     """Normalize spaces and symbols."""
     text = text.replace("\xa0", " ").replace("€", " EUR")
     text = " ".join(text.split())
     return text
+
 
 def extract_with_llm(raw_text):
     """Send text to GPT and return structured JSON."""
@@ -99,6 +114,7 @@ def extract_with_llm(raw_text):
         data = json.loads(content)
     return data
 
+
 def to_excel_bytes(records):
     """Return Excel file in memory."""
     df = pd.DataFrame(records)
@@ -106,6 +122,7 @@ def to_excel_bytes(records):
     df.to_excel(output, index=False)
     output.seek(0)
     return output
+
 
 # ==========================
 # STREAMLIT INTERFACE
