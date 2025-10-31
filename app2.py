@@ -463,8 +463,7 @@ if uploaded_erp and uploaded_vendor:
 
         erp_df = normalize_columns(erp_raw, "erp")
         ven_df = normalize_columns(ven_raw, "ven")
-        st.write("🧩 ERP columns detected:", list(erp_df.columns))
-        st.write("🧩 Vendor columns detected:", list(ven_df.columns))
+        
 
 
         with st.spinner("Analyzing invoices..."):
