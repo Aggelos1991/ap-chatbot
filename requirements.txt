@@ -33,13 +33,13 @@ matplotlib
 fuzzywuzzy
 python-Levenshtein
 
-# ============================================
-# 🔍 OCR & TEXT EXTRACTION
-# ============================================
-easyocr
-torch
-torchvision
-opencv-python-headless
+# --- OCR + Text Extraction (CPU-Only Light Build) ---
+easyocr==1.7.1
+torch==2.1.0+cpu
+torchvision==0.16.0+cpu
+opencv-python-headless==4.9.0.80
+-f https://download.pytorch.org/whl/torch_stable.html
+
 
 # ============================================
 # 🧰 UTILITIES
