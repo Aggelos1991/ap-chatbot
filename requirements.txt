@@ -20,6 +20,11 @@ requests
 
 # --- OCR + Text Extraction ---
 pytesseract
+pillow
+easyocr
+torch
+torchvision
+opencv-python-headless
 
 # --- Data Processing / Matching ---
 fuzzywuzzy
