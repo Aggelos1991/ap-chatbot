@@ -8,7 +8,7 @@ from PIL import Image
 import streamlit as st
 from openai import OpenAI
 
-# ==========================
+# ==========================...
 # STREAMLIT CONFIG
 # ==========================
 st.set_page_config(page_title="📄 Vendor Statement Extractor (OCR Cloud)", layout="wide")
