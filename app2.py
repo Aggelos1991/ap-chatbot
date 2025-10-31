@@ -463,7 +463,8 @@ if uploaded_erp and uploaded_vendor:
 
         erp_df = normalize_columns(erp_raw, "erp")
         ven_df = normalize_columns(ven_raw, "ven")
-        
+        st.write("🧩 ERP columns detected:", list(erp_df.columns))
+        st.write("🧩 Vendor columns detected:", list(ven_df.columns))
 
 
         with st.spinner("Analyzing invoices..."):
@@ -679,6 +680,6 @@ if uploaded_erp and uploaded_vendor:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
-     _ = erp[col]
     except Exception as e:
-        st.error(f"Column '{col}' cannot be accessed: {e}")
+        st.error(f"Error: {e}")
+        st.info("Check that your files contain columns like: **invoice**, **debit/credit**, **date**, **reason**")
