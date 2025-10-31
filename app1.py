@@ -3,7 +3,7 @@ import json
 from io import BytesIO
 import fitz  # PyMuPDF
 import pandas as pd
-import easyocr
+# import easyocr
 from PIL import Image
 import streamlit as st
 from openai import OpenAI
