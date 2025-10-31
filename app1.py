@@ -33,14 +33,18 @@ try:
 
     @st.cache_resource
     def load_ocr_reader():
-        # Spanish + English support
         return easyocr.Reader(['es', 'en'], gpu=False)
 
-    reader = load_ocr_reader()
-    st.info("✅ EasyOCR loaded successfully. OCR fallback is enabled.")
-except Exception as e:
+    reader = None  # initialize as None first
+    try:
+        reader = load_ocr_reader()
+        st.info("✅ EasyOCR loaded successfully. OCR fallback is enabled.")
+    except Exception as e:
+        st.warning(f"⚠️ EasyOCR detected but failed to initialize: {e}")
+        reader = None
+except ImportError:
     reader = None
-    st.warning("⚠️ EasyOCR not available on this system. The app will skip OCR for scanned PDFs.")
+    st.warning("⚠️ EasyOCR not installed. OCR will be skipped if PDF is scanned.")
 
 # ==========================
 # HELPER FUNCTIONS
@@ -50,13 +54,12 @@ def extract_text_from_pdf(file):
     text = ""
     ocr_pages = 0
 
-    # read the file bytes once
+    # read file bytes once
     file_bytes = file.read()
     with fitz.open(stream=file_bytes, filetype="pdf") as doc:
         for page_number, page in enumerate(doc, start=1):
             page_text = page.get_text("text")
 
-            # If no embedded text and OCR available → run EasyOCR
             if not page_text.strip() and reader:
                 pix = page.get_pixmap(dpi=200)
                 img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
@@ -64,18 +67,20 @@ def extract_text_from_pdf(file):
                 img.save(img_bytes, format="PNG")
                 img_bytes.seek(0)
 
-                # Run OCR on this page
-                result = reader.readtext(img_bytes.read(), detail=0, paragraph=True)
-                ocr_text = "\n".join(result)
-                text += ocr_text + "\n"
-                ocr_pages += 1
+                try:
+                    result = reader.readtext(img_bytes.read(), detail=0, paragraph=True)
+                    ocr_text = "\n".join(result)
+                    text += ocr_text + "\n"
+                    ocr_pages += 1
+                except Exception as e:
+                    st.warning(f"OCR failed on page {page_number}: {e}")
             else:
                 text += page_text + "\n"
 
     if ocr_pages > 0:
         st.warning(f"⚙️ {ocr_pages} page(s) processed via EasyOCR (image-based PDF).")
     elif reader is None:
-        st.info("💡 OCR skipped (EasyOCR not installed). Using embedded text only.")
+        st.info("💡 OCR skipped (EasyOCR not available). Using embedded text only.")
 
     return text
 
@@ -109,7 +114,6 @@ def extract_with_llm(raw_text):
     try:
         data = json.loads(content)
     except Exception:
-        # Handle accidental markdown code blocks
         content = content.split("```")[-1]
         data = json.loads(content)
     return data
