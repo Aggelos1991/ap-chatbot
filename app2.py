@@ -172,7 +172,7 @@ def match_invoices(erp_df, ven_df):
             return "IGNORE"
         if any(k in txt for k in ["credit", "nota", "abono", "cn", "πιστωτικό", "πίστωση", "ακυρωτικό"]):
             return "CN"
-        if any(k in txt for k in ["factura", "invoice", "inv", "τιμολόγιο", "παραστατικό"]) or debit > 0:
+        if any(k in txt for k in ["factura", "invoice", "inv", "τιμολόγιο", "παραστατικό"]) or debit > 0 or credit > 0:
             return "INV"
         return "UNKNOWN"
 
