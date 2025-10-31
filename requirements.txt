@@ -1,41 +1,47 @@
-# --- Streamlit Core ---
+# ============================================
+# 🦅 CORE FRAMEWORKS
+# ============================================
 streamlit
+fastapi
+uvicorn
 plotly
-pandas
-numpy
 
-# --- OpenAI + Environment ---
+# ============================================
+# 🧠 AI & LLM INTEGRATION
+# ============================================
 openai
 python-dotenv
 
-# --- File Handling ---
+# ============================================
+# 📄 FILE & PDF HANDLING
+# ============================================
 PyMuPDF
 pdfplumber
 Pillow
-xlsxwriter
-openpyxl
 aiofiles
 python-multipart
 requests
 
-# --- OCR + Text Extraction ---
-pytesseract
-pillow
+# ============================================
+# 📊 DATA PROCESSING / EXCEL
+# ============================================
+pandas
+numpy
+openpyxl
+xlsxwriter
+matplotlib
+fuzzywuzzy
+python-Levenshtein
+
+# ============================================
+# 🔍 OCR & TEXT EXTRACTION
+# ============================================
 easyocr
 torch
 torchvision
 opencv-python-headless
 
-# --- Data Processing / Matching ---
-fuzzywuzzy
-python-Levenshtein
-
-# --- FastAPI Backend (for automation endpoints) ---
-fastapi
-uvicorn
-
-# --- Optional: Visualization / Export ---
-matplotlib
-
-# --- General Utilities ---
+# ============================================
+# 🧰 UTILITIES
+# ============================================
 tqdm
