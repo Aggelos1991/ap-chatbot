@@ -1,5 +1,5 @@
 # ==========================================================
-# The Remitator — FINAL CLEAN • CN Filter + Correct Tables + GLPI Post
+# The Remitator — FINAL FIX (✅ Correct GLPI Solution Post)
 # ==========================================================
 import os, re, requests
 import pandas as pd
@@ -9,7 +9,6 @@ from openpyxl import Workbook
 from openpyxl.utils.dataframe import dataframe_to_rows
 from openpyxl.worksheet.table import Table, TableStyleInfo
 from datetime import datetime
-from itertools import combinations
 from dotenv import load_dotenv
 
 # ========== UI ==========
@@ -67,18 +66,30 @@ def glpi_update_ticket(token, ticket_id, status=None, category_id=None):
         headers={"Session-Token": token, "App-Token": APP_TOKEN, "Content-Type": "application/json"}
     )
 
+# ✅ FIXED — Correct endpoint + field names for Solution
 def glpi_add_solution(token, ticket_id, html, solution_type_id=10):
+    """
+    Posts the HTML text as a proper GLPI Solution (like pressing Solution → Add)
+    """
     body = {
         "input": {
-            "tickets_id": int(ticket_id),
+            "itemtype": "Ticket",
+            "items_id": int(ticket_id),
             "content": html,
-            "solutiontypes_id": int(solution_type_id)
+            "solutiontypes_id": int(solution_type_id),  # Payment Remittance Advice
+            "status": 5
         }
     }
+
     return requests.post(
-        f"{GLPI_URL}/Ticket/{ticket_id}/ITILSolution",
+        f"{GLPI_URL}/ITILSolution",
         json=body,
-        headers={"Session-Token": token, "App-Token": APP_TOKEN, "Content-Type": "application/json"}
+        headers={
+            "Session-Token": token,
+            "App-Token": APP_TOKEN,
+            "Content-Type": "application/json"
+        },
+        timeout=30
     )
 
 def glpi_assign_userid(token, ticket_id, user_id):
@@ -191,7 +202,7 @@ if pay_file:
         c1, c2, c3 = st.columns(3)
         ticket_id = c1.text_input("Ticket ID", placeholder="101004")
         category_id = c2.text_input("Category ID", value="400")
-        assigned_email = c3.text_input("Assign To Email", placeholder="akeramaris@sanikos.com")
+        assigned_email = c3.text_input("Assign To Email", placeholder="akeramaris@saniikos.com")
 
         html_table = display_df.to_html(index=False, border=0, justify="center", classes="table")
         html_message = f"""
