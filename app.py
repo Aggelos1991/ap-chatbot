@@ -1,5 +1,5 @@
 # ==========================================================
-# The Remitator — FINAL FIX (Adds comment if already solved + keeps Solution ID 10)
+# The Remitator — FINAL FIX (Adds comment if already solved + AP Extras SolutionCategory=10)
 # ==========================================================
 import os, re, requests
 import pandas as pd
@@ -84,13 +84,24 @@ def glpi_add_solution(token, ticket_id, html, solution_type_id=10):
         timeout=30
     )
 
-# 👇 NEW — fallback: add a comment if Solution blocked
+# 👇 FIXED — add comment + AP Extras SolutionCategory ID 10
 def glpi_add_followup(token, ticket_id, html):
-    body = {"input": {"itemtype": "Ticket", "items_id": int(ticket_id), "content": html}}
+    body = {
+        "input": {
+            "itemtype": "Ticket",
+            "items_id": int(ticket_id),
+            "content": html,
+            "solutiontypes_id": 10   # ✅ ensure AP Extras sees Payment Remittance Advice
+        }
+    }
     return requests.post(
         f"{GLPI_URL}/Ticket/{ticket_id}/ITILFollowup",
         json=body,
-        headers={"Session-Token": token, "App-Token": APP_TOKEN, "Content-Type": "application/json"},
+        headers={
+            "Session-Token": token,
+            "App-Token": APP_TOKEN,
+            "Content-Type": "application/json"
+        },
         timeout=30
     )
 
@@ -141,7 +152,6 @@ if pay_file:
     vendor_email_in_file = subset["Supplier's Email"].iloc[0]
     summary = subset[["Alt. Document", "Invoice Value"]].copy()
 
-    # ===== CN LOGIC =====
     cn_rows, debug_rows, unmatched_invoices = [], [], []
     if cn_file:
         cn = pd.read_excel(cn_file)
@@ -178,7 +188,6 @@ if pay_file:
     all_rows["Invoice Value (€)"] = all_rows["Invoice Value"].apply(lambda v: f"€{v:,.2f}")
     display_df = all_rows[["Alt. Document", "Invoice Value (€)"]]
 
-    # ===== TABS =====
     tab1, tab2 = st.tabs(["📋 Summary", "🔗 GLPI"])
     with tab1:
         st.dataframe(display_df, use_container_width=True)
@@ -239,7 +248,6 @@ if pay_file:
                 glpi_assign_userid(token, ticket_id, user_id)
                 resp_sol = glpi_add_solution(token, ticket_id, html_message, solution_type_id=10)
 
-                # 👇 Fallback if ticket already solved
                 if resp_sol.status_code == 400 or "already solved" in resp_sol.text:
                     st.warning("⚠️ Ticket already solved — posting as comment instead.")
                     resp_sol = glpi_add_followup(token, ticket_id, html_message)
