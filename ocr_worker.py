@@ -1,33 +1,40 @@
 from fastapi import FastAPI, File, UploadFile
 from fastapi.responses import JSONResponse
-import easyocr
 from pdf2image import convert_from_bytes
-from PIL import Image
 from io import BytesIO
+import easyocr
+from PIL import Image
 
-app = FastAPI(title="🦅 DataFalcon OCR Worker — Cloud OCR (Spanish + Greek + English)")
+app = FastAPI(
+    title="🦅 DataFalcon OCR Worker",
+    description="Cloud OCR service for Spanish, Greek, and English PDFs",
+    version="1.0"
+)
 
 @app.get("/")
 def root():
-    return {"status": "online", "engine": "EasyOCR Cloud", "languages": "spa+ell+eng"}
+    return {"status": "online", "engine": "EasyOCR", "languages": "spa+ell+eng"}
 
 @app.post("/ocr")
 async def ocr(file: UploadFile = File(...)):
     try:
         pdf_bytes = await file.read()
-        reader = easyocr.Reader(['es', 'el', 'en'], gpu=False)  # lightweight CPU mode
 
-        # Convert PDF pages to images
-        images = convert_from_bytes(pdf_bytes, dpi=200)
-        text = ""
+        # Initialize OCR only once (prevent Render from hanging)
+        reader = easyocr.Reader(['es', 'el', 'en'], gpu=False)
+
+        # Convert PDF to images
+        images = convert_from_bytes(pdf_bytes, dpi=180)
+        all_text = []
+
         for i, img in enumerate(images):
-            result = reader.readtext(img, detail=0, paragraph=True)
-            text += "\n".join(result) + "\n"
+            results = reader.readtext(img, detail=0, paragraph=True)
+            all_text.extend(results)
 
-        if not text.strip():
+        if not all_text:
             return JSONResponse({"error": "No text detected"}, status_code=422)
 
-        return JSONResponse({"text": text})
+        return {"text": "\n".join(all_text)}
 
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
