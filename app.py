@@ -1,5 +1,5 @@
 # ==========================================================
-# The Remitator — FINAL FIX (✅ Correct GLPI Solution Post)
+# The Remitator — FINAL FIX (✅ GLPI Solution Post + Ticket ID Safe)
 # ==========================================================
 import os, re, requests
 import pandas as pd
@@ -76,7 +76,7 @@ def glpi_add_solution(token, ticket_id, html, solution_type_id=10):
             "itemtype": "Ticket",
             "items_id": int(ticket_id),
             "content": html,
-            "solutiontypes_id": int(solution_type_id),  # Payment Remittance Advice
+            "solutiontypes_id": int(solution_type_id),
             "status": 5
         }
     }
@@ -92,19 +92,31 @@ def glpi_add_solution(token, ticket_id, html, solution_type_id=10):
         timeout=30
     )
 
+# ✅ FIXED — Safe numeric conversion for ticket_id
 def glpi_assign_userid(token, ticket_id, user_id):
+    try:
+        tid = int(str(ticket_id).strip())
+    except ValueError:
+        raise ValueError(f"Invalid ticket ID: {ticket_id!r}. Please ensure it's numeric.")
+
     body = {
         "input": {
-            "tickets_id": int(ticket_id),
+            "tickets_id": tid,
             "users_id": int(user_id),
             "type": 2,
             "use_notification": 1
         }
     }
+
     return requests.post(
-        f"{GLPI_URL}/Ticket/{ticket_id}/Ticket_User",
+        f"{GLPI_URL}/Ticket/{tid}/Ticket_User",
         json=body,
-        headers={"Session-Token": token, "App-Token": APP_TOKEN, "Content-Type": "application/json"}
+        headers={
+            "Session-Token": token,
+            "App-Token": APP_TOKEN,
+            "Content-Type": "application/json"
+        },
+        timeout=30
     )
 
 # ========== USER MAP ==========
