@@ -1,4 +1,3 @@
-
 # ==========================================================
 # The Remitator — GLPI Integration (FINAL • CN + Debug + Excel + Email→UserID)
 # ==========================================================
@@ -318,4 +317,3 @@ if pay_file:
                 st.error(f"❌ GLPI error codes: {[r.status_code for r in [r1, r2, r3]]}")
 else:
     st.info("📂 Please upload the Payment Excel to begin (Credit Note file optional).")
-```
