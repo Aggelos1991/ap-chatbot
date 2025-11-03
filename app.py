@@ -1,19 +1,58 @@
-import re
+# ==========================================================
+# Remitator — GLPI Integration (Final)
+# ==========================================================
+import os, json, re, requests
 import pandas as pd
 import streamlit as st
 from io import BytesIO
 from openpyxl import Workbook
 from openpyxl.utils.dataframe import dataframe_to_rows
-from openpyxl.worksheet.table import Table, TableStyleInfo
-import os
-from datetime import datetime
-from itertools import combinations
+from dotenv import load_dotenv
 
-# ===== Helper functions =====
+# ----------------------------------------------------------
+# CONFIG
+# ----------------------------------------------------------
+st.set_page_config(page_title="Remitator — GLPI", layout="wide")
+st.title("Remitator — Envío automático de remesas a GLPI")
+
+load_dotenv()
+GLPI_URL   = os.getenv("GLPI_URL")
+APP_TOKEN  = os.getenv("APP_TOKEN")
+USER_TOKEN = os.getenv("USER_TOKEN")
+
+if not all([GLPI_URL, APP_TOKEN, USER_TOKEN]):
+    st.error("⚠️ Faltan variables en tu archivo .env (GLPI_URL, APP_TOKEN, USER_TOKEN)")
+    st.stop()
+
+# ----------------------------------------------------------
+# GLPI FUNCTIONS
+# ----------------------------------------------------------
+def login():
+    r = requests.get(
+        f"{GLPI_URL}/initSession",
+        headers={"Authorization": f"user_token {USER_TOKEN}", "App-Token": APP_TOKEN}
+    )
+    return r.json().get("session_token")
+
+def add_solution(token, ticket_id, html):
+    requests.post(
+        f"{GLPI_URL}/Ticket/{ticket_id}/ITILSolution",
+        json={"input": {"tickets_id": ticket_id, "content": html, "solutiontypes_id": 1}},
+        headers={"Session-Token": token, "App-Token": APP_TOKEN}
+    )
+
+def put(token, ticket_id, payload):
+    requests.put(
+        f"{GLPI_URL}/Ticket/{ticket_id}",
+        json=payload,
+        headers={"Session-Token": token, "App-Token": APP_TOKEN, "Content-Type": "application/json"}
+    )
+
+# ----------------------------------------------------------
+# HELPER FUNCTIONS
+# ----------------------------------------------------------
 def parse_amount(v):
-    """Parse numeric strings (EU/US formats) into float."""
-    if pd.isna(v):
-        return 0.0
+    if pd.isna(v): return 0.0
     s = str(v).strip()
     s = re.sub(r"[^\d,.\-]", "", s)
     if s.count(",") == 1 and s.count(".") == 1:
@@ -28,225 +67,79 @@ def parse_amount(v):
     except:
         return 0.0
 
+# ----------------------------------------------------------
+# UI
+# ----------------------------------------------------------
+col1, col2, col3 = st.columns(3)
+ticket_id = col1.text_input("Ticket ID", placeholder="101004")
+vendor_email = col2.text_input("Email del proveedor", placeholder="proveedor@empresa.com")
+payment_code = col3.text_input("Código de pago", placeholder="F2401223")
 
-def find_col(df, names):
-    """Find a column name that loosely matches one of the candidates."""
-    for c in df.columns:
-        name = c.strip().lower().replace(" ", "").replace(".", "")
-        for n in names:
-            if n.replace(" ", "").replace(".", "").lower() in name:
-                return c
-    return None
+pay_file = st.file_uploader("📂 Excel de pagos", type=["xlsx"])
+cn_file  = st.file_uploader("📄 Excel de notas de crédito (opcional)", type=["xlsx"])
 
-
-# ===== Streamlit Config =====
-st.set_page_config(page_title="The Remitator", layout="wide")
-st.title("💀 The Remitator — Hasta la vista, payment remittance. 💀")
-
-# ===== Uploads =====
-pay_file = st.file_uploader("📂 Upload Payment Excel", type=["xlsx"])
-cn_file = st.file_uploader("📂 (Optional) Upload Credit Notes Excel", type=["xlsx"])
-
-# ===== Main Logic =====
-if pay_file:
-    try:
-        df = pd.read_excel(pay_file)
-        df.columns = [c.strip() for c in df.columns]
-        df = df.loc[:, ~df.columns.duplicated()]
-        st.success("✅ Payment file loaded successfully")
-    except Exception as e:
-        st.error(f"❌ Error loading Payment Excel: {e}")
+# ----------------------------------------------------------
+# MAIN ACTION
+# ----------------------------------------------------------
+if st.button("🚀 Enviar detalle al ticket GLPI", type="primary", use_container_width=True):
+    if not ticket_id or not payment_code or not pay_file:
+        st.error("Completa Ticket ID, código de pago y sube el Excel de pagos.")
         st.stop()
 
-    req = [
-        "Payment Document Code",
-        "Alt. Document",
-        "Invoice Value",
-        "Payment Value",
-        "Supplier Name",
-        "Supplier's Email",
-    ]
-    missing = [c for c in req if c not in df.columns]
-    if missing:
-        st.error(f"❌ Missing columns in Payment Excel: {missing}")
-        st.stop()
+    # --- Load Excel(s)
+    df_pay = pd.read_excel(pay_file)
+    df_pay.columns = [c.strip() for c in df_pay.columns]
+    df_pay["Payment Document Code"] = df_pay["Payment Document Code"].astype(str)
+    subset = df_pay[df_pay["Payment Document Code"] == payment_code].copy()
 
-    pay_code = st.text_input("🔎 Enter Payment Document Code:")
-    if not pay_code:
-        st.stop()
-
-    subset = df[df["Payment Document Code"].astype(str) == str(pay_code)].copy()
     if subset.empty:
-        st.warning("⚠️ No rows found for this Payment Document Code.")
+        st.error(f"No se encontraron facturas con el código {payment_code}.")
         st.stop()
 
-    cn = None
+    all_rows = subset[["Alt. Document", "Invoice Value (€)"]].copy()
+    all_rows.columns = ["Factura / Documento", "Importe (€)"]
+
+    # If CN Excel uploaded, merge it for visual clarity
     if cn_file:
-        try:
-            cn = pd.read_excel(cn_file)
-            cn.columns = [c.strip() for c in cn.columns]
-            cn = cn.loc[:, ~cn.columns.duplicated()]
-            st.info("📄 Credit Note file loaded and will be applied.")
-        except Exception as e:
-            st.warning(f"⚠️ Error loading CN file (will skip CN logic): {e}")
-            cn = None
-    else:
-        st.info("ℹ️ No Credit Note file uploaded — showing payments only.")
+        df_cn = pd.read_excel(cn_file)
+        df_cn.columns = [c.strip() for c in df_cn.columns]
+        if "Alt. Document" in df_cn.columns and "Invoice Value (€)" in df_cn.columns:
+            df_cn = df_cn[["Alt. Document", "Invoice Value (€)"]]
+            df_cn.columns = ["Factura / Documento", "Importe (€)"]
+            all_rows = pd.concat([all_rows, df_cn], ignore_index=True)
 
-    subset["Invoice Value"] = subset["Invoice Value"].apply(parse_amount)
-    subset["Payment Value"] = subset["Payment Value"].apply(parse_amount)
+    # Compute total
+    all_rows["Importe (€)"] = all_rows["Importe (€)"].apply(parse_amount)
+    total = all_rows["Importe (€)"].sum()
+    all_rows.loc[len(all_rows)] = ["TOTAL", total]
 
-    vendor = subset["Supplier Name"].iloc[0]
-    email = subset["Supplier's Email"].iloc[0]
+    # Build HTML table
+    html_table = all_rows.to_html(index=False, border=0, justify="center", classes="table")
 
-    summary = subset[["Alt. Document", "Invoice Value"]].copy()
-    cn_rows, debug_rows, unmatched_invoices = [], [], []
+    # Build message
+    html_message = f"""
+    <p><strong>Estimado proveedor,</strong></p>
+    <p>Adjuntamos el detalle de las facturas incluidas en el pago realizado.<br>
+    <strong>Código de pago:</strong> {payment_code}</p>
+    {html_table}
+    <p>Quedamos a su disposición para cualquier aclaración.</p>
+    <p>Saludos cordiales,<br><strong>Equipo Finance</strong></p>
+    """
 
-    # ============================================================== #
-    # ✅ ADVANCED CN LOGIC + INCLUDE UNMATCHED DIFFERENCES IN SUMMARY
-    # ============================================================== #
-    if cn is not None:
-        cn_alt_col = find_col(cn, ["Alt.Document", "Alt. Document"])
-        cn_val_col = find_col(cn, ["Amount", "Debit", "Charge", "Cargo", "DEBE"])
+    # GLPI API calls
+    token = login()
+    if not token:
+        st.error("❌ Error al iniciar sesión en GLPI.")
+        st.stop()
 
-        if cn_alt_col and cn_val_col:
-            cn[cn_val_col] = cn[cn_val_col].apply(parse_amount)
-            cn = cn[cn[cn_val_col].abs() > 0.01].reset_index(drop=True)
-            cn = cn.drop_duplicates(subset=[cn_alt_col], keep="last").reset_index(drop=True)
+    with st.spinner("Actualizando ticket y enviando mensaje al proveedor..."):
+        # Add message
+        add_solution(token, ticket_id, html_message)
+        # Close ticket
+        put(token, ticket_id, {"input": {"status": 5}})  # Solved
+        put(token, ticket_id, {"input": {"status": 6}})  # Closed
 
-            used_indices = set()
-
-            for _, row in subset.iterrows():
-                inv = str(row["Alt. Document"])
-                payment_val = row["Payment Value"]
-                invoice_val = row["Invoice Value"]
-                diff = round(payment_val - invoice_val, 2)
-                matched_cns = []
-                if abs(diff) < 0.01:
-                    continue
-
-                match_found = False
-
-                # 1️⃣ Try single CN
-                for i, r in cn.iterrows():
-                    if i in used_indices:
-                        continue
-                    if round(abs(r[cn_val_col]), 2) == round(abs(diff), 2):
-                        cn_no = str(r[cn_alt_col])
-                        cn_amt = -abs(r[cn_val_col])
-                        cn_rows.append({"Alt. Document": f"{cn_no} (CN)", "Invoice Value": cn_amt})
-                        matched_cns.append(cn_no)
-                        used_indices.add(i)
-                        match_found = True
-                        break
-
-                # 2️⃣ Try 2–3 CN combinations
-                if not match_found:
-                    available = [(i, abs(r[cn_val_col]), r) for i, r in cn.iterrows() if i not in used_indices]
-                    for n in [2, 3]:
-                        for combo in combinations(available, n):
-                            total = round(sum(x[1] for x in combo), 2)
-                            if abs(total - abs(diff)) < 0.05:  # ±0.05 tolerance
-                                for i, _, r in combo:
-                                    cn_no = str(r[cn_alt_col])
-                                    cn_amt = -abs(r[cn_val_col])
-                                    cn_rows.append({"Alt. Document": f"{cn_no} (CN)", "Invoice Value": cn_amt})
-                                    matched_cns.append(cn_no)
-                                    used_indices.add(i)
-                                match_found = True
-                                break
-                        if match_found:
-                            break
-
-                # If not matched — record difference as its own row
-                if not match_found:
-                    unmatched_invoices.append({
-                        "Alt. Document": f"{inv} (Unmatched Diff)",
-                        "Invoice Value": diff
-                    })
-
-                debug_rows.append({
-                    "Invoice": inv,
-                    "Invoice Value": invoice_val,
-                    "Payment Value": payment_val,
-                    "Difference": diff,
-                    "Matched CNs": ", ".join(matched_cns) if matched_cns else "—",
-                    "Matched?": "✅" if match_found else "❌"
-                })
-
-            # 🧾 Unused CNs
-            unmatched_cns = cn.loc[~cn.index.isin(used_indices), [cn_alt_col, cn_val_col]].copy()
-            unmatched_cns.rename(columns={cn_alt_col: "CN Number", cn_val_col: "Amount"}, inplace=True)
-            unmatched_cns["Amount"] = unmatched_cns["Amount"].apply(lambda v: f"€{v:,.2f}")
-
-            st.success(f"✅ Applied {len(cn_rows)} CNs (single/combo)")
-            debug_df = pd.DataFrame(debug_rows)
-            if not debug_df.empty:
-                st.subheader("🔍 Debug breakdown — invoice vs. CN matching")
-                st.dataframe(debug_df, use_container_width=True)
-        else:
-            st.warning("⚠️ CN file missing expected columns ('Alt.Document', 'Amount/Debit'). CN logic skipped.")
-    else:
-        st.info("ℹ️ No Credit Note file uploaded — showing payments only.")
-
-    # ==============================================================
-    # ✅ Combine all into final summary (invoices + CNs + unmatched)
-    # ==============================================================
-    all_rows = summary.copy()
-    if cn_rows:
-        all_rows = pd.concat([all_rows, pd.DataFrame(cn_rows)], ignore_index=True)
-    if unmatched_invoices:
-        all_rows = pd.concat([all_rows, pd.DataFrame(unmatched_invoices)], ignore_index=True)
-
-    total_val = all_rows["Invoice Value"].sum()
-    total_row = pd.DataFrame([{"Alt. Document": "TOTAL", "Invoice Value": total_val}])
-    all_rows = pd.concat([all_rows, total_row], ignore_index=True)
-
-    all_rows["Invoice Value (€)"] = all_rows["Invoice Value"].apply(lambda v: f"€{v:,.2f}")
-    all_rows = all_rows[["Alt. Document", "Invoice Value (€)"]]
-
-    st.divider()
-    st.subheader(f"📋 Final Summary for Payment Code: {pay_code}")
-    st.write(f"**Vendor:** {vendor}")
-    st.write(f"**Vendor Email:** {email}")
-    st.dataframe(all_rows, use_container_width=True)
-
-    # ---- Export Excel ----
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Final Summary"
-    for r in dataframe_to_rows(all_rows, index=False, header=True):
-        ws.append(r)
-
-    ws_hidden = wb.create_sheet("HiddenMeta")
-    meta_data = [
-        ["Vendor", vendor],
-        ["Vendor Email", email],
-        ["Payment Code", pay_code],
-        ["Exported At", datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
-    ]
-    for row in meta_data:
-        ws_hidden.append(row)
-    tab = Table(displayName="MetaTable", ref=f"A1:B{len(meta_data)}")
-    style = TableStyleInfo(name="TableStyleMedium2", showRowStripes=True)
-    tab.tableStyleInfo = style
-    ws_hidden.add_table(tab)
-    ws_hidden.sheet_state = "hidden"
-
-    folder = os.path.join(os.getcwd(), "exports")
-    os.makedirs(folder, exist_ok=True)
-    file_path = os.path.join(folder, f"{vendor}_Payment_{pay_code}.xlsx")
-    wb.save(file_path)
-
-    buffer = BytesIO()
-    wb.save(buffer)
-    buffer.seek(0)
-    st.download_button(
-        "💾 Download Excel Summary",
-        buffer,
-        file_name=f"{vendor}_Payment_{pay_code}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
-
-else:
-    st.info("📂 Please upload the Payment Excel to begin (Credit Note file optional).")
+    st.success(f"✅ Ticket #{ticket_id} actualizado con éxito y mensaje enviado.")
+    st.markdown("---")
+    st.markdown("**Vista previa del mensaje enviado:**")
+    st.markdown(html_message, unsafe_allow_html=True)
