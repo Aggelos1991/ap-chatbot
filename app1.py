@@ -1,5 +1,5 @@
 # ==========================================================
-# 🦅 DataFalcon Pro — Hybrid GPT Vendor Statement Extractor (CLOUD SAFE)
+# 🦅 DataFalcon Pro — Cloud Version (OCR API + GPT Extractor)
 # ==========================================================
 import os, re, json
 import pdfplumber
@@ -7,12 +7,13 @@ import pandas as pd
 import streamlit as st
 from io import BytesIO
 from openai import OpenAI
+import requests
 
 # ==========================================================
 # STREAMLIT CONFIG
 # ==========================================================
-st.set_page_config(page_title="🦅 DataFalcon Pro — Cloud Safe", layout="wide")
-st.title("🦅 DataFalcon Pro — Hybrid GPT Extractor (Cloud Version)")
+st.set_page_config(page_title="🦅 DataFalcon Pro — Cloud OCR", layout="wide")
+st.title("🦅 DataFalcon Pro — Hybrid GPT + Cloud OCR Extractor")
 
 # ==========================================================
 # OPENAI CONFIG
@@ -33,7 +34,41 @@ PRIMARY_MODEL = "gpt-4o-mini"
 BACKUP_MODEL = "gpt-4o"
 
 # ==========================================================
-# HELPERS
+# OCR.SPACE API CONFIG  (multi-language)
+# ==========================================================
+OCR_API_KEY = "K83109465388957"
+OCR_LANGUAGES = "spa+ell+eng"  # Spanish + Greek + English
+
+def cloud_ocr_extract(pdf_bytes):
+    """Perform OCR on scanned PDFs using the OCR.space API."""
+    st.info("☁️ Uploading scanned PDF to OCR.space for text recognition...")
+    try:
+        response = requests.post(
+            "https://api.ocr.space/parse/image",
+            files={"file": ("document.pdf", pdf_bytes)},
+            data={
+                "apikey": OCR_API_KEY,
+                "language": OCR_LANGUAGES,
+                "isOverlayRequired": False
+            },
+            timeout=180
+        )
+        result = response.json()
+        text = "\n".join(
+            [r.get("ParsedText", "") for r in result.get("ParsedResults", []) if r.get("ParsedText")]
+        )
+        if not text.strip():
+            st.error("⚠️ OCR API returned no text.")
+            return []
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        st.success(f"✅ OCR completed — {len(lines)} lines extracted.")
+        return lines
+    except Exception as e:
+        st.error(f"❌ OCR API error: {e}")
+        return []
+
+# ==========================================================
+# HELPER FUNCTIONS
 # ==========================================================
 def normalize_number(value):
     """Normalize decimals like 1.234,56 → 1234.56"""
@@ -54,29 +89,35 @@ def normalize_number(value):
         return ""
 
 # ==========================================================
-# TEXT EXTRACTION ONLY (CLOUD SAFE)
+# TEXT + CLOUD OCR EXTRACTION
 # ==========================================================
 def extract_raw_lines(uploaded_pdf):
-    """Extract text from PDF only — OCR disabled for Streamlit Cloud."""
+    """Extract text from PDF; use OCR API if no text layer found."""
     all_lines = []
+    pdf_bytes = uploaded_pdf.getvalue()
+
     try:
         with pdfplumber.open(uploaded_pdf) as pdf:
-            text_found = False
-            for page in pdf.pages:
-                text = page.extract_text()
-                if text:
-                    text_found = True
+            sample_text = any(page.extract_text() for page in pdf.pages[:3] if page.extract_text())
+
+        if sample_text:
+            st.info("📄 Detected searchable PDF → fast text extraction")
+            with pdfplumber.open(uploaded_pdf) as pdf:
+                for page in pdf.pages:
+                    text = page.extract_text()
+                    if not text:
+                        continue
                     for line in text.split("\n"):
                         clean = " ".join(line.split())
                         if clean:
                             all_lines.append(clean)
-
-        if not text_found:
-            st.warning("📸 No text layer found — OCR is disabled in Cloud mode. Please upload a searchable PDF.")
         else:
-            st.success(f"✅ Extracted {len(all_lines)} lines of text.")
+            st.warning("📸 No text layer found → using Cloud OCR (Spanish + Greek + English)")
+            all_lines = cloud_ocr_extract(pdf_bytes)
+
     except Exception as e:
-        st.error(f"❌ PDF extraction error: {e}")
+        st.error(f"❌ Error extracting text: {e}")
+
     return all_lines
 
 # ==========================================================
@@ -105,7 +146,6 @@ You are a financial data extractor specialized in Spanish vendor statements.
 Each line may include: Fecha, Documento, Descripción, DEBE, HABER, SALDO.
 Extract structured data and classify each entry as Invoice, Payment, or Credit Note.
 Output strict JSON array only.
-
 FORMAT:
 [
   {{
@@ -116,7 +156,6 @@ FORMAT:
     "Credit": "HABER amount or empty"
   }}
 ]
-
 Text:
 {text_block}
 """
@@ -180,7 +219,7 @@ def to_excel_bytes(records):
 uploaded_pdf = st.file_uploader("📂 Upload Vendor Statement (PDF)", type=["pdf"])
 
 if uploaded_pdf:
-    with st.spinner("📄 Extracting text from PDF..."):
+    with st.spinner("📄 Extracting text / running OCR..."):
         lines = extract_raw_lines(uploaded_pdf)
 
     st.text_area("📋 Preview (first 30 lines):", "\n".join(lines[:30]), height=300)
@@ -191,7 +230,7 @@ if uploaded_pdf:
 
         if data:
             df = pd.DataFrame(data)
-            st.success(f"✅ Extraction complete — {len(df)} valid records found!")
+            st.success(f"✅ Extraction complete — {len(df)} records found!")
             st.dataframe(df, use_container_width=True, hide_index=True)
 
             total_debit = df["Debit"].apply(pd.to_numeric, errors="coerce").sum()
