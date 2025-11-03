@@ -199,15 +199,19 @@ if pay_file:
                         if round(val, 2) == round(abs(diff), 2):
                             cn_rows.append({"Alt. Document": f"{r[cn_alt_col]} (CN)", "Invoice Value": -val})
                             used.add(i); match=True; break
+                    # ✅ NEW: if not matched, include the diff as a row to balance the total
                     if not match and abs(diff) > 0.01:
-                        unmatched_invoices.append({"Alt. Document": f"{inv} (Unmatched Diff)", "Invoice Value": diff})
+                        unmatched_invoices.append({"Alt. Document": f"{inv} (Adj. Diff)", "Invoice Value": diff})
                     debug_rows.append({
                         "Invoice": inv, "Invoice Value": row["Invoice Value"],
                         "Payment Value": row["Payment Value"], "Difference": diff,
                         "Matched?": "✅" if match else "❌"
                     })
+        # ✅ include both CN matches and unmatched diffs to keep totals aligned
         valid_cn_df = pd.DataFrame([r for r in cn_rows if r["Invoice Value"] != 0])
-        all_rows = pd.concat([summary, valid_cn_df], ignore_index=True)
+        unmatched_df = pd.DataFrame(unmatched_invoices)
+        all_rows = pd.concat([summary, valid_cn_df, unmatched_df], ignore_index=True)
+
         total_val = subset["Payment Value"].sum()
         all_rows.loc[len(all_rows)] = ["TOTAL", total_val]
         all_rows["Invoice Value (€)"] = all_rows["Invoice Value"].apply(lambda v: f"€{v:,.2f}")
