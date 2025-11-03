@@ -8,19 +8,20 @@ import streamlit as st
 from io import BytesIO
 from openai import OpenAI
 
-# --- OCR dependencies ---
+# --- OCR + Image Handling ---
 import pytesseract
 from pdf2image import convert_from_bytes
 from PIL import Image
 
-# --- Force Poppler path (for macOS/Homebrew) ---
+# --- Ensure Poppler path for macOS/Homebrew ---
 os.environ["PATH"] += os.pathsep + "/opt/homebrew/bin"
+os.environ["PATH"] += os.pathsep + "/opt/homebrew/Cellar/poppler/25.10.0/bin"  # explicit path
 
 # ==========================================================
 # CONFIGURATION
 # ==========================================================
 st.set_page_config(page_title="🦅 DataFalcon Pro — Hybrid GPT Extractor", layout="wide")
-st.title("🦅 DataFalcon Pro — Hybrid GPT + OCR")
+st.title("🦅 DataFalcon Pro — Hybrid GPT + OCR Extractor")
 
 try:
     from dotenv import load_dotenv
@@ -62,11 +63,11 @@ def normalize_number(value):
 # HYBRID TEXT EXTRACTOR (OCR + TEXT)
 # ==========================================================
 def extract_raw_lines(uploaded_pdf):
-    """Extract all text lines — OCR for scanned PDFs."""
+    """Extract all text lines — OCR fallback for scanned PDFs."""
     all_lines = []
     pdf_bytes = uploaded_pdf.getvalue()
 
-    # 1️⃣ Try fast text extraction
+    # Try fast text extraction
     with pdfplumber.open(uploaded_pdf) as pdf:
         sample_text = any(page.extract_text() for page in pdf.pages[:3] if page.extract_text())
 
@@ -82,19 +83,17 @@ def extract_raw_lines(uploaded_pdf):
                     if clean:
                         all_lines.append(clean)
     else:
-        # 2️⃣ OCR MODE – Scanned PDF
+        # OCR fallback
         st.warning("📸 No text layer found → switching to OCR (slower, 1–3 min)")
         with st.spinner("Running OCR on every page..."):
             try:
-                # Explicit Poppler path
                 images = convert_from_bytes(
                     pdf_bytes,
                     dpi=300,
                     fmt="png",
                     thread_count=4,
-                    poppler_path="/opt/homebrew/bin"  # macOS; remove or change on Windows/Linux
+                    poppler_path="/opt/homebrew/Cellar/poppler/25.10.0/bin"  # adjust if needed
                 )
-
                 for i, img in enumerate(images):
                     with st.status(f"OCR Page {i+1}/{len(images)}") as status:
                         status.write(f"Reading page {i+1}…")
@@ -108,12 +107,10 @@ def extract_raw_lines(uploaded_pdf):
                             if clean:
                                 all_lines.append(clean)
                         status.update(label=f"Page {i+1} completed", state="complete")
-
                 st.success(f"OCR finished → {len(all_lines)} lines extracted!")
-
             except Exception as e:
-                st.error(f"OCR failed: {e}")
-                st.info("⚙️ Ensure Poppler and Tesseract are installed and in PATH.")
+                st.error(f"❌ OCR failed: {e}")
+                st.info("⚙️ Ensure Poppler and Tesseract are installed and accessible.")
                 return []
 
     return all_lines
@@ -178,7 +175,6 @@ Text:
             except Exception as e:
                 st.warning(f"GPT error with {model}: {e}")
 
-        # post-process
         for row in data:
             alt = str(row.get("Alternative Document","")).strip()
             if not alt or re.search(r"(asiento|saldo|total|iva)", alt, re.I): continue
