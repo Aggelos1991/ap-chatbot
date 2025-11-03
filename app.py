@@ -1,5 +1,5 @@
 # ==========================================================
-# The Remitator — FINAL • Direct UserID Assign + CN Logic + Debug + Excel + Comment Template
+# The Remitator — FINAL CLEAN • CN Filter + Correct Tables + GLPI Post
 # ==========================================================
 import os, re, requests
 import pandas as pd
@@ -86,7 +86,7 @@ def glpi_assign_userid(token, ticket_id, user_id):
         "input": {
             "tickets_id": int(ticket_id),
             "users_id": int(user_id),
-            "type": 2,  # Assigned To
+            "type": 2,
             "use_notification": 1
         }
     }
@@ -96,13 +96,13 @@ def glpi_assign_userid(token, ticket_id, user_id):
         headers={"Session-Token": token, "App-Token": APP_TOKEN, "Content-Type": "application/json"}
     )
 
-# ========== USER ID MAP ==========
+# ========== USER MAP ==========
 USER_MAP = {
     "akeramaris@sanikos.com": 22487,
     "mmarquis@saniikos.com": 16207
 }
 
-# ========== APP ==========
+# ========== MAIN ==========
 pay_file = st.file_uploader("📂 Upload Payment Excel", type=["xlsx"])
 cn_file  = st.file_uploader("📂 (Optional) Upload Credit Notes Excel", type=["xlsx"])
 
@@ -126,7 +126,7 @@ if pay_file:
     vendor_email_in_file = subset["Supplier's Email"].iloc[0]
     summary = subset[["Alt. Document", "Invoice Value"]].copy()
 
-    # CN Logic
+    # ===== CN LOGIC =====
     cn_rows, debug_rows, unmatched_invoices = [], [], []
     if cn_file:
         cn = pd.read_excel(cn_file)
@@ -143,8 +143,10 @@ if pay_file:
                 match = False
                 for i, r in cn.iterrows():
                     if i in used: continue
-                    if round(abs(r[cn_val_col]), 2) == round(abs(diff), 2):
-                        cn_rows.append({"Alt. Document": f"{r[cn_alt_col]} (CN)", "Invoice Value": -abs(r[cn_val_col])})
+                    val = round(abs(r[cn_val_col]), 2)
+                    if val == 0: continue
+                    if round(val, 2) == round(abs(diff), 2):
+                        cn_rows.append({"Alt. Document": f"{r[cn_alt_col]} (CN)", "Invoice Value": -val})
                         used.add(i); match=True; break
                 if not match and abs(diff) > 0.01:
                     unmatched_invoices.append({"Alt. Document": f"{inv} (Unmatched Diff)", "Invoice Value": diff})
@@ -154,12 +156,15 @@ if pay_file:
                     "Matched?": "✅" if match else "❌"
                 })
 
-    all_rows = pd.concat([summary, pd.DataFrame(cn_rows), pd.DataFrame(unmatched_invoices)], ignore_index=True)
+    # ===== TABLES =====
+    valid_cn_df = pd.DataFrame([r for r in cn_rows if r["Invoice Value"] != 0])
+    all_rows = pd.concat([summary, valid_cn_df], ignore_index=True)
     total_val = subset["Payment Value"].sum()
     all_rows.loc[len(all_rows)] = ["TOTAL", total_val]
     all_rows["Invoice Value (€)"] = all_rows["Invoice Value"].apply(lambda v: f"€{v:,.2f}")
     display_df = all_rows[["Alt. Document", "Invoice Value (€)"]]
 
+    # ===== TABS =====
     tab1, tab2 = st.tabs(["📋 Summary", "🔗 GLPI"])
     with tab1:
         st.dataframe(display_df, use_container_width=True)
