@@ -1,5 +1,5 @@
 # ==========================================================
-# Remitator — GLPI Integration (English Version • Final)
+# Remitator — GLPI Integration (English Version • Final UI)
 # ==========================================================
 import os, json, re, requests
 import pandas as pd
@@ -13,8 +13,31 @@ from dotenv import load_dotenv
 # CONFIG
 # ----------------------------------------------------------
 st.set_page_config(page_title="Remitator — GLPI", layout="wide")
+st.markdown(
+    """
+    <style>
+        div.stButton > button:first-child {
+            background-color: #007BFF;
+            color: white;
+            border-radius: 6px;
+            height: 2.5em;
+            width: 160px;
+            font-size: 15px;
+            border: none;
+        }
+        div.stButton > button:first-child:hover {
+            background-color: #0069d9;
+            color: white;
+        }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 st.title("Remitator — Automatic Remittance Upload to GLPI")
 
+# ----------------------------------------------------------
+# ENVIRONMENT
+# ----------------------------------------------------------
 load_dotenv()
 GLPI_URL   = os.getenv("GLPI_URL")
 APP_TOKEN  = os.getenv("APP_TOKEN")
@@ -90,7 +113,7 @@ cn_file  = st.file_uploader("📄 Upload Credit Notes Excel (optional)", type=["
 # ----------------------------------------------------------
 # MAIN ACTION
 # ----------------------------------------------------------
-if st.button("🚀 Send Payment Details to GLPI", type="primary", use_container_width=True):
+if st.button("Close Ticket"):
     if not ticket_id or not payment_code or not pay_file:
         st.error("Please fill in Ticket ID, Payment Code, and upload the Payment Excel file.")
         st.stop()
@@ -125,9 +148,7 @@ if st.button("🚀 Send Payment Details to GLPI", type="primary", use_container_
     # --- Build HTML table
     html_table = all_rows.to_html(index=False, border=0, justify="center", classes="table")
 
-    # ------------------------------------------------------
-    # SPANISH EMAIL TEMPLATE (kept in original language)
-    # ------------------------------------------------------
+    # --- Spanish Email Template
     html_message = f"""
     <p><strong>Estimado proveedor,</strong></p>
     <p>Adjuntamos el detalle de las facturas incluidas en el pago realizado.<br>
@@ -137,9 +158,7 @@ if st.button("🚀 Send Payment Details to GLPI", type="primary", use_container_
     <p>Saludos cordiales,<br><strong>Equipo Finance</strong></p>
     """
 
-    # ------------------------------------------------------
-    # GLPI ACTIONS
-    # ------------------------------------------------------
+    # --- GLPI Actions
     token = login()
     if not token:
         st.error("❌ Failed to log in to GLPI. Check your credentials or tokens.")
