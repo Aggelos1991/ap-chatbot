@@ -1,5 +1,5 @@
 # ==========================================================
-# The Remitator — FINAL FINAL (Multi-Payment Support + AP Extras Solution Category ID=10)
+# The Remitator — FINAL FINAL (Manual Comma Codes + AP Extras Solution Category ID=10)
 # ==========================================================
 import os, re, requests
 import pandas as pd
@@ -154,10 +154,12 @@ if pay_file:
     df = df.loc[:, ~df.columns.duplicated()]
     st.success("✅ Payment file loaded successfully")
 
-    # ✅ Multi-payment selection
-    all_codes = df["Payment Document Code"].dropna().astype(str).unique().tolist()
-    selected_codes = st.multiselect("🔎 Select one or more Payment Document Codes:", all_codes)
+    # ✅ Manual comma-separated payment codes
+    pay_input = st.text_input("🔎 Enter one or more Payment Document Codes (comma-separated):", "")
+    if not pay_input.strip():
+        st.stop()
 
+    selected_codes = [x.strip() for x in pay_input.split(",") if x.strip()]
     if not selected_codes:
         st.stop()
 
