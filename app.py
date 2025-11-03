@@ -98,7 +98,7 @@ def glpi_assign_userid(token, ticket_id, user_id):
 
 # ========== USER MAP ==========
 USER_MAP = {
-    "akeramaris@sanikos.com": 22487,
+    "akeramaris@saniikos.com": 22487,
     "mmarquis@saniikos.com": 16207
 }
 
