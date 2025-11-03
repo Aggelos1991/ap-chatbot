@@ -1,36 +1,52 @@
 # ==========================================================
 # 🦅 DataFalcon Pro — Hybrid GPT + OCR Vendor Statement Extractor (FINAL macOS FIX)
 # ==========================================================
-import os, re, json
+import os, re, json, shutil, time
 import pdfplumber
 import pandas as pd
 import streamlit as st
 from io import BytesIO
 from openai import OpenAI
+from PIL import Image
 
-# --- OCR + Image Handling ---
+# --- OCR / Image Handling ---
 import pytesseract
 from pdf2image import convert_from_bytes
-from PIL import Image
-import shutil
 
 # ==========================================================
-# POPPLER CONFIG (critical for macOS)
+# POPPLER & TESSERACT CHECKS
 # ==========================================================
-# Hard-code Poppler path for macOS/Homebrew
-POPPLER_PATH = "/opt/homebrew/bin"  # <- update if different
+POPPLER_PATH = "/opt/homebrew/bin"  # Update if Poppler installed elsewhere
 os.environ["PATH"] = POPPLER_PATH + os.pathsep + os.environ["PATH"]
 
-# Quick sanity check
-if not shutil.which("pdftoppm"):
-    st.warning(f"⚠️ Poppler binary not found in PATH. Expected at: {POPPLER_PATH}")
+def check_dependencies():
+    """Ensure Poppler and Tesseract are installed and accessible."""
+    st.info("🧩 Checking OCR dependencies...")
+    pdftoppm_path = shutil.which("pdftoppm")
+    tesseract_path = shutil.which("tesseract")
+
+    if not pdftoppm_path:
+        st.error("❌ Poppler not found. Install via: brew install poppler")
+        st.stop()
+
+    if not tesseract_path:
+        st.error("❌ Tesseract not found. Install via: brew install tesseract")
+        st.stop()
+
+    st.success(f"✅ Poppler: {pdftoppm_path}")
+    st.success(f"✅ Tesseract: {tesseract_path}")
+
+check_dependencies()
 
 # ==========================================================
-# CONFIGURATION
+# STREAMLIT CONFIG
 # ==========================================================
 st.set_page_config(page_title="🦅 DataFalcon Pro — Hybrid GPT Extractor", layout="wide")
 st.title("🦅 DataFalcon Pro — Hybrid GPT + OCR Extractor")
 
+# ==========================================================
+# OPENAI CONFIG
+# ==========================================================
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -47,7 +63,7 @@ PRIMARY_MODEL = "gpt-4o-mini"
 BACKUP_MODEL = "gpt-4o"
 
 # ==========================================================
-# HELPERS
+# HELPER FUNCTIONS
 # ==========================================================
 def normalize_number(value):
     """Normalize decimals like 1.234,56 → 1234.56"""
@@ -68,20 +84,41 @@ def normalize_number(value):
         return ""
 
 # ==========================================================
-# OCR EXTRACTION (Robust)
+# SAFE OCR EXTRACTION (Timeout Protected)
 # ==========================================================
+def safe_convert_from_bytes(pdf_bytes, timeout=60):
+    """Convert PDF → images with timeout to avoid infinite hang."""
+    from multiprocessing import Process, Queue
+    q = Queue()
+
+    def _worker(q):
+        try:
+            imgs = convert_from_bytes(
+                pdf_bytes, dpi=300, fmt="png", poppler_path=POPPLER_PATH
+            )
+            q.put(imgs)
+        except Exception as e:
+            q.put(e)
+
+    p = Process(target=_worker, args=(q,))
+    p.start()
+    p.join(timeout)
+    if p.is_alive():
+        p.terminate()
+        raise TimeoutError("Poppler conversion timed out — check Poppler install.")
+
+    result = q.get()
+    if isinstance(result, Exception):
+        raise result
+    return result
+
+
 def ocr_extract(pdf_bytes):
-    """Perform OCR extraction with explicit Poppler path"""
+    """Perform OCR extraction safely"""
     lines = []
     try:
         st.info("📸 Starting OCR extraction (Poppler + Tesseract)...")
-        images = convert_from_bytes(
-            pdf_bytes,
-            dpi=300,
-            fmt="png",
-            poppler_path=POPPLER_PATH
-        )
-
+        images = safe_convert_from_bytes(pdf_bytes)
         for i, img in enumerate(images):
             with st.status(f"OCR Page {i+1}/{len(images)}") as status:
                 status.write(f"Reading page {i+1}…")
@@ -97,14 +134,13 @@ def ocr_extract(pdf_bytes):
     return lines
 
 # ==========================================================
-# HYBRID EXTRACTOR (Text + OCR)
+# HYBRID TEXT + OCR EXTRACTION
 # ==========================================================
 def extract_raw_lines(uploaded_pdf):
-    """Extract text from PDF; use OCR if no text layer."""
+    """Extract text from PDF; fallback to OCR if needed."""
     all_lines = []
     pdf_bytes = uploaded_pdf.getvalue()
 
-    # 1️⃣ Try searchable text extraction
     with pdfplumber.open(uploaded_pdf) as pdf:
         sample_text = any(page.extract_text() for page in pdf.pages[:3] if page.extract_text())
 
@@ -126,24 +162,23 @@ def extract_raw_lines(uploaded_pdf):
     return all_lines
 
 # ==========================================================
-# GPT EXTRACTION
+# GPT EXTRACTOR
 # ==========================================================
 def parse_gpt_response(content, batch_num):
-    json_match = re.search(r"\[.*\]", content, re.DOTALL)
-    if not json_match:
-        st.warning(f"Batch {batch_num}: No JSON found. First 300 chars:\n{content[:300]}")
+    match = re.search(r"\[.*\]", content, re.DOTALL)
+    if not match:
+        st.warning(f"Batch {batch_num}: No JSON found.\n{content[:200]}")
         return []
     try:
-        return json.loads(json_match.group(0))
+        return json.loads(match.group(0))
     except json.JSONDecodeError as e:
         st.warning(f"Batch {batch_num}: JSON decode error → {e}")
         return []
 
 def extract_with_gpt(lines):
-    """Classify lines as Invoice / Payment / Credit Note."""
+    """Classify entries as Invoice / Payment / Credit Note."""
     BATCH_SIZE = 60
     all_records = []
-
     for i in range(0, len(lines), BATCH_SIZE):
         batch = lines[i:i+BATCH_SIZE]
         text_block = "\n".join(batch)
@@ -151,9 +186,7 @@ def extract_with_gpt(lines):
 You are a financial data extractor specialized in Spanish vendor statements.
 Each line may include: Fecha, Documento, Descripción, DEBE, HABER, SALDO.
 Extract structured data and classify each entry as Invoice, Payment, or Credit Note.
-
 Output strict JSON array only.
-
 FORMAT:
 [
   {{
@@ -164,7 +197,6 @@ FORMAT:
     "Credit": "HABER amount or empty"
   }}
 ]
-
 Text:
 {text_block}
 """
@@ -173,35 +205,39 @@ Text:
             try:
                 response = client.chat.completions.create(
                     model=model,
-                    messages=[{"role":"user","content":prompt}],
+                    messages=[{"role": "user", "content": prompt}],
                     temperature=0
                 )
                 content = response.choices[0].message.content.strip()
                 if i == 0:
                     st.text_area(f"🧠 GPT Response (Batch 1 – {model})", content, height=250)
-                data = parse_gpt_response(content, i//BATCH_SIZE+1)
-                if data: break
+                data = parse_gpt_response(content, i//BATCH_SIZE + 1)
+                if data:
+                    break
             except Exception as e:
-                st.warning(f"GPT error with {model}: {e}")
+                st.warning(f"GPT error ({model}): {e}")
 
         for row in data:
-            alt = str(row.get("Alternative Document","")).strip()
-            if not alt or re.search(r"(asiento|saldo|total|iva)", alt, re.I): continue
-            debit = normalize_number(row.get("Debit",""))
-            credit = normalize_number(row.get("Credit",""))
-            reason = row.get("Reason","").strip()
+            alt = str(row.get("Alternative Document", "")).strip()
+            if not alt or re.search(r"(asiento|saldo|total|iva)", alt, re.I):
+                continue
+            debit = normalize_number(row.get("Debit", ""))
+            credit = normalize_number(row.get("Credit", ""))
+            reason = row.get("Reason", "").strip()
 
-            if debit and not credit: reason="Invoice"
+            if debit and not credit:
+                reason = "Invoice"
             elif credit and not debit:
                 if re.search(r"abono|nota|crédit|descuento", str(row), re.I):
-                    reason="Credit Note"
+                    reason = "Credit Note"
                 else:
-                    reason="Payment"
-            elif not debit and not credit: continue
+                    reason = "Payment"
+            elif not debit and not credit:
+                continue
 
             all_records.append({
                 "Alternative Document": alt,
-                "Date": row.get("Date","").strip(),
+                "Date": row.get("Date", "").strip(),
                 "Reason": reason,
                 "Debit": debit,
                 "Credit": credit
@@ -243,7 +279,7 @@ if uploaded_pdf:
             total_credit = df["Credit"].apply(pd.to_numeric, errors="coerce").sum()
             net = round(total_debit - total_credit, 2)
 
-            c1,c2,c3 = st.columns(3)
+            c1, c2, c3 = st.columns(3)
             c1.metric("💰 Total Debit", f"{total_debit:,.2f}")
             c2.metric("💳 Total Credit", f"{total_credit:,.2f}")
             c3.metric("⚖️ Net", f"{net:,.2f}")
