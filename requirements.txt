@@ -3,6 +3,8 @@ streamlit
 plotly
 pandas
 numpy
+fastapi
+uvicorn
 
 # --- OpenAI + Environment ---
 openai
