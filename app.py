@@ -1,5 +1,5 @@
 # ==========================================================
-# The Remitator — FINAL FIX (Comment + AP Extras SolutionCategory=10)
+# The Remitator — FINAL FINAL (Adds AP Extras Solution Category ID=10)
 # ==========================================================
 import os, re, requests
 import pandas as pd
@@ -66,7 +66,26 @@ def glpi_update_ticket(token, ticket_id, status=None, category_id=None):
         headers={"Session-Token": token, "App-Token": APP_TOKEN, "Content-Type": "application/json"}
     )
 
-# === POST SOLUTION ===
+# ✅ NEW HELPER — AP EXTRAS SOLUTION CATEGORY FIELD
+def glpi_set_apextras_category(token, ticket_id, solution_cat_id=10):
+    """Set AP Extras 'Solution category' (plugin field) on the Ticket itself."""
+    body = {
+        "input": {
+            "id": int(ticket_id),
+            "plugin_fields_solutioncategoryfielddropdowns_id": int(solution_cat_id)
+        }
+    }
+    return requests.put(
+        f"{GLPI_URL}/Ticket/{int(ticket_id)}",
+        json=body,
+        headers={
+            "Session-Token": token,
+            "App-Token": APP_TOKEN,
+            "Content-Type": "application/json"
+        },
+        timeout=30
+    )
+
 def glpi_add_solution(token, ticket_id, html, solution_type_id=10):
     body = {
         "input": {
@@ -74,7 +93,6 @@ def glpi_add_solution(token, ticket_id, html, solution_type_id=10):
             "items_id": int(ticket_id),
             "content": html,
             "solutiontypes_id": int(solution_type_id),
-            "plugin_fields_solutioncategoryfielddropdowns_id": 10,  # ✅ AP Extras Payment Remittance Advice
             "status": 5
         }
     }
@@ -85,15 +103,13 @@ def glpi_add_solution(token, ticket_id, html, solution_type_id=10):
         timeout=30
     )
 
-# === POST FOLLOW-UP (comment) ===
 def glpi_add_followup(token, ticket_id, html):
     body = {
         "input": {
             "itemtype": "Ticket",
             "items_id": int(ticket_id),
             "content": html,
-            "solutiontypes_id": 10,
-            "plugin_fields_solutioncategoryfielddropdowns_id": 10  # ✅ AP Extras Payment Remittance Advice
+            "solutiontypes_id": 10
         }
     }
     return requests.post(
@@ -247,10 +263,14 @@ if pay_file:
 
             with st.spinner("Posting to GLPI..."):
                 glpi_update_ticket(token, ticket_id, status=5, category_id=int(category_id))
+
+                # ✅ NEW CALL: Set AP Extras category to Payment Remittance Advice (10)
+                glpi_set_apextras_category(token, ticket_id, solution_cat_id=10)
+
                 glpi_assign_userid(token, ticket_id, user_id)
                 resp_sol = glpi_add_solution(token, ticket_id, html_message, solution_type_id=10)
 
-                if resp_sol.status_code == 400 or "already solved" in resp_sol.text:
+                if resp_sol.status_code == 400 or "already solved" in resp_sol.text.lower():
                     st.warning("⚠️ Ticket already solved — posting as comment instead.")
                     resp_sol = glpi_add_followup(token, ticket_id, html_message)
 
