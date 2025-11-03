@@ -1,5 +1,5 @@
 # ==========================================================
-# The Remitator — GLPI Integration (FINAL Production Version)
+# The Remitator — GLPI Integration (Final UI + Correct ITILSolution + Assign to real user)
 # ==========================================================
 import os, re, requests
 import pandas as pd
@@ -102,14 +102,8 @@ if pay_file:
     df = pd.read_excel(pay_file)
     df.columns = [c.strip() for c in df.columns]
     df = df.loc[:, ~df.columns.duplicated()]
-
-    pay_code = st.text_input("🔎 Payment Code:")
-    if not pay_code: st.stop()
-
-    subset = df[df["Payment Document Code"].astype(str) == str(pay_code)].copy()
-    if subset.empty:
-        st.warning("⚠️ No rows found for this Payment Document Code.")
-        st.stop()
+    subset = df[df["Payment Document Code"].astype(str) == st.text_input("🔎 Payment Code:")].copy()
+    if subset.empty: st.stop()
 
     subset["Invoice Value"] = subset["Invoice Value"].apply(parse_amount)
     subset["Payment Value"] = subset["Payment Value"].apply(parse_amount)
@@ -148,7 +142,7 @@ if pay_file:
         c1, c2, c3 = st.columns(3)
         ticket_id = c1.text_input("Ticket ID", placeholder="101004")
         category_id = c2.text_input("Category ID", value="400")
-        user_id = c3.text_input("Assigned User ID", value="22487")
+        user_id = c3.text_input("Assigned User ID", placeholder="22487")
 
         html_table = display_df.to_html(index=False, border=0, justify="center", classes="table")
         html_message = f"""
@@ -162,11 +156,9 @@ if pay_file:
         st.markdown(html_message, unsafe_allow_html=True)
 
         if st.button("Send to GLPI"):
-            if not all([GLPI_URL, APP_TOKEN, USER_TOKEN]):
-                st.error("Missing GLPI credentials in .env."); st.stop()
+            if not all([GLPI_URL, APP_TOKEN, USER_TOKEN]): st.error("Missing GLPI credentials."); st.stop()
             token = glpi_login()
-            if not token:
-                st.error("Failed to start GLPI session."); st.stop()
+            if not token: st.error("Failed GLPI session."); st.stop()
 
             with st.spinner("Posting to GLPI..."):
                 r1 = glpi_update_ticket(token, ticket_id, status=5, category_id=int(category_id))
