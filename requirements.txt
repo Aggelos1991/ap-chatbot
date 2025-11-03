@@ -5,9 +5,6 @@ pandas
 numpy
 fastapi
 uvicorn
-pdf2image
-pytesseract
-
 
 # --- OpenAI + Environment ---
 openai
