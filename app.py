@@ -1,5 +1,5 @@
 # ==========================================================
-# The Remitator — FINAL FIX (Adds comment if already solved + AP Extras SolutionCategory=10)
+# The Remitator — FINAL FIX (Comment + AP Extras SolutionCategory=10)
 # ==========================================================
 import os, re, requests
 import pandas as pd
@@ -66,7 +66,7 @@ def glpi_update_ticket(token, ticket_id, status=None, category_id=None):
         headers={"Session-Token": token, "App-Token": APP_TOKEN, "Content-Type": "application/json"}
     )
 
-# Normal Solution post
+# === POST SOLUTION ===
 def glpi_add_solution(token, ticket_id, html, solution_type_id=10):
     body = {
         "input": {
@@ -74,6 +74,7 @@ def glpi_add_solution(token, ticket_id, html, solution_type_id=10):
             "items_id": int(ticket_id),
             "content": html,
             "solutiontypes_id": int(solution_type_id),
+            "plugin_fields_solutioncategoryfielddropdowns_id": 10,  # ✅ AP Extras Payment Remittance Advice
             "status": 5
         }
     }
@@ -84,14 +85,15 @@ def glpi_add_solution(token, ticket_id, html, solution_type_id=10):
         timeout=30
     )
 
-# 👇 FIXED — add comment + AP Extras SolutionCategory ID 10
+# === POST FOLLOW-UP (comment) ===
 def glpi_add_followup(token, ticket_id, html):
     body = {
         "input": {
             "itemtype": "Ticket",
             "items_id": int(ticket_id),
             "content": html,
-            "solutiontypes_id": 10   # ✅ ensure AP Extras sees Payment Remittance Advice
+            "solutiontypes_id": 10,
+            "plugin_fields_solutioncategoryfielddropdowns_id": 10  # ✅ AP Extras Payment Remittance Advice
         }
     }
     return requests.post(
@@ -253,7 +255,7 @@ if pay_file:
                     resp_sol = glpi_add_followup(token, ticket_id, html_message)
 
             if str(resp_sol.status_code).startswith("2"):
-                st.success(f"✅ Ticket #{ticket_id} updated — solution/comment added successfully.")
+                st.success(f"✅ Ticket #{ticket_id} updated — Solution/Comment added successfully (AP Extras ID 10).")
             else:
                 st.error(f"❌ GLPI error: {resp_sol.status_code} → {resp_sol.text}")
 else:
