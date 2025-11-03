@@ -1,5 +1,5 @@
 # ==========================================================
-# 🦅 DataFalcon Pro — Hybrid GPT + OCR Vendor Statement Extractor
+# 🦅 DataFalcon Pro — Hybrid GPT + OCR Vendor Statement Extractor (FINAL macOS FIX)
 # ==========================================================
 import os, re, json
 import pdfplumber
@@ -12,10 +12,18 @@ from openai import OpenAI
 import pytesseract
 from pdf2image import convert_from_bytes
 from PIL import Image
+import shutil
 
-# --- Ensure Poppler path for macOS/Homebrew ---
-os.environ["PATH"] += os.pathsep + "/opt/homebrew/bin"
-os.environ["PATH"] += os.pathsep + "/opt/homebrew/Cellar/poppler/25.10.0/bin"  # explicit path
+# ==========================================================
+# POPPLER CONFIG (critical for macOS)
+# ==========================================================
+# Hard-code Poppler path for macOS/Homebrew
+POPPLER_PATH = "/opt/homebrew/bin"  # <- update if different
+os.environ["PATH"] = POPPLER_PATH + os.pathsep + os.environ["PATH"]
+
+# Quick sanity check
+if not shutil.which("pdftoppm"):
+    st.warning(f"⚠️ Poppler binary not found in PATH. Expected at: {POPPLER_PATH}")
 
 # ==========================================================
 # CONFIGURATION
@@ -60,14 +68,43 @@ def normalize_number(value):
         return ""
 
 # ==========================================================
-# HYBRID TEXT EXTRACTOR (OCR + TEXT)
+# OCR EXTRACTION (Robust)
+# ==========================================================
+def ocr_extract(pdf_bytes):
+    """Perform OCR extraction with explicit Poppler path"""
+    lines = []
+    try:
+        st.info("📸 Starting OCR extraction (Poppler + Tesseract)...")
+        images = convert_from_bytes(
+            pdf_bytes,
+            dpi=300,
+            fmt="png",
+            poppler_path=POPPLER_PATH
+        )
+
+        for i, img in enumerate(images):
+            with st.status(f"OCR Page {i+1}/{len(images)}") as status:
+                status.write(f"Reading page {i+1}…")
+                text = pytesseract.image_to_string(img, lang="spa+eng", config="--psm 6")
+                for line in text.split("\n"):
+                    if line.strip():
+                        lines.append(line.strip())
+                status.update(label=f"Page {i+1} done ✅", state="complete")
+        st.success(f"OCR finished — {len(lines)} lines extracted.")
+    except Exception as e:
+        st.error(f"❌ OCR failed: {e}")
+        st.info(f"🧩 Poppler tried from: {POPPLER_PATH}")
+    return lines
+
+# ==========================================================
+# HYBRID EXTRACTOR (Text + OCR)
 # ==========================================================
 def extract_raw_lines(uploaded_pdf):
-    """Extract all text lines — OCR fallback for scanned PDFs."""
+    """Extract text from PDF; use OCR if no text layer."""
     all_lines = []
     pdf_bytes = uploaded_pdf.getvalue()
 
-    # Try fast text extraction
+    # 1️⃣ Try searchable text extraction
     with pdfplumber.open(uploaded_pdf) as pdf:
         sample_text = any(page.extract_text() for page in pdf.pages[:3] if page.extract_text())
 
@@ -83,40 +120,13 @@ def extract_raw_lines(uploaded_pdf):
                     if clean:
                         all_lines.append(clean)
     else:
-        # OCR fallback
         st.warning("📸 No text layer found → switching to OCR (slower, 1–3 min)")
-        with st.spinner("Running OCR on every page..."):
-            try:
-                images = convert_from_bytes(
-                    pdf_bytes,
-                    dpi=300,
-                    fmt="png",
-                    thread_count=4,
-                    poppler_path="/opt/homebrew/Cellar/poppler/25.10.0/bin"  # adjust if needed
-                )
-                for i, img in enumerate(images):
-                    with st.status(f"OCR Page {i+1}/{len(images)}") as status:
-                        status.write(f"Reading page {i+1}…")
-                        text = pytesseract.image_to_string(
-                            img,
-                            lang="spa+eng",
-                            config="--psm 6"
-                        )
-                        for line in text.split("\n"):
-                            clean = " ".join(line.split())
-                            if clean:
-                                all_lines.append(clean)
-                        status.update(label=f"Page {i+1} completed", state="complete")
-                st.success(f"OCR finished → {len(all_lines)} lines extracted!")
-            except Exception as e:
-                st.error(f"❌ OCR failed: {e}")
-                st.info("⚙️ Ensure Poppler and Tesseract are installed and accessible.")
-                return []
+        all_lines = ocr_extract(pdf_bytes)
 
     return all_lines
 
 # ==========================================================
-# GPT EXTRACTOR
+# GPT EXTRACTION
 # ==========================================================
 def parse_gpt_response(content, batch_num):
     json_match = re.search(r"\[.*\]", content, re.DOTALL)
@@ -139,11 +149,10 @@ def extract_with_gpt(lines):
         text_block = "\n".join(batch)
         prompt = f"""
 You are a financial data extractor specialized in Spanish vendor statements.
-
 Each line may include: Fecha, Documento, Descripción, DEBE, HABER, SALDO.
 Extract structured data and classify each entry as Invoice, Payment, or Credit Note.
 
-Output strict JSON array only (no explanations).
+Output strict JSON array only.
 
 FORMAT:
 [
