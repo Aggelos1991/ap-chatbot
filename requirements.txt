@@ -3,14 +3,13 @@ streamlit
 plotly
 pandas
 numpy
-fastapi
-uvicorn
-pdfplumber==0.11.3
-pdf2image==1.17.0
-Pillow==10.4.0
-easyocr==1.7.1
-torch==2.4.0
-torchvision==0.19.0
+
+# --- OCR Engine (Spanish + Greek + English) ---
+easyocr
+torch
+torchvision
+pdf2image
+Pillow
 
 # --- OpenAI + Environment ---
 openai
@@ -19,25 +18,17 @@ python-dotenv
 # --- File Handling ---
 PyMuPDF
 pdfplumber
-Pillow
 xlsxwriter
 openpyxl
 aiofiles
 python-multipart
 requests
 
-# --- Light OCR Option (Fallback) ---
-opencv-python-headless
-pytesseract==0.3.13
-pdf2image==1.17.0
-Pillow==10.4.0
-easyocr
-
 # --- Data Processing / Matching ---
 fuzzywuzzy
 python-Levenshtein
 
-# --- FastAPI Backend (for automation endpoints) ---
+# --- FastAPI Backend (for OCR Worker / Automation) ---
 fastapi
 uvicorn
 
