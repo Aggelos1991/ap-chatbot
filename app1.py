@@ -5,10 +5,15 @@ import streamlit as st
 from io import BytesIO
 from openai import OpenAI
 
+
 # ====================== NEW OCR IMPORTS ======================
 import pytesseract
 from pdf2image import convert_from_bytes
 from PIL import Image
+
+import os
+os.environ["PATH"] += os.pathsep + "/opt/homebrew/bin"
+
 # ==========================================================
 
 # ==========================================================
