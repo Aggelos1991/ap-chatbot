@@ -1,5 +1,5 @@
 # ==========================================================
-# The Remitator — FINAL FIX (✅ GLPI Solution Post + Ticket ID Safe)
+# The Remitator — FINAL FIX (GLPI Solution Post + Ticket ID Guard)
 # ==========================================================
 import os, re, requests
 import pandas as pd
@@ -66,39 +66,26 @@ def glpi_update_ticket(token, ticket_id, status=None, category_id=None):
         headers={"Session-Token": token, "App-Token": APP_TOKEN, "Content-Type": "application/json"}
     )
 
-# ✅ FIXED — Correct endpoint + field names for Solution
+# Correct endpoint + field names for Solution
 def glpi_add_solution(token, ticket_id, html, solution_type_id=10):
-    """
-    Posts the HTML text as a proper GLPI Solution (like pressing Solution → Add)
-    """
     body = {
         "input": {
             "itemtype": "Ticket",
             "items_id": int(ticket_id),
             "content": html,
-            "solutiontypes_id": int(solution_type_id),
+            "solutiontypes_id": int(solution_type_id),  # Payment Remittance Advice (10)
             "status": 5
         }
     }
-
     return requests.post(
         f"{GLPI_URL}/ITILSolution",
         json=body,
-        headers={
-            "Session-Token": token,
-            "App-Token": APP_TOKEN,
-            "Content-Type": "application/json"
-        },
+        headers={"Session-Token": token, "App-Token": APP_TOKEN, "Content-Type": "application/json"},
         timeout=30
     )
 
-# ✅ FIXED — Safe numeric conversion for ticket_id
 def glpi_assign_userid(token, ticket_id, user_id):
-    try:
-        tid = int(str(ticket_id).strip())
-    except ValueError:
-        raise ValueError(f"Invalid ticket ID: {ticket_id!r}. Please ensure it's numeric.")
-
+    tid = int(str(ticket_id).strip())
     body = {
         "input": {
             "tickets_id": tid,
@@ -107,15 +94,10 @@ def glpi_assign_userid(token, ticket_id, user_id):
             "use_notification": 1
         }
     }
-
     return requests.post(
         f"{GLPI_URL}/Ticket/{tid}/Ticket_User",
         json=body,
-        headers={
-            "Session-Token": token,
-            "App-Token": APP_TOKEN,
-            "Content-Type": "application/json"
-        },
+        headers={"Session-Token": token, "App-Token": APP_TOKEN, "Content-Type": "application/json"},
         timeout=30
     )
 
@@ -228,9 +210,18 @@ if pay_file:
         st.markdown(html_message, unsafe_allow_html=True)
 
         if st.button("Send to GLPI"):
-            if not all([GLPI_URL, APP_TOKEN, USER_TOKEN]): st.error("Missing GLPI credentials."); st.stop()
+            # >>> ONLY CHANGE ADDED: validate ticket_id BEFORE any API call
+            if not str(ticket_id).strip().isdigit():
+                st.error("❌ Invalid or empty Ticket ID. Please enter a numeric ID.")
+                st.stop()
+            # <<<
+
+            if not all([GLPI_URL, APP_TOKEN, USER_TOKEN]):
+                st.error("Missing GLPI credentials."); st.stop()
+
             token = glpi_login()
-            if not token: st.error("Failed GLPI session."); st.stop()
+            if not token:
+                st.error("Failed GLPI session."); st.stop()
 
             user_id = USER_MAP.get(assigned_email.lower())
             if not user_id:
@@ -243,7 +234,7 @@ if pay_file:
                 resp_sol = glpi_add_solution(token, ticket_id, html_message, solution_type_id=10)
 
             if str(resp_sol.status_code).startswith("2"):
-                st.success(f"✅ Ticket #{ticket_id} solved, category {category_id}, assigned to {assigned_email}, and email template added as comment.")
+                st.success(f"✅ Ticket #{ticket_id} solved, category {category_id}, assigned to {assigned_email}, and email template added as Solution.")
             else:
                 st.error(f"❌ GLPI error: {resp_sol.status_code} → {resp_sol.text}")
 else:
