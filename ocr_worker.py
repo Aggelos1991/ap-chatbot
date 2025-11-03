@@ -1,31 +1,31 @@
 from fastapi import FastAPI, File, UploadFile
 from fastapi.responses import JSONResponse
+import easyocr
 from pdf2image import convert_from_bytes
-import pytesseract
 from PIL import Image
 from io import BytesIO
 
-app = FastAPI(title="DataFalcon OCR Worker — Cloud Edition (Portable Tesseract)")
+app = FastAPI(title="🦅 DataFalcon OCR Worker — Cloud OCR (Spanish + Greek + English)")
 
 @app.get("/")
 def root():
-    return {"status": "online", "engine": "Tesseract Portable", "languages": "spa+ell+eng"}
+    return {"status": "online", "engine": "EasyOCR Cloud", "languages": "spa+ell+eng"}
 
 @app.post("/ocr")
 async def ocr(file: UploadFile = File(...)):
     try:
         pdf_bytes = await file.read()
+        reader = easyocr.Reader(['es', 'el', 'en'], gpu=False)  # lightweight CPU mode
 
-        # Convert each PDF page to image
-        images = convert_from_bytes(pdf_bytes, dpi=200, fmt="png")
+        # Convert PDF pages to images
+        images = convert_from_bytes(pdf_bytes, dpi=200)
         text = ""
-
         for i, img in enumerate(images):
-            extracted = pytesseract.image_to_string(img, lang="spa+ell+eng", config="--psm 6")
-            text += extracted + "\n"
+            result = reader.readtext(img, detail=0, paragraph=True)
+            text += "\n".join(result) + "\n"
 
         if not text.strip():
-            return JSONResponse({"error": "No text found"}, status_code=422)
+            return JSONResponse({"error": "No text detected"}, status_code=422)
 
         return JSONResponse({"text": text})
 
