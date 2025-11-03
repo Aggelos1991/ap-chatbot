@@ -32,7 +32,7 @@ pytesseract==0.3.13
 pdf2image==1.17.0
 poppler-utils
 tesseract-ocr
-tesseract-ocr-spa   # Spanish OCR language support
+tesseract-ocr-spa  # Spanish OCR language support
 
 # ==========================================================
 # 🧮 DATA PROCESSING / MATCHING
