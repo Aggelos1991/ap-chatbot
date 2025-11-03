@@ -1,5 +1,5 @@
 # ==========================================================
-# The Remitator — FINAL FIX (GLPI Solution Post + Ticket ID Guard)
+# The Remitator — FINAL FIX (Adds comment if already solved + keeps Solution ID 10)
 # ==========================================================
 import os, re, requests
 import pandas as pd
@@ -66,19 +66,29 @@ def glpi_update_ticket(token, ticket_id, status=None, category_id=None):
         headers={"Session-Token": token, "App-Token": APP_TOKEN, "Content-Type": "application/json"}
     )
 
-# Correct endpoint + field names for Solution
+# Normal Solution post
 def glpi_add_solution(token, ticket_id, html, solution_type_id=10):
     body = {
         "input": {
             "itemtype": "Ticket",
             "items_id": int(ticket_id),
             "content": html,
-            "solutiontypes_id": int(solution_type_id),  # Payment Remittance Advice (10)
+            "solutiontypes_id": int(solution_type_id),
             "status": 5
         }
     }
     return requests.post(
         f"{GLPI_URL}/ITILSolution",
+        json=body,
+        headers={"Session-Token": token, "App-Token": APP_TOKEN, "Content-Type": "application/json"},
+        timeout=30
+    )
+
+# 👇 NEW — fallback: add a comment if Solution blocked
+def glpi_add_followup(token, ticket_id, html):
+    body = {"input": {"itemtype": "Ticket", "items_id": int(ticket_id), "content": html}}
+    return requests.post(
+        f"{GLPI_URL}/Ticket/{ticket_id}/ITILFollowup",
         json=body,
         headers={"Session-Token": token, "App-Token": APP_TOKEN, "Content-Type": "application/json"},
         timeout=30
@@ -161,7 +171,6 @@ if pay_file:
                     "Matched?": "✅" if match else "❌"
                 })
 
-    # ===== TABLES =====
     valid_cn_df = pd.DataFrame([r for r in cn_rows if r["Invoice Value"] != 0])
     all_rows = pd.concat([summary, valid_cn_df], ignore_index=True)
     total_val = subset["Payment Value"].sum()
@@ -177,7 +186,6 @@ if pay_file:
             st.subheader("🔍 Debug breakdown — invoice vs. CN matching")
             st.dataframe(pd.DataFrame(debug_rows), use_container_width=True)
 
-        # Excel export
         wb = Workbook(); ws = wb.active; ws.title = "Final Summary"
         for r in dataframe_to_rows(display_df, index=False, header=True): ws.append(r)
         ws_hidden = wb.create_sheet("HiddenMeta")
@@ -210,11 +218,9 @@ if pay_file:
         st.markdown(html_message, unsafe_allow_html=True)
 
         if st.button("Send to GLPI"):
-            # >>> ONLY CHANGE ADDED: validate ticket_id BEFORE any API call
             if not str(ticket_id).strip().isdigit():
                 st.error("❌ Invalid or empty Ticket ID. Please enter a numeric ID.")
                 st.stop()
-            # <<<
 
             if not all([GLPI_URL, APP_TOKEN, USER_TOKEN]):
                 st.error("Missing GLPI credentials."); st.stop()
@@ -233,8 +239,13 @@ if pay_file:
                 glpi_assign_userid(token, ticket_id, user_id)
                 resp_sol = glpi_add_solution(token, ticket_id, html_message, solution_type_id=10)
 
+                # 👇 Fallback if ticket already solved
+                if resp_sol.status_code == 400 or "already solved" in resp_sol.text:
+                    st.warning("⚠️ Ticket already solved — posting as comment instead.")
+                    resp_sol = glpi_add_followup(token, ticket_id, html_message)
+
             if str(resp_sol.status_code).startswith("2"):
-                st.success(f"✅ Ticket #{ticket_id} solved, category {category_id}, assigned to {assigned_email}, and email template added as Solution.")
+                st.success(f"✅ Ticket #{ticket_id} updated — solution/comment added successfully.")
             else:
                 st.error(f"❌ GLPI error: {resp_sol.status_code} → {resp_sol.text}")
 else:
