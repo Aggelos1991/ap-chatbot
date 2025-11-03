@@ -1,5 +1,5 @@
 # ==========================================================
-# The Remitator — GLPI Integration (Final+ Assign + Fix Solution)
+# The Remitator — GLPI Integration (FINAL Production Version)
 # ==========================================================
 import os, re, requests
 import pandas as pd
@@ -57,41 +57,39 @@ def glpi_login():
                      headers={"Authorization": f"user_token {USER_TOKEN}", "App-Token": APP_TOKEN})
     return r.json().get("session_token")
 
-def glpi_update_ticket(token, ticket_id, status=None, category_id=None):
-    payload = {"input": {}}
-    if status is not None: payload["input"]["status"] = status
-    if category_id is not None: payload["input"]["itilcategories_id"] = category_id
+def glpi_add_solution(token, ticket_id, html, solution_type_id=10):
+    body = {
+        "input": {
+            "itemtype": "Ticket",
+            "items_id": int(ticket_id),
+            "solutiontypes_id": int(solution_type_id),
+            "content": html
+        }
+    }
+    return requests.post(
+        f"{GLPI_URL}/ITILSolution/",
+        json=body,
+        headers={"Session-Token": token, "App-Token": APP_TOKEN, "Content-Type": "application/json"}
+    )
+
+def glpi_update_ticket(token, ticket_id, status=5, category_id=400):
+    payload = {"input": {"status": status, "itilcategories_id": category_id}}
     return requests.put(
         f"{GLPI_URL}/Ticket/{ticket_id}",
         json=payload,
         headers={"Session-Token": token, "App-Token": APP_TOKEN, "Content-Type": "application/json"}
     )
 
-def glpi_add_solution(token, ticket_id, html, solution_type_id=10):
+def glpi_assign_user(token, ticket_id, user_id):
     body = {
         "input": {
             "tickets_id": int(ticket_id),
-            "content": html,
-            "solutiontypes_id": int(solution_type_id)
+            "users_id": int(user_id),
+            "type": 2  # Assigned to
         }
     }
     return requests.post(
-        f"{GLPI_URL}/Ticket/{ticket_id}/ITILSolution",
-        json=body,
-        headers={"Session-Token": token, "App-Token": APP_TOKEN, "Content-Type": "application/json"}
-    )
-
-def glpi_assign_user(token, ticket_id, assigned_email):
-    body = {
-        "input": {
-            "tickets_id": int(ticket_id),
-            "use_notification": 1,
-            "type": 2,  # Assigned To
-            "alternative_email": assigned_email
-        }
-    }
-    return requests.post(
-        f"{GLPI_URL}/Ticket/{ticket_id}/Ticket_User",
+        f"{GLPI_URL}/Ticket/{ticket_id}/Ticket_User/",
         json=body,
         headers={"Session-Token": token, "App-Token": APP_TOKEN, "Content-Type": "application/json"}
     )
@@ -104,8 +102,14 @@ if pay_file:
     df = pd.read_excel(pay_file)
     df.columns = [c.strip() for c in df.columns]
     df = df.loc[:, ~df.columns.duplicated()]
-    subset = df[df["Payment Document Code"].astype(str) == st.text_input("🔎 Payment Code:")].copy()
-    if subset.empty: st.stop()
+
+    pay_code = st.text_input("🔎 Payment Code:")
+    if not pay_code: st.stop()
+
+    subset = df[df["Payment Document Code"].astype(str) == str(pay_code)].copy()
+    if subset.empty:
+        st.warning("⚠️ No rows found for this Payment Document Code.")
+        st.stop()
 
     subset["Invoice Value"] = subset["Invoice Value"].apply(parse_amount)
     subset["Payment Value"] = subset["Payment Value"].apply(parse_amount)
@@ -113,8 +117,8 @@ if pay_file:
     vendor_email_in_file = subset["Supplier's Email"].iloc[0]
     summary = subset[["Alt. Document", "Invoice Value"]].copy()
 
-    # CN Logic
-    cn_rows, debug_rows, unmatched_invoices = [], [], []
+    # CN Logic simplified
+    cn_rows = []
     if cn_file:
         cn = pd.read_excel(cn_file)
         cn.columns = [c.strip() for c in cn.columns]
@@ -123,25 +127,14 @@ if pay_file:
         cn_val_col = find_col(cn, ["Amount", "Debit", "Charge", "Cargo", "DEBE", "Invoice Value", "Invoice Value (€)"])
         if cn_alt_col and cn_val_col:
             cn[cn_val_col] = cn[cn_val_col].apply(parse_amount)
-            used = set()
             for _, row in subset.iterrows():
-                inv = str(row["Alt. Document"])
                 diff = round(row["Payment Value"] - row["Invoice Value"], 2)
-                match = False
-                for i, r in cn.iterrows():
-                    if i in used: continue
+                for _, r in cn.iterrows():
                     if round(abs(r[cn_val_col]), 2) == round(abs(diff), 2):
                         cn_rows.append({"Alt. Document": f"{r[cn_alt_col]} (CN)", "Invoice Value": -abs(r[cn_val_col])})
-                        used.add(i); match=True; break
-                if not match and abs(diff) > 0.01:
-                    unmatched_invoices.append({"Alt. Document": f"{inv} (Unmatched Diff)", "Invoice Value": diff})
-                debug_rows.append({
-                    "Invoice": inv, "Invoice Value": row["Invoice Value"],
-                    "Payment Value": row["Payment Value"], "Difference": diff,
-                    "Matched?": "✅" if match else "❌"
-                })
+                        break
 
-    all_rows = pd.concat([summary, pd.DataFrame(cn_rows), pd.DataFrame(unmatched_invoices)], ignore_index=True)
+    all_rows = pd.concat([summary, pd.DataFrame(cn_rows)], ignore_index=True)
     total_val = subset["Payment Value"].sum()
     all_rows.loc[len(all_rows)] = ["TOTAL", total_val]
     all_rows["Invoice Value (€)"] = all_rows["Invoice Value"].apply(lambda v: f"€{v:,.2f}")
@@ -150,14 +143,12 @@ if pay_file:
     tab1, tab2 = st.tabs(["📋 Summary", "🔗 GLPI"])
     with tab1:
         st.dataframe(display_df, use_container_width=True)
-        if debug_rows:
-            st.dataframe(pd.DataFrame(debug_rows), use_container_width=True)
 
     with tab2:
         c1, c2, c3 = st.columns(3)
         ticket_id = c1.text_input("Ticket ID", placeholder="101004")
         category_id = c2.text_input("Category ID", value="400")
-        assigned_email = c3.text_input("Assign To Email", placeholder="finance@ikosgroup.com")
+        user_id = c3.text_input("Assigned User ID", value="22487")
 
         html_table = display_df.to_html(index=False, border=0, justify="center", classes="table")
         html_message = f"""
@@ -171,18 +162,20 @@ if pay_file:
         st.markdown(html_message, unsafe_allow_html=True)
 
         if st.button("Send to GLPI"):
-            if not all([GLPI_URL, APP_TOKEN, USER_TOKEN]): st.error("Missing GLPI credentials."); st.stop()
+            if not all([GLPI_URL, APP_TOKEN, USER_TOKEN]):
+                st.error("Missing GLPI credentials in .env."); st.stop()
             token = glpi_login()
-            if not token: st.error("Failed GLPI session."); st.stop()
+            if not token:
+                st.error("Failed to start GLPI session."); st.stop()
 
-            with st.spinner("Sending to GLPI..."):
-                glpi_update_ticket(token, ticket_id, status=5, category_id=int(category_id))
-                glpi_assign_user(token, ticket_id, assigned_email)
-                sol = glpi_add_solution(token, ticket_id, html_message, solution_type_id=10)
+            with st.spinner("Posting to GLPI..."):
+                r1 = glpi_update_ticket(token, ticket_id, status=5, category_id=int(category_id))
+                r2 = glpi_assign_user(token, ticket_id, user_id)
+                r3 = glpi_add_solution(token, ticket_id, html_message, solution_type_id=10)
 
-            if str(sol.status_code).startswith("2"):
-                st.success(f"✅ Ticket #{ticket_id} solved, assigned to {assigned_email}, and solution added.")
+            if all(str(r.status_code).startswith("2") for r in [r1, r2, r3]):
+                st.success(f"✅ Ticket #{ticket_id} solved, category {category_id}, assigned to {user_id}, and solution posted (type 10).")
             else:
-                st.error(f"❌ GLPI error: {sol.status_code} → {sol.text}")
+                st.error(f"❌ GLPI error: {[r.status_code for r in [r1, r2, r3]]}")
 else:
     st.info("📂 Upload Payment Excel to begin.")
