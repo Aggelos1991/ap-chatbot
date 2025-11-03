@@ -1,5 +1,5 @@
 # ==========================================================
-# The Remitator — GLPI Solution Sync (Final Clean)
+# The Remitator — GLPI Solution Sync (Final • CN Restored)
 # ==========================================================
 import os, re, requests
 import pandas as pd
@@ -29,7 +29,7 @@ st.title("💀 The Remitator — Hasta la vista, payment remittance. 💀")
 
 # ---------- GLPI ENV ----------
 load_dotenv()
-GLPI_URL   = os.getenv("GLPI_URL")
+GLPI_URL   = os.getenv("GLPI_URL")        # e.g. https://glpi.domain/apirest.php
 APP_TOKEN  = os.getenv("APP_TOKEN")
 USER_TOKEN = os.getenv("USER_TOKEN")
 
@@ -116,47 +116,126 @@ if pay_file:
         st.warning("⚠️ No rows found for this Payment Document Code.")
         st.stop()
 
-    cn = None
-    if cn_file:
-        try:
-            cn = pd.read_excel(cn_file)
-            cn.columns = [c.strip() for c in cn.columns]
-            cn = cn.loc[:, ~cn.columns.duplicated()]
-            st.info("📄 Credit Note file loaded and will be applied.")
-        except Exception as e:
-            st.warning(f"⚠️ Error loading CN file (will skip CN logic): {e}")
-            cn = None
-    else:
-        st.info("ℹ️ No Credit Note file uploaded — showing payments only.")
-
+    # Parse amounts
     subset["Invoice Value"] = subset["Invoice Value"].apply(parse_amount)
     subset["Payment Value"] = subset["Payment Value"].apply(parse_amount)
 
     vendor = subset["Supplier Name"].iloc[0]
     vendor_email_in_file = subset["Supplier's Email"].iloc[0]
 
+    # Base summary (invoices)
     summary = subset[["Alt. Document", "Invoice Value"]].copy()
-    cn_rows, unmatched_invoices = [], []
 
-    # ----- CN match simplified -----
-    if cn is not None:
-        cn_alt_col = find_col(cn, ["Alt.Document", "Alt. Document"])
-        cn_val_col = find_col(cn, ["Amount", "Debit", "Charge", "Cargo", "DEBE"])
-        if cn_alt_col and cn_val_col:
-            cn[cn_val_col] = cn[cn_val_col].apply(parse_amount)
-            cn = cn[cn[cn_val_col].abs() > 0.01].reset_index(drop=True)
+    # ===== RESTORED CN LOGIC + DEBUG =====
+    cn_rows, debug_rows, unmatched_invoices = [], [], []
+    unmatched_cns_df = pd.DataFrame()
 
-    # ----- Combine summary -----
+    if cn_file:
+        try:
+            cn = pd.read_excel(cn_file)
+            cn.columns = [c.strip() for c in cn.columns]
+            cn = cn.loc[:, ~cn.columns.duplicated()]
+
+            cn_alt_col = find_col(cn, ["Alt.Document", "Alt. Document"])
+            cn_val_col = find_col(cn, ["Amount", "Debit", "Charge", "Cargo", "DEBE", "Invoice Value", "Invoice Value (€)"])
+
+            if cn_alt_col and cn_val_col:
+                cn[cn_val_col] = cn[cn_val_col].apply(parse_amount)
+                cn = cn[cn[cn_val_col].abs() > 0.01].reset_index(drop=True)
+                cn = cn.drop_duplicates(subset=[cn_alt_col], keep="last").reset_index(drop=True)
+
+                used_indices = set()
+
+                for _, row in subset.iterrows():
+                    inv = str(row["Alt. Document"])
+                    payment_val = row["Payment Value"]
+                    invoice_val = row["Invoice Value"]
+                    diff = round(payment_val - invoice_val, 2)
+                    matched_cns = []
+                    if abs(diff) < 0.01:
+                        debug_rows.append({
+                            "Invoice": inv, "Invoice Value": invoice_val, "Payment Value": payment_val,
+                            "Difference": diff, "Matched CNs": "—", "Matched?": "✅ (no diff)"
+                        })
+                        continue
+
+                    match_found = False
+
+                    # 1) Single CN exact match
+                    for i, r in cn.iterrows():
+                        if i in used_indices: continue
+                        if round(abs(r[cn_val_col]), 2) == round(abs(diff), 2):
+                            cn_no = str(r[cn_alt_col])
+                            cn_amt = -abs(r[cn_val_col]) if diff < 0 else abs(r[cn_val_col]) * (-1)
+                            # Regardless of sign, present CN as negative adjustment
+                            cn_amt = -abs(r[cn_val_col])
+                            cn_rows.append({"Alt. Document": f"{cn_no} (CN)", "Invoice Value": cn_amt})
+                            matched_cns.append(cn_no)
+                            used_indices.add(i)
+                            match_found = True
+                            break
+
+                    # 2) 2–3 CN combinations
+                    if not match_found:
+                        available = [(i, abs(r[cn_val_col]), r) for i, r in cn.iterrows() if i not in used_indices]
+                        for n in [2, 3]:
+                            for combo in combinations(available, n):
+                                total = round(sum(x[1] for x in combo), 2)
+                                if abs(total - abs(diff)) < 0.05:
+                                    for i, _, r in combo:
+                                        cn_no = str(r[cn_alt_col])
+                                        cn_amt = -abs(r[cn_val_col])
+                                        cn_rows.append({"Alt. Document": f"{cn_no} (CN)", "Invoice Value": cn_amt})
+                                        matched_cns.append(cn_no)
+                                        used_indices.add(i)
+                                    match_found = True
+                                    break
+                            if match_found: break
+
+                    # 3) If still not matched, record unmatched diff
+                    if not match_found:
+                        unmatched_invoices.append({
+                            "Alt. Document": f"{inv} (Unmatched Diff)",
+                            "Invoice Value": diff
+                        })
+
+                    debug_rows.append({
+                        "Invoice": inv,
+                        "Invoice Value": invoice_val,
+                        "Payment Value": payment_val,
+                        "Difference": diff,
+                        "Matched CNs": ", ".join(matched_cns) if matched_cns else "—",
+                        "Matched?": "✅" if match_found else "❌"
+                    })
+
+                # Unused CNs table
+                unmatched_cns_df = cn.loc[~cn.index.isin(used_indices), [cn_alt_col, cn_val_col]].copy()
+                unmatched_cns_df.rename(columns={cn_alt_col: "CN Number", cn_val_col: "Amount"}, inplace=True)
+                unmatched_cns_df["Amount"] = unmatched_cns_df["Amount"].apply(lambda v: f"€{v:,.2f}")
+
+                st.success(f"✅ Applied {len(cn_rows)} CNs (single/combo)")
+            else:
+                st.warning("⚠️ CN file missing expected columns ('Alt.Document', 'Amount/Debit'). CN logic skipped.")
+        except Exception as e:
+            st.warning(f"⚠️ Error loading CN file (will skip CN logic): {e}")
+
+    # ===== Combine into final summary (Invoices + CNs + Unmatched Diffs) =====
     all_rows = summary.copy()
-    if cn_rows: all_rows = pd.concat([all_rows, pd.DataFrame(cn_rows)], ignore_index=True)
-    if unmatched_invoices: all_rows = pd.concat([all_rows, pd.DataFrame(unmatched_invoices)], ignore_index=True)
+    if cn_rows:
+        all_rows = pd.concat([all_rows, pd.DataFrame(cn_rows)], ignore_index=True)
+    if unmatched_invoices:
+        all_rows = pd.concat([all_rows, pd.DataFrame(unmatched_invoices)], ignore_index=True)
 
-    total_val = all_rows["Invoice Value"].sum()
+    # ✅ TOTAL should reflect actual payment sent
+    total_val = subset["Payment Value"].sum()
     all_rows = pd.concat([all_rows, pd.DataFrame([{"Alt. Document": "TOTAL", "Invoice Value": total_val}])], ignore_index=True)
-    all_rows["Invoice Value (€)"] = all_rows["Invoice Value"].apply(lambda v: f"€{v:,.2f}")
-    display_df = all_rows[["Alt. Document", "Invoice Value (€)"]]
 
-    # ----- Tabs -----
+    # Pretty display
+    display_df = all_rows.copy()
+    display_df["Invoice Value (€)"] = display_df["Invoice Value"].apply(lambda v: f"€{v:,.2f}")
+    display_df = display_df[["Alt. Document", "Invoice Value (€)"]]
+
+    # ===== Tabs =====
     tab1, tab2 = st.tabs(["📋 Summary", "🔗 GLPI"])
     with tab1:
         st.subheader(f"Final Summary for Payment Code: {pay_code}")
@@ -164,13 +243,37 @@ if pay_file:
         st.write(f"**Vendor Email (from file):** {vendor_email_in_file}")
         st.dataframe(display_df, use_container_width=True)
 
+        # 🔍 Debug table restored
+        if debug_rows:
+            st.subheader("🔍 Debug breakdown — invoice vs. CN matching")
+            st.dataframe(pd.DataFrame(debug_rows), use_container_width=True)
+        if not unmatched_cns_df.empty:
+            st.subheader("🧾 Unused CNs")
+            st.dataframe(unmatched_cns_df, use_container_width=True)
+
+        # Optional Excel export of the display table + meta
+        wb = Workbook(); ws = wb.active; ws.title = "Final Summary"
+        for r in dataframe_to_rows(display_df, index=False, header=True): ws.append(r)
+        ws_hidden = wb.create_sheet("HiddenMeta")
+        meta = [["Vendor", vendor],["Vendor Email", vendor_email_in_file],["Payment Code", pay_code],
+                ["Exported At", datetime.now().strftime("%Y-%m-%d %H:%M:%S")]]
+        for row in meta: ws_hidden.append(row)
+        tab_ = Table(displayName="MetaTable", ref=f"A1:B{len(meta)}")
+        tab_.tableStyleInfo = TableStyleInfo(name="TableStyleMedium2", showRowStripes=True)
+        ws_hidden.add_table(tab_); ws_hidden.sheet_state = "hidden"
+        buf = BytesIO(); wb.save(buf); buf.seek(0)
+        st.download_button("💾 Download Excel Summary", buf,
+            file_name=f"{vendor}_Payment_{pay_code}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+    # ===== GLPI Tab =====
     with tab2:
         st.write("This will send the email (Spanish) with the table to GLPI as a **Solution** and mark the ticket **Solved** (Category 400, Solution Type 10).")
         c1, c2 = st.columns(2)
         ticket_id = c1.text_input("Ticket ID", placeholder="101004")
         category_id = c2.text_input("Category ID", value="400")
 
-        # Spanish message
+        # Spanish email body + table
         html_table = display_df.to_html(index=False, border=0, justify="center", classes="table")
         html_message = f"""
         <p><strong>Estimado proveedor,</strong></p>
@@ -185,16 +288,13 @@ if pay_file:
 
         if st.button("Send to GLPI"):
             if not all([GLPI_URL, APP_TOKEN, USER_TOKEN]):
-                st.error("Missing GLPI credentials in .env (GLPI_URL, APP_TOKEN, USER_TOKEN).")
-                st.stop()
+                st.error("Missing GLPI credentials in .env (GLPI_URL, APP_TOKEN, USER_TOKEN)."); st.stop()
             if not ticket_id.strip():
-                st.error("Ticket ID is required.")
-                st.stop()
+                st.error("Ticket ID is required."); st.stop()
 
             token = glpi_login()
             if not token:
-                st.error("Failed to start GLPI session. Check tokens/URL.")
-                st.stop()
+                st.error("Failed to start GLPI session. Check tokens/URL."); st.stop()
 
             with st.spinner("Updating ticket and posting solution..."):
                 glpi_update_ticket(token, ticket_id, status=5, category_id=int(category_id))
