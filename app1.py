@@ -1,48 +1,18 @@
 # ==========================================================
-# 🦅 DataFalcon Pro — Hybrid GPT + OCR Vendor Statement Extractor (FINAL macOS FIX)
+# 🦅 DataFalcon Pro — Hybrid GPT Vendor Statement Extractor (CLOUD SAFE)
 # ==========================================================
-import os, re, json, shutil, time
+import os, re, json
 import pdfplumber
 import pandas as pd
 import streamlit as st
 from io import BytesIO
 from openai import OpenAI
-from PIL import Image
-
-# --- OCR / Image Handling ---
-import pytesseract
-from pdf2image import convert_from_bytes
-
-# ==========================================================
-# POPPLER & TESSERACT CHECKS
-# ==========================================================
-POPPLER_PATH = "/opt/homebrew/bin"  # Update if Poppler installed elsewhere
-os.environ["PATH"] = POPPLER_PATH + os.pathsep + os.environ["PATH"]
-
-def check_dependencies():
-    """Ensure Poppler and Tesseract are installed and accessible."""
-    st.info("🧩 Checking OCR dependencies...")
-    pdftoppm_path = shutil.which("pdftoppm")
-    tesseract_path = shutil.which("tesseract")
-
-    if not pdftoppm_path:
-        st.error("❌ Poppler not found. Install via: brew install poppler")
-        st.stop()
-
-    if not tesseract_path:
-        st.error("❌ Tesseract not found. Install via: brew install tesseract")
-        st.stop()
-
-    st.success(f"✅ Poppler: {pdftoppm_path}")
-    st.success(f"✅ Tesseract: {tesseract_path}")
-
-check_dependencies()
 
 # ==========================================================
 # STREAMLIT CONFIG
 # ==========================================================
-st.set_page_config(page_title="🦅 DataFalcon Pro — Hybrid GPT Extractor", layout="wide")
-st.title("🦅 DataFalcon Pro — Hybrid GPT + OCR Extractor")
+st.set_page_config(page_title="🦅 DataFalcon Pro — Cloud Safe", layout="wide")
+st.title("🦅 DataFalcon Pro — Hybrid GPT Extractor (Cloud Version)")
 
 # ==========================================================
 # OPENAI CONFIG
@@ -63,7 +33,7 @@ PRIMARY_MODEL = "gpt-4o-mini"
 BACKUP_MODEL = "gpt-4o"
 
 # ==========================================================
-# HELPER FUNCTIONS
+# HELPERS
 # ==========================================================
 def normalize_number(value):
     """Normalize decimals like 1.234,56 → 1234.56"""
@@ -84,81 +54,29 @@ def normalize_number(value):
         return ""
 
 # ==========================================================
-# SAFE OCR EXTRACTION (Timeout Protected)
-# ==========================================================
-def safe_convert_from_bytes(pdf_bytes, timeout=60):
-    """Convert PDF → images with timeout to avoid infinite hang."""
-    from multiprocessing import Process, Queue
-    q = Queue()
-
-    def _worker(q):
-        try:
-            imgs = convert_from_bytes(
-                pdf_bytes, dpi=300, fmt="png", poppler_path=POPPLER_PATH
-            )
-            q.put(imgs)
-        except Exception as e:
-            q.put(e)
-
-    p = Process(target=_worker, args=(q,))
-    p.start()
-    p.join(timeout)
-    if p.is_alive():
-        p.terminate()
-        raise TimeoutError("Poppler conversion timed out — check Poppler install.")
-
-    result = q.get()
-    if isinstance(result, Exception):
-        raise result
-    return result
-
-
-def ocr_extract(pdf_bytes):
-    """Perform OCR extraction safely"""
-    lines = []
-    try:
-        st.info("📸 Starting OCR extraction (Poppler + Tesseract)...")
-        images = safe_convert_from_bytes(pdf_bytes)
-        for i, img in enumerate(images):
-            with st.status(f"OCR Page {i+1}/{len(images)}") as status:
-                status.write(f"Reading page {i+1}…")
-                text = pytesseract.image_to_string(img, lang="spa+eng", config="--psm 6")
-                for line in text.split("\n"):
-                    if line.strip():
-                        lines.append(line.strip())
-                status.update(label=f"Page {i+1} done ✅", state="complete")
-        st.success(f"OCR finished — {len(lines)} lines extracted.")
-    except Exception as e:
-        st.error(f"❌ OCR failed: {e}")
-        st.info(f"🧩 Poppler tried from: {POPPLER_PATH}")
-    return lines
-
-# ==========================================================
-# HYBRID TEXT + OCR EXTRACTION
+# TEXT EXTRACTION ONLY (CLOUD SAFE)
 # ==========================================================
 def extract_raw_lines(uploaded_pdf):
-    """Extract text from PDF; fallback to OCR if needed."""
+    """Extract text from PDF only — OCR disabled for Streamlit Cloud."""
     all_lines = []
-    pdf_bytes = uploaded_pdf.getvalue()
-
-    with pdfplumber.open(uploaded_pdf) as pdf:
-        sample_text = any(page.extract_text() for page in pdf.pages[:3] if page.extract_text())
-
-    if sample_text:
-        st.info("📄 Detected searchable PDF → using fast text extraction")
+    try:
         with pdfplumber.open(uploaded_pdf) as pdf:
+            text_found = False
             for page in pdf.pages:
                 text = page.extract_text()
-                if not text:
-                    continue
-                for line in text.split("\n"):
-                    clean = " ".join(line.split())
-                    if clean:
-                        all_lines.append(clean)
-    else:
-        st.warning("📸 No text layer found → switching to OCR (slower, 1–3 min)")
-        all_lines = ocr_extract(pdf_bytes)
+                if text:
+                    text_found = True
+                    for line in text.split("\n"):
+                        clean = " ".join(line.split())
+                        if clean:
+                            all_lines.append(clean)
 
+        if not text_found:
+            st.warning("📸 No text layer found — OCR is disabled in Cloud mode. Please upload a searchable PDF.")
+        else:
+            st.success(f"✅ Extracted {len(all_lines)} lines of text.")
+    except Exception as e:
+        st.error(f"❌ PDF extraction error: {e}")
     return all_lines
 
 # ==========================================================
@@ -187,6 +105,7 @@ You are a financial data extractor specialized in Spanish vendor statements.
 Each line may include: Fecha, Documento, Descripción, DEBE, HABER, SALDO.
 Extract structured data and classify each entry as Invoice, Payment, or Credit Note.
 Output strict JSON array only.
+
 FORMAT:
 [
   {{
@@ -197,6 +116,7 @@ FORMAT:
     "Credit": "HABER amount or empty"
   }}
 ]
+
 Text:
 {text_block}
 """
@@ -260,13 +180,12 @@ def to_excel_bytes(records):
 uploaded_pdf = st.file_uploader("📂 Upload Vendor Statement (PDF)", type=["pdf"])
 
 if uploaded_pdf:
-    with st.spinner("📄 Extracting text (OCR-enabled)..."):
+    with st.spinner("📄 Extracting text from PDF..."):
         lines = extract_raw_lines(uploaded_pdf)
 
-    st.success(f"✅ Found {len(lines)} lines of text!")
     st.text_area("📋 Preview (first 30 lines):", "\n".join(lines[:30]), height=300)
 
-    if st.button("🤖 Run Hybrid Extraction", type="primary"):
+    if lines and st.button("🤖 Run GPT Extraction", type="primary"):
         with st.spinner("Analyzing with GPT models..."):
             data = extract_with_gpt(lines)
 
