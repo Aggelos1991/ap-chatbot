@@ -3,7 +3,7 @@ from fastapi.responses import JSONResponse
 from pdf2image import convert_from_bytes
 import pytesseract
 
-app = FastAPI()
+app = FastAPI()  # This must exist!
 
 @app.post("/ocr")
 async def ocr(file: UploadFile = File(...)):
