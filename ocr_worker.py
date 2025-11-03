@@ -1,37 +1,31 @@
 from fastapi import FastAPI, File, UploadFile
 from fastapi.responses import JSONResponse
-import easyocr
-import pdfplumber
+from pdf2image import convert_from_bytes
+import pytesseract
 from PIL import Image
 from io import BytesIO
 
-app = FastAPI(title="DataFalcon OCR Worker — EasyOCR Cloud Edition")
+app = FastAPI(title="DataFalcon OCR Worker — Cloud Edition (Portable Tesseract)")
 
 @app.get("/")
 def root():
-    return {"status": "online", "engine": "EasyOCR (spa+ell+eng)"}
+    return {"status": "online", "engine": "Tesseract Portable", "languages": "spa+ell+eng"}
 
 @app.post("/ocr")
 async def ocr(file: UploadFile = File(...)):
     try:
         pdf_bytes = await file.read()
+
+        # Convert each PDF page to image
+        images = convert_from_bytes(pdf_bytes, dpi=200, fmt="png")
         text = ""
-        reader = easyocr.Reader(['es', 'el', 'en'], gpu=False)
 
-        # Try pdfplumber first
-        with pdfplumber.open(BytesIO(pdf_bytes)) as pdf:
-            for page in pdf.pages:
-                page_text = page.extract_text() or ""
-                text += page_text + "\n"
-
-                # Fallback to OCR for image-based pages
-                if not page_text.strip():
-                    im = page.to_image(resolution=300).original
-                    result = reader.readtext(im, detail=0, paragraph=True)
-                    text += "\n".join(result) + "\n"
+        for i, img in enumerate(images):
+            extracted = pytesseract.image_to_string(img, lang="spa+ell+eng", config="--psm 6")
+            text += extracted + "\n"
 
         if not text.strip():
-            return JSONResponse({"error": "No text extracted"}, status_code=422)
+            return JSONResponse({"error": "No text found"}, status_code=422)
 
         return JSONResponse({"text": text})
 
