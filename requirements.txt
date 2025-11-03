@@ -1,42 +1,57 @@
-# --- Streamlit Core ---
-streamlit
-plotly
-pandas
-numpy
+# ==========================================================
+# 🧠 CORE FRAMEWORK
+# ==========================================================
+streamlit==1.39.0
+plotly==5.24.1
+pandas==2.2.3
+numpy==2.1.2
 
-# --- OpenAI + Environment ---
-openai
-python-dotenv
+# ==========================================================
+# 🤖 OPENAI + ENVIRONMENT
+# ==========================================================
+openai==1.51.0
+python-dotenv==1.0.1
 
-# --- File Handling ---
-PyMuPDF
-pdfplumber
-Pillow
-xlsxwriter
-openpyxl
-aiofiles
-python-multipart
-requests
+# ==========================================================
+# 📂 FILE HANDLING / EXCEL / PDF
+# ==========================================================
+PyMuPDF==1.24.10
+pdfplumber==0.11.3
+Pillow==10.4.0
+xlsxwriter==3.2.0
+openpyxl==3.1.5
+aiofiles==24.1.0
+python-multipart==0.0.9
+requests==2.32.3
 
-# --- Light OCR Option (Fallback) ---
-opencv-python-headless
+# ==========================================================
+# 🔍 OCR / IMAGE RECOGNITION (Full stack)
+# ==========================================================
+opencv-python-headless==4.10.0.84
 pytesseract==0.3.13
 pdf2image==1.17.0
-Pillow==10.4.0
 poppler-utils
 tesseract-ocr
-tesseract-ocr-spa
+tesseract-ocr-spa   # Spanish OCR language support
 
-# --- Data Processing / Matching ---
-fuzzywuzzy
-python-Levenshtein
+# ==========================================================
+# 🧮 DATA PROCESSING / MATCHING
+# ==========================================================
+fuzzywuzzy==0.18.0
+python-Levenshtein==0.25.1
 
-# --- FastAPI Backend (for automation endpoints) ---
-fastapi
-uvicorn
+# ==========================================================
+# ⚙️ BACKEND / API AUTOMATION
+# ==========================================================
+fastapi==0.115.0
+uvicorn==0.30.3
 
-# --- Visualization ---
-matplotlib
+# ==========================================================
+# 📊 VISUALIZATION
+# ==========================================================
+matplotlib==3.9.2
 
-# --- Utilities ---
-tqdm
+# ==========================================================
+# 🧰 UTILITIES
+# ==========================================================
+tqdm==4.66.5
