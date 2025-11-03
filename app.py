@@ -1,5 +1,5 @@
 # ==========================================================
-# The Remitator — FINAL FINAL (Adds AP Extras Solution Category ID=10)
+# The Remitator — FINAL FINAL (Multi-Payment Support + AP Extras Solution Category ID=10)
 # ==========================================================
 import os, re, requests
 import pandas as pd
@@ -66,9 +66,7 @@ def glpi_update_ticket(token, ticket_id, status=None, category_id=None):
         headers={"Session-Token": token, "App-Token": APP_TOKEN, "Content-Type": "application/json"}
     )
 
-# ✅ NEW HELPER — AP EXTRAS SOLUTION CATEGORY FIELD
 def glpi_set_apextras_category(token, ticket_id, solution_cat_id=10):
-    """Set AP Extras 'Solution category' (plugin field) on the Ticket itself."""
     body = {
         "input": {
             "id": int(ticket_id),
@@ -156,75 +154,82 @@ if pay_file:
     df = df.loc[:, ~df.columns.duplicated()]
     st.success("✅ Payment file loaded successfully")
 
-    pay_code = st.text_input("🔎 Enter Payment Document Code:")
-    if not pay_code: st.stop()
+    # ✅ Multi-payment selection
+    all_codes = df["Payment Document Code"].dropna().astype(str).unique().tolist()
+    selected_codes = st.multiselect("🔎 Select one or more Payment Document Codes:", all_codes)
 
-    subset = df[df["Payment Document Code"].astype(str) == str(pay_code)].copy()
-    if subset.empty:
-        st.warning("⚠️ No rows found for this Payment Document Code.")
+    if not selected_codes:
         st.stop()
 
-    subset["Invoice Value"] = subset["Invoice Value"].apply(parse_amount)
-    subset["Payment Value"] = subset["Payment Value"].apply(parse_amount)
-    vendor = subset["Supplier Name"].iloc[0]
-    vendor_email_in_file = subset["Supplier's Email"].iloc[0]
-    summary = subset[["Alt. Document", "Invoice Value"]].copy()
+    combined_html = ""
+    combined_vendor_names = []
+    debug_rows_all = []
 
-    cn_rows, debug_rows, unmatched_invoices = [], [], []
-    if cn_file:
-        cn = pd.read_excel(cn_file)
-        cn.columns = [c.strip() for c in cn.columns]
-        cn = cn.loc[:, ~cn.columns.duplicated()]
-        cn_alt_col = find_col(cn, ["Alt.Document", "Alt. Document"])
-        cn_val_col = find_col(cn, ["Amount", "Debit", "Charge", "Cargo", "DEBE", "Invoice Value", "Invoice Value (€)"])
-        if cn_alt_col and cn_val_col:
-            cn[cn_val_col] = cn[cn_val_col].apply(parse_amount)
-            used = set()
-            for _, row in subset.iterrows():
-                inv = str(row["Alt. Document"])
-                diff = round(row["Payment Value"] - row["Invoice Value"], 2)
-                match = False
-                for i, r in cn.iterrows():
-                    if i in used: continue
-                    val = round(abs(r[cn_val_col]), 2)
-                    if val == 0: continue
-                    if round(val, 2) == round(abs(diff), 2):
-                        cn_rows.append({"Alt. Document": f"{r[cn_alt_col]} (CN)", "Invoice Value": -val})
-                        used.add(i); match=True; break
-                if not match and abs(diff) > 0.01:
-                    unmatched_invoices.append({"Alt. Document": f"{inv} (Unmatched Diff)", "Invoice Value": diff})
-                debug_rows.append({
-                    "Invoice": inv, "Invoice Value": row["Invoice Value"],
-                    "Payment Value": row["Payment Value"], "Difference": diff,
-                    "Matched?": "✅" if match else "❌"
-                })
+    for pay_code in selected_codes:
+        subset = df[df["Payment Document Code"].astype(str) == str(pay_code)].copy()
+        if subset.empty:
+            continue
 
-    valid_cn_df = pd.DataFrame([r for r in cn_rows if r["Invoice Value"] != 0])
-    all_rows = pd.concat([summary, valid_cn_df], ignore_index=True)
-    total_val = subset["Payment Value"].sum()
-    all_rows.loc[len(all_rows)] = ["TOTAL", total_val]
-    all_rows["Invoice Value (€)"] = all_rows["Invoice Value"].apply(lambda v: f"€{v:,.2f}")
-    display_df = all_rows[["Alt. Document", "Invoice Value (€)"]]
+        subset["Invoice Value"] = subset["Invoice Value"].apply(parse_amount)
+        subset["Payment Value"] = subset["Payment Value"].apply(parse_amount)
+        vendor = subset["Supplier Name"].iloc[0]
+        vendor_email_in_file = subset["Supplier's Email"].iloc[0]
+        summary = subset[["Alt. Document", "Invoice Value"]].copy()
+
+        cn_rows, debug_rows, unmatched_invoices = [], [], []
+        if cn_file:
+            cn = pd.read_excel(cn_file)
+            cn.columns = [c.strip() for c in cn.columns]
+            cn = cn.loc[:, ~cn.columns.duplicated()]
+            cn_alt_col = find_col(cn, ["Alt.Document", "Alt. Document"])
+            cn_val_col = find_col(cn, ["Amount", "Debit", "Charge", "Cargo", "DEBE", "Invoice Value", "Invoice Value (€)"])
+            if cn_alt_col and cn_val_col:
+                cn[cn_val_col] = cn[cn_val_col].apply(parse_amount)
+                used = set()
+                for _, row in subset.iterrows():
+                    inv = str(row["Alt. Document"])
+                    diff = round(row["Payment Value"] - row["Invoice Value"], 2)
+                    match = False
+                    for i, r in cn.iterrows():
+                        if i in used: continue
+                        val = round(abs(r[cn_val_col]), 2)
+                        if val == 0: continue
+                        if round(val, 2) == round(abs(diff), 2):
+                            cn_rows.append({"Alt. Document": f"{r[cn_alt_col]} (CN)", "Invoice Value": -val})
+                            used.add(i); match=True; break
+                    if not match and abs(diff) > 0.01:
+                        unmatched_invoices.append({"Alt. Document": f"{inv} (Unmatched Diff)", "Invoice Value": diff})
+                    debug_rows.append({
+                        "Invoice": inv, "Invoice Value": row["Invoice Value"],
+                        "Payment Value": row["Payment Value"], "Difference": diff,
+                        "Matched?": "✅" if match else "❌"
+                    })
+        valid_cn_df = pd.DataFrame([r for r in cn_rows if r["Invoice Value"] != 0])
+        all_rows = pd.concat([summary, valid_cn_df], ignore_index=True)
+        total_val = subset["Payment Value"].sum()
+        all_rows.loc[len(all_rows)] = ["TOTAL", total_val]
+        all_rows["Invoice Value (€)"] = all_rows["Invoice Value"].apply(lambda v: f"€{v:,.2f}")
+        display_df = all_rows[["Alt. Document", "Invoice Value (€)"]]
+        debug_rows_all.extend(debug_rows)
+
+        html_table = display_df.to_html(index=False, border=0, justify="center", classes="table")
+        combined_html += f"<h4>Payment Code: {pay_code} — Vendor: {vendor}</h4>{html_table}<br>"
+        combined_vendor_names.append(vendor)
 
     tab1, tab2 = st.tabs(["📋 Summary", "🔗 GLPI"])
     with tab1:
-        st.dataframe(display_df, use_container_width=True)
-        if debug_rows:
+        st.markdown(combined_html, unsafe_allow_html=True)
+        if debug_rows_all:
             st.subheader("🔍 Debug breakdown — invoice vs. CN matching")
-            st.dataframe(pd.DataFrame(debug_rows), use_container_width=True)
+            st.dataframe(pd.DataFrame(debug_rows_all), use_container_width=True)
 
         wb = Workbook(); ws = wb.active; ws.title = "Final Summary"
-        for r in dataframe_to_rows(display_df, index=False, header=True): ws.append(r)
-        ws_hidden = wb.create_sheet("HiddenMeta")
-        meta = [["Vendor", vendor],["Vendor Email", vendor_email_in_file],["Payment Code", pay_code],
-                ["Exported At", datetime.now().strftime("%Y-%m-%d %H:%M:%S")]]
-        for row in meta: ws_hidden.append(row)
-        tab_ = Table(displayName="MetaTable", ref=f"A1:B{len(meta)}")
-        tab_.tableStyleInfo = TableStyleInfo(name="TableStyleMedium2", showRowStripes=True)
-        ws_hidden.add_table(tab_); ws_hidden.sheet_state = "hidden"
+        ws.append(["Payment Codes", ", ".join(selected_codes)])
+        ws.append(["Vendors", ", ".join(combined_vendor_names)])
+        ws.append(["Exported At", datetime.now().strftime("%Y-%m-%d %H:%M:%S")])
         buf = BytesIO(); wb.save(buf); buf.seek(0)
         st.download_button("💾 Download Excel Summary", buf,
-            file_name=f"{vendor}_Payment_{pay_code}.xlsx",
+            file_name=f"Combined_Payments_{'_'.join(selected_codes)}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
     with tab2:
@@ -233,11 +238,10 @@ if pay_file:
         category_id = c2.text_input("Category ID", value="400")
         assigned_email = c3.text_input("Assign To Email", placeholder="akeramaris@saniikos.com")
 
-        html_table = display_df.to_html(index=False, border=0, justify="center", classes="table")
         html_message = f"""
         <p><strong>Estimado proveedor,</strong></p>
-        <p>Por favor, encuentre a continuación las facturas que corresponden al pago realizado.</p>
-        {html_table}
+        <p>Por favor, encuentre a continuación las facturas que corresponden a los pagos realizados:</p>
+        {combined_html}
         <p>Quedamos a su disposición para cualquier aclaración.</p>
         <p>Saludos cordiales,<br><strong>Equipo Finance</strong></p>
         """
@@ -263,10 +267,7 @@ if pay_file:
 
             with st.spinner("Posting to GLPI..."):
                 glpi_update_ticket(token, ticket_id, status=5, category_id=int(category_id))
-
-                # ✅ NEW CALL: Set AP Extras category to Payment Remittance Advice (10)
                 glpi_set_apextras_category(token, ticket_id, solution_cat_id=10)
-
                 glpi_assign_userid(token, ticket_id, user_id)
                 resp_sol = glpi_add_solution(token, ticket_id, html_message, solution_type_id=10)
 
