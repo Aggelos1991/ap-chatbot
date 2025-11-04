@@ -336,6 +336,7 @@ def tier3_match(erp_miss, ven_miss):
     return mdf, used_e, used_v, rem_e, rem_v
 
 # ------- Payments detection & matching (reason + invoice text) -------
+# ------- Payments detection & matching (reason + invoice text) -------
 def extract_payments(erp_df, ven_df):
     pay_kw = [
         "πληρωμή", "payment", "remittance", "bank transfer",
@@ -355,22 +356,23 @@ def extract_payments(erp_df, ven_df):
     erp_pay = erp_df[erp_df.apply(lambda r: is_payment(r, "erp"), axis=1)].copy()
     ven_pay = ven_df[ven_df.apply(lambda r: is_payment(r, "ven"), axis=1)].copy()
 
-    # Convert debit/credit to float properly
+    # ✅ FIXED: Correctly handle ERP values (nonzero debit OR credit)
     for df, tag in [(erp_pay, "erp"), (ven_pay, "ven")]:
         if not df.empty:
-            df["Debit"]  = df[f"debit_{tag}"].apply(normalize_number)
+            df["Debit"] = df[f"debit_{tag}"].apply(normalize_number)
             df["Credit"] = df[f"credit_{tag}"].apply(normalize_number)
-            df["Amount"] = abs(df["Debit"] - df["Credit"])
+            df["Amount"] = df.apply(
+                lambda r: r["Debit"] if abs(r["Debit"]) > 0 else abs(r["Credit"]), axis=1
+            )
             df["Amount"] = df["Amount"].round(2)
 
-    # Match ERP ↔ Vendor payments
-    matched = []
-    used_v = set()
+    # Match ERP ↔ Vendor payments by amount (tolerance €0.05)
+    matched, used_v = [], set()
     for _, e in erp_pay.iterrows():
         for vi, v in ven_pay.iterrows():
             if vi in used_v:
                 continue
-            if abs(e["Amount"] - v["Amount"]) <= 0.05:  # tolerance 5 cents
+            if abs(e["Amount"] - v["Amount"]) <= 0.05:
                 matched.append({
                     "ERP Reason": e.get("reason_erp", ""),
                     "Vendor Reason": v.get("reason_ven", ""),
@@ -383,6 +385,7 @@ def extract_payments(erp_df, ven_df):
 
     pay_match = pd.DataFrame(matched)
     return erp_pay, ven_pay, pay_match
+
 
 
 # ==================== EXCEL EXPORT =========================
