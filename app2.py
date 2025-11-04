@@ -338,38 +338,39 @@ def tier3_match(erp_miss, ven_miss):
 # ------- Payments detection & matching (reason + invoice text) -------
 def extract_payments(erp_df, ven_df):
     pay_kw = [
-        "πληρωμή", "payment", "payment remittance", "remittance", "bank transfer",
-        "transferencia", "trf", "remesa", "pago", "deposit", "μεταφορά", "έμβασμα",
-        "εξοφληση", "pagado", "paid", "cobro"
+        "πληρωμή", "payment", "remittance", "bank transfer",
+        "transferencia", "trf", "remesa", "pago", "deposit",
+        "μεταφορά", "έμβασμα", "εξόφληση", "pagado", "paid", "cobro"
     ]
     excl_kw = [
-        "invoice of expenses", "expense invoice", "τιμολόγιο εξόδων", "διόρθωση",
-        "correction", "reclass", "adjustment", "μεταφορά υπολοίπου"
+        "invoice of expenses", "expense invoice", "τιμολόγιο εξόδων",
+        "διόρθωση", "correction", "reclass", "adjustment",
+        "μεταφορά υπολοίπου"
     ]
 
-    def is_pay(row, tag):
+    def is_payment(row, tag):
         txt = (str(row.get(f"reason_{tag}", "")) + " " + str(row.get(f"invoice_{tag}", ""))).lower()
         return any(k in txt for k in pay_kw) and not any(b in txt for b in excl_kw)
 
-    erp_pay = erp_df[erp_df.apply(lambda r: is_pay(r, "erp"), axis=1)].copy()
-    ven_pay = ven_df[ven_df.apply(lambda r: is_pay(r, "ven"), axis=1)].copy()
+    erp_pay = erp_df[erp_df.apply(lambda r: is_payment(r, "erp"), axis=1)].copy()
+    ven_pay = ven_df[ven_df.apply(lambda r: is_payment(r, "ven"), axis=1)].copy()
 
-    if not erp_pay.empty:
-        erp_pay["Amount"] = erp_pay.apply(lambda r: abs(
-            normalize_number(r.get("debit_erp", 0)) - normalize_number(r.get("credit_erp", 0))
-        ), axis=1)
-    if not ven_pay.empty:
-        ven_pay["Amount"] = ven_pay.apply(lambda r: abs(
-            normalize_number(r.get("debit_ven", 0)) - normalize_number(r.get("credit_ven", 0))
-        ), axis=1)
+    # Convert debit/credit to float properly
+    for df, tag in [(erp_pay, "erp"), (ven_pay, "ven")]:
+        if not df.empty:
+            df["Debit"]  = df[f"debit_{tag}"].apply(normalize_number)
+            df["Credit"] = df[f"credit_{tag}"].apply(normalize_number)
+            df["Amount"] = abs(df["Debit"] - df["Credit"])
+            df["Amount"] = df["Amount"].round(2)
 
+    # Match ERP ↔ Vendor payments
     matched = []
-    used = set()
+    used_v = set()
     for _, e in erp_pay.iterrows():
         for vi, v in ven_pay.iterrows():
-            if vi in used:
+            if vi in used_v:
                 continue
-            if abs(e["Amount"] - v["Amount"]) <= 0.01:
+            if abs(e["Amount"] - v["Amount"]) <= 0.05:  # tolerance 5 cents
                 matched.append({
                     "ERP Reason": e.get("reason_erp", ""),
                     "Vendor Reason": v.get("reason_ven", ""),
@@ -377,9 +378,12 @@ def extract_payments(erp_df, ven_df):
                     "Vendor Amount": round(v["Amount"], 2),
                     "Difference": round(abs(e["Amount"] - v["Amount"]), 2)
                 })
-                used.add(vi)
+                used_v.add(vi)
                 break
-    return erp_pay, ven_pay, pd.DataFrame(matched)
+
+    pay_match = pd.DataFrame(matched)
+    return erp_pay, ven_pay, pay_match
+
 
 # ==================== EXCEL EXPORT =========================
 def export_excel(miss_erp, miss_ven):
