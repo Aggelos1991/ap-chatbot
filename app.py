@@ -1,5 +1,5 @@
 # ==========================================================
-# The Remitator — FINAL FINAL (Manual Comma Codes + AP Extras Solution Category ID=10 + OLD DEBUG TABLE)
+# The Remitator — FINAL FINAL (Old Debug Logic + Visual Icons + AP Extras Category ID=10)
 # ==========================================================
 import os, re, requests
 import pandas as pd
@@ -54,7 +54,7 @@ def find_col(df, names):
                 return c
     return None
 
-# ========== GLPI API ==========
+# ========== GLPI ==========
 def glpi_login():
     r = requests.get(f"{GLPI_URL}/initSession",
                      headers={"Authorization": f"user_token {USER_TOKEN}", "App-Token": APP_TOKEN})
@@ -114,7 +114,7 @@ if pay_file:
 
     combined_html = ""
     combined_vendor_names = []
-    debug_rows_all = []        # RESTORED DEBUG TABLE
+    debug_rows_all = []
     export_data = {}
 
     for pay_code in selected_codes:
@@ -140,18 +140,9 @@ if pay_file:
                 for _, row in subset.iterrows():
                     inv = str(row["Alt. Document"])
                     diff = round(row["Payment Value"] - row["Invoice Value"], 2)
-                    match = False
-                    for i, r in cn.iterrows():
-                        if i in used: continue
-                        val = round(abs(r[cn_val_col]), 2)
-                        if val == 0: continue
-                        if round(val, 2) == round(abs(diff), 2):
-                            cn_rows.append({"Alt. Document": f"{r[cn_alt_col]} (CN)", "Invoice Value": -val})
-                            used.add(i); match = True; break
-                    if not match and abs(diff) > 0.01:
-                        unmatched_invoices.append({"Alt. Document": f"{inv} (Adj. Diff)", "Invoice Value": diff})
 
-                    # OLD DEBUG ROW RESTORED
+                    # TRUE DEBUG LOGIC RESTORED: YES only when diff == 0
+                    matched = abs(diff) < 0.01
                     debug_rows_all.append({
                         "Payment Code": pay_code,
                         "Vendor": vendor,
@@ -159,8 +150,21 @@ if pay_file:
                         "Invoice Value": row["Invoice Value"],
                         "Payment Value": row["Payment Value"],
                         "Difference": diff,
-                        "Matched?": "YES" if match else "NO"
+                        "Matched?": "✅ YES" if matched else "❌ NO"
                     })
+
+                    match = False
+                    for i, r in cn.iterrows():
+                        if i in used: continue
+                        val = round(abs(r[cn_val_col]), 2)
+                        if val == 0: continue
+                        if round(val, 2) == round(abs(diff), 2):
+                            cn_rows.append({"Alt. Document": f"{r[cn_alt_col]} (CN)", "Invoice Value": -val})
+                            used.add(i)
+                            match = True
+                            break
+                    if not match and abs(diff) > 0.01:
+                        unmatched_invoices.append({"Alt. Document": f"{inv} (Adj. Diff)", "Invoice Value": diff})
 
         valid_cn_df = pd.DataFrame([r for r in cn_rows if r["Invoice Value"] != 0])
         unmatched_df = pd.DataFrame(unmatched_invoices)
@@ -185,9 +189,9 @@ if pay_file:
     with tab1:
         st.markdown(combined_html, unsafe_allow_html=True)
 
-        # ========== OLD DEBUG TABLE RESTORED ==========
+        # ========== DEBUG TABLE RESTORED ==========
         if debug_rows_all:
-            st.subheader("🔍 Debug Breakdown — Invoice vs CN Matching (per Payment Code)")
+            st.subheader("🔍 Debug Breakdown — Invoice vs Payment Matching")
             debug_df = pd.DataFrame(debug_rows_all)
             debug_df["Invoice Value"] = debug_df["Invoice Value"].astype(float).round(2)
             debug_df["Payment Value"] = debug_df["Payment Value"].astype(float).round(2)
@@ -195,11 +199,9 @@ if pay_file:
             debug_df = debug_df.sort_values(by=["Payment Code", "Vendor", "Alt. Document"]).reset_index(drop=True)
 
             st.dataframe(debug_df, use_container_width=True, hide_index=True)
-
-            csv_buf = debug_df.to_csv(index=False).encode("utf-8")
             st.download_button(
                 "⬇️ Download Debug Table (CSV)",
-                csv_buf,
+                debug_df.to_csv(index=False).encode("utf-8"),
                 file_name="debug_remitator_match_analysis.csv",
                 mime="text/csv"
             )
