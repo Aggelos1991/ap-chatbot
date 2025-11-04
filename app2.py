@@ -523,6 +523,12 @@ if uploaded_erp and uploaded_vendor:
             erp_pay, ven_pay, pay_match = extract_payments(erp_df, ven_df)
 
         st.success("Reconciliation Complete!")
+        # --- Safety check: convert accidental floats to empty DataFrames ---
+        for name in ["tier1", "tier2", "tier3", "perf", "diff", "final_erp_miss", "final_ven_miss", "pay_match"]:
+            if name in locals():
+                val = locals()[name]
+                if isinstance(val, (float, int)):
+                    locals()[name] = pd.DataFrame()
 
         # ---------- METRICS ----------
         st.markdown('<h2 class="section-title">Reconciliation Summary</h2>', unsafe_allow_html=True)
