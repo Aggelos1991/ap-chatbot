@@ -659,8 +659,8 @@ if uploaded_erp and uploaded_vendor:
         with col_p1:
             st.markdown("**ERP Payments**")
             if not erp_pay.empty:
-                disp = erp_pay[['reason_erp', 'debit_erp', 'credit_erp', 'Amount']].copy()
-                disp.columns = ['Reason', 'Debit', 'Credit', 'Net']
+                disp = erp_pay[['reason_erp', 'Amount', 'credit_erp']].copy()
+                disp.columns = ['Reason', 'Debit', 'Credit']
                 st.dataframe(
                     disp.style.apply(lambda _: ['background:#4CAF50;color:#fff'] * len(_), axis=1),
                     use_container_width=True
