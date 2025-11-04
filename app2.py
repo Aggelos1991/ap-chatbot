@@ -627,10 +627,12 @@ if uploaded_erp and uploaded_vendor:
             if balance_diff is not None:
                 st.markdown('<div class="metric-container" style="background:#1E88E5;color:white;font-weight:bold;">', unsafe_allow_html=True)
                 st.metric("ERP vs Vendor Balance Δ", f"{balance_diff:,.2f}")
-                st.markdown(f"**ERP:** {last_balance_erp:,.2f}<br>**Vendor:** {last_balance_ven:,.2f}", unsafe_allow_html=True)
+                st.markdown(
+                    f"**ERP:** {last_balance_erp:,.2f}<br>"
+                    f"**Vendor:** {last_balance_ven:,.2f}",
+                    unsafe_allow_html=True
+                )
                 st.markdown('</div>', unsafe_allow_html=True)
-
-
 
         st.markdown("---")
 
