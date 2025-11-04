@@ -1,5 +1,5 @@
 # ==========================================================
-# The Remitator — FINAL FINAL (Manual Comma Codes + AP Extras Solution Category ID=10)
+# The Remitator — FINAL FINAL (Manual Comma Codes + AP Extras Solution Category ID=10 + OLD DEBUG TABLE)
 # ==========================================================
 import os, re, requests
 import pandas as pd
@@ -114,7 +114,7 @@ if pay_file:
 
     combined_html = ""
     combined_vendor_names = []
-    debug_rows_all = []        # FULL DEBUG LIST
+    debug_rows_all = []        # RESTORED DEBUG TABLE
     export_data = {}
 
     for pay_code in selected_codes:
@@ -151,11 +151,11 @@ if pay_file:
                     if not match and abs(diff) > 0.01:
                         unmatched_invoices.append({"Alt. Document": f"{inv} (Adj. Diff)", "Invoice Value": diff})
 
-                    # ===== DEBUG ROW FIXED =====
+                    # OLD DEBUG ROW RESTORED
                     debug_rows_all.append({
                         "Payment Code": pay_code,
                         "Vendor": vendor,
-                        "Invoice": inv,
+                        "Alt. Document": inv,
                         "Invoice Value": row["Invoice Value"],
                         "Payment Value": row["Payment Value"],
                         "Difference": diff,
@@ -185,14 +185,14 @@ if pay_file:
     with tab1:
         st.markdown(combined_html, unsafe_allow_html=True)
 
-        # ========== FULL DEBUG TABLE ==========
+        # ========== OLD DEBUG TABLE RESTORED ==========
         if debug_rows_all:
-            st.subheader("🔍 Debug breakdown — invoice vs. CN matching (per payment code)")
+            st.subheader("🔍 Debug Breakdown — Invoice vs CN Matching (per Payment Code)")
             debug_df = pd.DataFrame(debug_rows_all)
             debug_df["Invoice Value"] = debug_df["Invoice Value"].astype(float).round(2)
             debug_df["Payment Value"] = debug_df["Payment Value"].astype(float).round(2)
             debug_df["Difference"] = debug_df["Difference"].astype(float).round(2)
-            debug_df = debug_df.sort_values(by=["Payment Code", "Vendor", "Invoice"]).reset_index(drop=True)
+            debug_df = debug_df.sort_values(by=["Payment Code", "Vendor", "Alt. Document"]).reset_index(drop=True)
 
             st.dataframe(debug_df, use_container_width=True, hide_index=True)
 
