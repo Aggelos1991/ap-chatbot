@@ -602,42 +602,31 @@ if uploaded_erp and uploaded_vendor:
 
         # ---- Balance Summary Metric (C8 • Yellow • bulletproof detection for Vendor Balance) ----
        # ---- Balance Summary Metric (C8 • Yellow • fully robust detection) ----
+        # ---- Balance Summary Metric (C8 • Yellow • auto-detect & tolerant) ----
         with c8:
+            import numpy as np
+        
             def parse_amt(v):
-                if pd.isna(v): 
-                    return 0.0
-                s = str(v).strip().replace("€", "").replace(",", ".")
+                if v is None or str(v).strip() == "":
+                    return np.nan
+                s = str(v).replace("€", "").replace(",", ".").replace(" ", "").strip()
                 s = re.sub(r"[^\d.\-]", "", s)
                 try:
                     return float(s)
                 except:
-                    return 0.0
+                    return np.nan
         
-            def find_balance_col(df):
-                # clean all column names
-                clean_cols = {c: c.strip().lower().replace(" ", "").replace("_", "") for c in df.columns}
-                possible = ["balance", "saldo", "total", "υπόλοιπο", "υπολοιπο", "ypolipo", "closing", "ending"]
-                # try by name
-                for raw, clean in clean_cols.items():
-                    if any(p in clean for p in possible):
-                        return raw
-                # if not found by name, look for a numeric-like column with running pattern
-                num_cols = []
-                for c in df.columns:
-                    vals = df[c].dropna().astype(str).apply(lambda x: bool(re.match(r"^-?\d+[.,]?\d*$", x.strip().replace('€',''))))
-                    if vals.sum() > 3:  # at least 3 numeric-like entries
-                        num_cols.append(c)
-                return num_cols[-1] if num_cols else None
-        
-            balance_col_erp = find_balance_col(erp_df)
-            balance_col_ven = find_balance_col(ven_df)
+            # detect balance columns by name (case insensitive)
+            balance_col_erp = next((c for c in erp_df.columns if "balance" in c.lower() or "saldo" in c.lower()), None)
+            balance_col_ven = next((c for c in ven_df.columns if "balance" in c.lower() or "saldo" in c.lower() or "υπολ" in c.lower()), None)
         
             if balance_col_erp and balance_col_ven:
-                erp_vals = erp_df[balance_col_erp].apply(parse_amt).tolist()
-                ven_vals = ven_df[balance_col_ven].apply(parse_amt).tolist()
-                if erp_vals and ven_vals:
-                    erp_last = erp_vals[-1]
-                    ven_last = ven_vals[-1]
+                erp_vals = erp_df[balance_col_erp].apply(parse_amt).dropna()
+                ven_vals = ven_df[balance_col_ven].apply(parse_amt).dropna()
+        
+                if not erp_vals.empty and not ven_vals.empty:
+                    erp_last = erp_vals.iloc[-1]
+                    ven_last = ven_vals.iloc[-1]
                     diff_val = round(erp_last - ven_last, 2)
         
                     st.markdown(
@@ -653,9 +642,9 @@ if uploaded_erp and uploaded_vendor:
                     )
                     st.markdown('</div>', unsafe_allow_html=True)
                 else:
-                    st.warning("No numeric balances found in files.")
+                    st.warning("⚠️ No numeric values found in one of the Balance columns.")
             else:
-                st.info("Balance columns not found in ERP or Vendor file.")
+                st.info("ℹ️ Could not detect Balance columns in both files.")
 
 
 
