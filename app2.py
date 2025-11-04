@@ -162,7 +162,9 @@ def match_invoices(erp_df, ven_df):
     # classify doc types (now checks BOTH reason + invoice; includes "cobro" as payment)
     def doc_type(row, tag):
         txt = (str(row.get(f"reason_{tag}", "")) + " " + str(row.get(f"invoice_{tag}", ""))).lower()
-        debit = normalize_number(row.get(f"debit_{tag}", 0))
+        debit  = normalize_number(row.get(f"debit_{tag}", 0))
+        credit = normalize_number(row.get(f"credit_{tag}", 0))  # ← FIX
+
         pay_kw = [
             "πληρωμ", "payment", "remittance", "bank transfer",
             "transferencia", "trf", "remesa", "pago", "deposit",
@@ -174,7 +176,8 @@ def match_invoices(erp_df, ven_df):
             return "CN"
         if any(k in txt for k in ["factura", "invoice", "inv", "τιμολόγιο", "παραστατικό"]) or debit > 0 or credit > 0:
             return "INV"
-        return "UNKNOWN"
+    return "UNKNOWN"
+
 
     erp_df["__type"] = erp_df.apply(lambda r: doc_type(r, "erp"), axis=1)
     ven_df["__type"] = ven_df.apply(lambda r: doc_type(r, "ven"), axis=1)
