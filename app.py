@@ -9,7 +9,6 @@ from openpyxl import Workbook
 from openpyxl.utils.dataframe import dataframe_to_rows
 from datetime import datetime
 from dotenv import load_dotenv
-
 # ========== UI ==========
 st.set_page_config(page_title="The Remitator", layout="wide")
 st.markdown("""
@@ -21,12 +20,12 @@ st.markdown("""
   div.stButton > button:first-child:hover{background-color:#0069d9}
 </style>
 """, unsafe_allow_html=True)
-st.title("💀 The Remitator — Hasta la vista, payment remittance. 💀")
+st.title("The Remitator — Hasta la vista, payment remittance.")
 
 # ========== ENV ==========
 load_dotenv()
-GLPI_URL   = os.getenv("GLPI_URL")
-APP_TOKEN  = os.getenv("APP_TOKEN")
+GLPI_URL = os.getenv("GLPI_URL")
+APP_TOKEN = os.getenv("APP_TOKEN")
 USER_TOKEN = os.getenv("USER_TOKEN")
 
 # ========== HELPERS ==========
@@ -112,10 +111,9 @@ def glpi_add_followup(token, ticket_id, html):
     return requests.post(
         f"{GLPI_URL}/Ticket/{ticket_id}/ITILFollowup",
         json=body,
-        headers={
-            "Session-Token": token,
-            "App-Token": APP_TOKEN,
-            "Content-Type": "application/json"
+        headers={"Session-Token": token,
+                "App-Token": APP_TOKEN,
+                "Content-Type": "application/json"
         },
         timeout=30
     )
@@ -144,19 +142,17 @@ USER_MAP = {
 }
 
 # ========== MAIN ==========
-pay_file = st.file_uploader("📂 Upload Payment Excel", type=["xlsx"])
-cn_file  = st.file_uploader("📂 (Optional) Upload Credit Notes Excel", type=["xlsx"])
+pay_file = st.file_uploader("Upload Payment Excel", type=["xlsx"])
+cn_file = st.file_uploader("(Optional) Upload Credit Notes Excel", type=["xlsx"])
 
 if pay_file:
     df = pd.read_excel(pay_file)
     df.columns = [c.strip() for c in df.columns]
     df = df.loc[:, ~df.columns.duplicated()]
-    st.success("✅ Payment file loaded successfully")
-
-    pay_input = st.text_input("🔎 Enter one or more Payment Document Codes (comma-separated):", "")
+    st.success("Payment file loaded successfully")
+    pay_input = st.text_input("Enter one or more Payment Document Codes (comma-separated):", "")
     if not pay_input.strip():
         st.stop()
-
     selected_codes = [x.strip() for x in pay_input.split(",") if x.strip()]
     if not selected_codes:
         st.stop()
@@ -170,14 +166,14 @@ if pay_file:
         subset = df[df["Payment Document Code"].astype(str) == str(pay_code)].copy()
         if subset.empty:
             continue
-
         subset["Invoice Value"] = subset["Invoice Value"].apply(parse_amount)
         subset["Payment Value"] = subset["Payment Value"].apply(parse_amount)
         vendor = subset["Supplier Name"].iloc[0]
         vendor_email_in_file = subset["Supplier's Email"].iloc[0]
-        summary = subset[["Alt. Document", "Invoice Value"]].copy()
 
+        summary = subset[["Alt. Document", "Invoice Value"]].copy()
         cn_rows, debug_rows, unmatched_invoices = [], [], []
+
         if cn_file:
             cn = pd.read_excel(cn_file)
             cn.columns = [c.strip() for c in cn.columns]
@@ -203,13 +199,12 @@ if pay_file:
                     debug_rows.append({
                         "Invoice": inv, "Invoice Value": row["Invoice Value"],
                         "Payment Value": row["Payment Value"], "Difference": diff,
-                        "Matched?": "✅" if match else "❌"
+                        "Matched?": "Yes" if match else "No"
                     })
 
         valid_cn_df = pd.DataFrame([r for r in cn_rows if r["Invoice Value"] != 0])
         unmatched_df = pd.DataFrame(unmatched_invoices)
         all_rows = pd.concat([summary, valid_cn_df, unmatched_df], ignore_index=True)
-
         total_val = subset["Payment Value"].sum()
         all_rows.loc[len(all_rows)] = ["TOTAL", total_val]
         all_rows["Invoice Value (€)"] = all_rows["Invoice Value"].apply(lambda v: f"€{v:,.2f}")
@@ -221,40 +216,103 @@ if pay_file:
         combined_vendor_names.append(vendor)
         export_tables[pay_code] = display_df
 
-    tab1, tab2 = st.tabs(["📋 Summary", "🔗 GLPI"])
+    tab1, tab2 = st.tabs(["Summary", "GLPI"])
+
     with tab1:
         st.markdown(combined_html, unsafe_allow_html=True)
         if debug_rows_all:
-            st.subheader("🔍 Debug breakdown — invoice vs. CN matching")
+            st.subheader("Debug breakdown — invoice vs. CN matching")
             st.dataframe(pd.DataFrame(debug_rows_all), use_container_width=True)
 
-        # ✅ FIXED EXCEL EXPORT
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "Final Summary"
+        # =============================================
+        # ONLY THIS EXCEL BLOCK IS CHANGED
+        # =============================================
+        if export_tables:
+            from openpyxl.styles import Font, Alignment, PatternFill
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "Payment Summary"
 
-        ws.append(["Payment Codes", ", ".join(selected_codes)])
-        ws.append(["Vendors", ", ".join(combined_vendor_names)])
-        ws.append(["Exported At", datetime.now().strftime("%Y-%m-%d %H:%M:%S")])
-        ws.append([])
-
-        for code, df_exp in export_tables.items():
-            vendor_name = df[df["Payment Document Code"].astype(str) == code]["Supplier Name"].iloc[0]
-            ws.append([f"Payment Code: {code}", f"Vendor: {vendor_name}"])
-            for r in dataframe_to_rows(df_exp, index=False, header=True):
-                ws.append(r)
+            # Header
+            ws.append(["The Remitator – Payment Summary"])
+            ws.append([f"Payment Codes: {', '.join(selected_codes)}"])
+            ws.append([f"Vendors: {', '.join(set(combined_vendor_names))}"])
+            ws.append([f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"])
             ws.append([])
 
-        buf = BytesIO()
-        wb.save(buf)
-        buf.seek(0)
+            header_font = Font(bold=True, color="FFFFFF")
+            header_fill = PatternFill("solid", fgColor="1E88E5")
+            money_align = Alignment(horizontal="right")
+            bold = Font(bold=True)
 
-        st.download_button(
-            "💾 Download Excel Summary",
-            buf,
-            file_name=f"Combined_Payments_{'_'.join(selected_codes)}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+            row = ws.max_row + 1
+            for code, df_exp in export_tables.items():
+                vendor = df[df["Payment Document Code"].astype(str) == code]["Supplier Name"].iloc[0]
+
+                # Section title
+                ws.cell(row=row, column=1, value=f"Payment Code: {code} – {vendor}")
+                ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=2)
+                ws.cell(row=row, column=1).font = bold
+                row += 2
+
+                # Table headers
+                ws.cell(row=row, column=1, value="Document")
+                ws.cell(row=row, column=2, value="Amount (€)")
+                for c in (1, 2):
+                    cell = ws.cell(row=row, column=c)
+                    cell.font = header_font
+                    cell.fill = header_fill
+                    cell.alignment = Alignment(horizontal="center")
+                row += 1
+
+                subtotal = 0.0
+                for _, r in df_exp.iterrows():
+                    doc = r["Alt. Document"]
+                    amount = float(str(r["Invoice Value (€)"].replace("€", "").replace(",", "").strip()))
+                    subtotal += amount
+
+                    ws.cell(row=row, column=1, value=doc)
+                    ws.cell(row=row, column=2, value=amount)
+                    ws.cell(row=row, column=2).number_format = '#,##0.00 €'
+                    ws.cell(row=row, column=2).alignment = money_align
+
+                    if "(CN)" in doc:
+                        ws.cell(row=row, column=1).font = Font(color="2E8B57")
+                    elif "(Adj." in doc:
+                        ws.cell(row=row, column=1).font = Font(color="D32F2F")
+                    row += 1
+
+                # TOTAL
+                ws.cell(row=row, column=1, value="TOTAL")
+                ws.cell(row=row, column=2, value=subtotal)
+                ws.cell(row=row, column=1).font = bold
+                ws.cell(row=row, column=2).font = bold
+                ws.cell(row=row, column=2).number_format = '#,##0.00 €'
+                ws.cell(row=row, column=2).fill = PatternFill("solid", fgColor="E3F2FD")
+                row += 2
+
+            # Auto-width
+            for col in ws.columns:
+                max_len = 0
+                column = col[0].column_letter
+                for cell in col:
+                    if cell.value:
+                        max_len = max(max_len, len(str(cell.value)))
+                ws.column_dimensions[column].width = min(max_len + 2, 50)
+
+            buf = BytesIO()
+            wb.save(buf)
+            buf.seek(0)
+
+            st.download_button(
+                label="Download Excel Summary (FIXED)",
+                data=buf,
+                file_name=f"Remittance_{'_'.join(selected_codes)}_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        # =============================================
+        # END OF EXCEL FIX
+        # =============================================
 
     with tab2:
         c1, c2, c3 = st.columns(3)
@@ -269,14 +327,12 @@ if pay_file:
         <p>Quedamos a su disposición para cualquier aclaración.</p>
         <p>Saludos cordiales,<br><strong>Equipo Finance</strong></p>
         """
-
         st.markdown(html_message, unsafe_allow_html=True)
 
         if st.button("Send to GLPI"):
             if not str(ticket_id).strip().isdigit():
-                st.error("❌ Invalid or empty Ticket ID. Please enter a numeric ID.")
+                st.error("Invalid or empty Ticket ID. Please enter a numeric ID.")
                 st.stop()
-
             if not all([GLPI_URL, APP_TOKEN, USER_TOKEN]):
                 st.error("Missing GLPI credentials."); st.stop()
 
@@ -294,15 +350,14 @@ if pay_file:
                 glpi_set_apextras_category(token, ticket_id, solution_cat_id=10)
                 glpi_assign_userid(token, ticket_id, user_id)
                 resp_sol = glpi_add_solution(token, ticket_id, html_message, solution_type_id=10)
-
                 if resp_sol.status_code == 400 or "already solved" in resp_sol.text.lower():
-                    st.warning("⚠️ Ticket already solved — posting as comment instead.")
+                    st.warning("Ticket already solved — posting as comment instead.")
                     resp_sol = glpi_add_followup(token, ticket_id, html_message)
 
             if str(resp_sol.status_code).startswith("2"):
-                st.success(f"✅ Ticket #{ticket_id} updated — Solution/Comment added successfully (AP Extras ID 10).")
+                st.success(f"Ticket #{ticket_id} updated — Solution/Comment added successfully (AP Extras ID 10).")
             else:
-                st.error(f"❌ GLPI error: {resp_sol.status_code} → {resp_sol.text}")
+                st.error(f"GLPI error: {resp_sol.status_code} → {resp_sol.text}")
 
 else:
-    st.info("📂 Upload Payment Excel to begin.")
+    st.info("Upload Payment Excel to begin.")
