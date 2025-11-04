@@ -526,7 +526,7 @@ if uploaded_erp and uploaded_vendor:
 
         # ---------- METRICS ----------
         st.markdown('<h2 class="section-title">Reconciliation Summary</h2>', unsafe_allow_html=True)
-        c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
+        c1, c2, c3, c4, c5, c6, c7,c8 = st.columns(8)
         perf = tier1[tier1["Status"] == "Perfect Match"] if not tier1.empty else pd.DataFrame()
         diff = tier1[tier1["Status"] == "Difference Match"] if not tier1.empty else pd.DataFrame()
 
@@ -599,6 +599,37 @@ if uploaded_erp and uploaded_vendor:
             st.markdown('<div class="metric-container payment-match">', unsafe_allow_html=True)
             st.metric("New Payment Matches", len(pay_match) if not pay_match.empty else 0)
             st.markdown('</div>', unsafe_allow_html=True)
+
+        # ---- Balance Summary Metric (C8) ----
+        with c8:
+            possible_vendor_cols = ["balance", "saldo", "υπόλοιπο", "υπολοιπο", "ypolipo"]
+            balance_col_erp = next((c for c in erp_df.columns if "balance" in c.lower()), None)
+            balance_col_ven = next((c for c in ven_df.columns if any(p in c.lower() for p in possible_vendor_cols)), None)
+        
+            if balance_col_erp and balance_col_ven:
+                def parse_amt(v):
+                    s = str(v).strip().replace("€", "").replace(",", ".")
+                    s = re.sub(r"[^\d.\-]", "", s)
+                    try:
+                        return float(s)
+                    except:
+                        return 0.0
+        
+                erp_vals = [parse_amt(v) for v in erp_df[balance_col_erp] if str(v).strip()]
+                ven_vals = [parse_amt(v) for v in ven_df[balance_col_ven] if str(v).strip()]
+        
+                if erp_vals and ven_vals:
+                    diff_val = round(erp_vals[-1] - ven_vals[-1], 2)
+                    st.markdown('<div class="metric-container balance-match">', unsafe_allow_html=True)
+                    st.metric("Balance Summary", "")
+                    st.markdown(
+                        f"**ERP:** {erp_vals[-1]:,.2f}<br>"
+                        f"**Vendor:** {ven_vals[-1]:,.2f}<br>"
+                        f"**Diff:** {diff_val:,.2f}",
+                        unsafe_allow_html=True
+                    )
+                    st.markdown('</div>', unsafe_allow_html=True)
+
 
         st.markdown("---")
 
