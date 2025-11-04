@@ -600,40 +600,37 @@ if uploaded_erp and uploaded_vendor:
             st.metric("New Payment Matches", len(pay_match) if not pay_match.empty else 0)
             st.markdown('</div>', unsafe_allow_html=True)
         with c8:
-                        # ---------- BALANCE DIFFERENCE METRIC ----------
-            st.markdown('<h2 class="section-title">Balance Summary</h2>', unsafe_allow_html=True)
-            col_b1, col_b2, col_b3 = st.columns([1, 1, 1])
-            
-            with col_b2:
-                possible_vendor_cols = ["balance", "saldo", "total", "υπόλοιπο", "ypolipo", "υπολοιπο"]
-                balance_col_erp = next((c for c in erp_df.columns if "balance" in c.lower()), None)
-                balance_col_ven = next((c for c in ven_df.columns if any(p in c.lower() for p in possible_vendor_cols)), None)
-            
-                if balance_col_erp and balance_col_ven:
-                    def parse_amt(v):
-                        s = str(v).strip().replace("€", "").replace(",", ".")
-                        s = re.sub(r"[^\d.\-]", "", s)
-                        try:
-                            return float(s)
-                        except:
-                            return 0.0
-            
-                    erp_vals = [parse_amt(v) for v in erp_df[balance_col_erp] if str(v).strip()]
-                    ven_vals = [parse_amt(v) for v in ven_df[balance_col_ven] if str(v).strip()]
-            
-                    if erp_vals and ven_vals:
-                        diff = round(erp_vals[-1] - ven_vals[-1], 2)
-            
-                        st.markdown('<div class="metric-container tier2-match">', unsafe_allow_html=True)
-                        st.metric("Balance Comparison", len([1]))  # mimic same metric height/structure
-                        st.markdown(
-                            f"**ERP:** {erp_vals[-1]:,.2f}<br>"
-                            f"**Vendor:** {ven_vals[-1]:,.2f}<br>"
-                            f"**Diff:** {diff:,.2f}",
-                            unsafe_allow_html=True
-                        )
-                        st.markdown('</div>', unsafe_allow_html=True)
+            # ---------- BALANCE DIFFERENCE METRIC ----------
+            possible_vendor_cols = ["balance", "saldo", "total", "υπόλοιπο", "ypolipo", "υπολοιπο"]
+            balance_col_erp = next((c for c in erp_df.columns if "balance" in c.lower()), None)
+            balance_col_ven = next((c for c in ven_df.columns if any(p in c.lower() for p in possible_vendor_cols)), None)
 
+            if balance_col_erp and balance_col_ven:
+                def parse_amt(v):
+                    s = str(v).strip().replace("€", "").replace(",", ".")
+                    s = re.sub(r"[^\d.\-]", "", s)
+                    try:
+                        return float(s)
+                    except:
+                        return 0.0
+
+                erp_vals = [parse_amt(v) for v in erp_df[balance_col_erp] if str(v).strip()]
+                ven_vals = [parse_amt(v) for v in ven_df[balance_col_ven] if str(v).strip()]
+
+                if erp_vals and ven_vals:
+                    diff = round(erp_vals[-1] - ven_vals[-1], 2)
+                    erp_last = erp_vals[-1]
+                    ven_last = ven_vals[-1]
+
+                    st.markdown('<div class="metric-container tier2-match">', unsafe_allow_html=True)
+                    st.metric("Balance Summary", "", delta=None)
+                    st.markdown(
+                        f"**ERP:** {erp_last:,.2f}<br>"
+                        f"**Vendor:** {ven_last:,.2f}<br>"
+                        f"**Diff:** {diff:,.2f}",
+                        unsafe_allow_html=True
+                    )
+                    st.markdown('</div>', unsafe_allow_html=True)
 
         st.markdown("---")
 
