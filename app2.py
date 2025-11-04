@@ -602,10 +602,20 @@ if uploaded_erp and uploaded_vendor:
 
         # ---- Balance Summary Metric (C8 • Yellow with main Difference metric) ----
         # ---- Balance Summary Metric (C8 • Yellow with Difference metric + detailed breakdown) ----
+        # ---- Balance Summary Metric (C8 • Yellow, with smart detection for Vendor Balance) ----
         with c8:
-            possible_vendor_cols = ["balance", "saldo", "υπόλοιπο", "υπολοιπο", "ypolipo"]
+            # auto-detect balance columns by name (ERP + Vendor)
+            possible_vendor_cols = ["balance", "saldo", "υπόλοιπο", "ypolipo", "υπολοιπο", "total", "running", "closing"]
             balance_col_erp = next((c for c in erp_df.columns if "balance" in c.lower()), None)
             balance_col_ven = next((c for c in ven_df.columns if any(p in c.lower() for p in possible_vendor_cols)), None)
+        
+            # if no vendor balance column found, try numeric fallback (similar to ERP logic)
+            if not balance_col_ven:
+                numeric_cols = [
+                    c for c in ven_df.columns
+                    if ven_df[c].apply(lambda x: str(x).replace(",", ".").replace("€", "").replace(" ", "").replace("-", "").replace(".", "", 1).isdigit()).sum() > 3
+                ]
+                balance_col_ven = numeric_cols[-1] if numeric_cols else None
         
             if balance_col_erp and balance_col_ven:
                 def parse_amt(v):
@@ -628,9 +638,7 @@ if uploaded_erp and uploaded_vendor:
                         '<div class="metric-container" style="background:#FBC02D;color:#000;font-weight:bold;">',
                         unsafe_allow_html=True
                     )
-                    # main metric title + value
                     st.metric("Balance Difference", f"{diff_val:,.2f}")
-                    # detailed breakdown (keep diff label too)
                     st.markdown(
                         f"**ERP:** {erp_last:,.2f}<br>"
                         f"**Vendor:** {ven_last:,.2f}<br>"
@@ -638,6 +646,7 @@ if uploaded_erp and uploaded_vendor:
                         unsafe_allow_html=True
                     )
                     st.markdown('</div>', unsafe_allow_html=True)
+
 
         st.markdown("---")
 
