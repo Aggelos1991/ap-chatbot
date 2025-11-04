@@ -35,11 +35,16 @@ def parse_amount(v):
     s = str(v).strip()
     s = re.sub(r"[^\d,.\-]", "", s)
     if s.count(",") == 1 and s.count(".") == 1:
-        if s.find(",") > s.find("."): s = s.replace(".", "").replace(",", ".")
-        else: s = s.replace(",", "")
-    elif s.count(",") == 1: s = s.replace(",", ".")
-    try: return float(s)
-    except: return 0.0
+        if s.find(",") > s.find("."):
+            s = s.replace(".", "").replace(",", ".")
+        else:
+            s = s.replace(",", "")
+    elif s.count(",") == 1:
+        s = s.replace(",", ".")
+    try:
+        return float(s)
+    except:
+        return 0.0
 
 def find_col(df, names):
     for c in df.columns:
@@ -109,7 +114,7 @@ if pay_file:
 
     combined_html = ""
     combined_vendor_names = []
-    debug_rows_all = []        # DEBUG LIST
+    debug_rows_all = []        # FULL DEBUG LIST
     export_data = {}
 
     for pay_code in selected_codes:
@@ -146,8 +151,10 @@ if pay_file:
                     if not match and abs(diff) > 0.01:
                         unmatched_invoices.append({"Alt. Document": f"{inv} (Adj. Diff)", "Invoice Value": diff})
 
-                    # DEBUG ROW ADDED HERE
+                    # ===== DEBUG ROW FIXED =====
                     debug_rows_all.append({
+                        "Payment Code": pay_code,
+                        "Vendor": vendor,
                         "Invoice": inv,
                         "Invoice Value": row["Invoice Value"],
                         "Payment Value": row["Payment Value"],
@@ -178,12 +185,26 @@ if pay_file:
     with tab1:
         st.markdown(combined_html, unsafe_allow_html=True)
 
-        # DEBUG TABLE — FULLY RESTORED
+        # ========== FULL DEBUG TABLE ==========
         if debug_rows_all:
-            st.subheader("Debug breakdown — invoice vs. CN matching")
-            st.dataframe(pd.DataFrame(debug_rows_all), use_container_width=True)
+            st.subheader("🔍 Debug breakdown — invoice vs. CN matching (per payment code)")
+            debug_df = pd.DataFrame(debug_rows_all)
+            debug_df["Invoice Value"] = debug_df["Invoice Value"].astype(float).round(2)
+            debug_df["Payment Value"] = debug_df["Payment Value"].astype(float).round(2)
+            debug_df["Difference"] = debug_df["Difference"].astype(float).round(2)
+            debug_df = debug_df.sort_values(by=["Payment Code", "Vendor", "Invoice"]).reset_index(drop=True)
 
-        # EXCEL — PERFECT
+            st.dataframe(debug_df, use_container_width=True, hide_index=True)
+
+            csv_buf = debug_df.to_csv(index=False).encode("utf-8")
+            st.download_button(
+                "⬇️ Download Debug Table (CSV)",
+                csv_buf,
+                file_name="debug_remitator_match_analysis.csv",
+                mime="text/csv"
+            )
+
+        # ========== EXCEL EXPORT ==========
         if export_data:
             wb = Workbook()
             ws = wb.active
