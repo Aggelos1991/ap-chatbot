@@ -600,7 +600,7 @@ if uploaded_erp and uploaded_vendor:
             st.metric("New Payment Matches", len(pay_match) if not pay_match.empty else 0)
             st.markdown('</div>', unsafe_allow_html=True)
 
-        # ---- Balance Summary Metric (C8) ----
+        # ---- Balance Summary Metric (C8 • Yellow) ----
         with c8:
             possible_vendor_cols = ["balance", "saldo", "υπόλοιπο", "υπολοιπο", "ypolipo"]
             balance_col_erp = next((c for c in erp_df.columns if "balance" in c.lower()), None)
@@ -620,7 +620,10 @@ if uploaded_erp and uploaded_vendor:
         
                 if erp_vals and ven_vals:
                     diff_val = round(erp_vals[-1] - ven_vals[-1], 2)
-                    st.markdown('<div class="metric-container balance-match">', unsafe_allow_html=True)
+                    st.markdown(
+                        '<div class="metric-container" style="background:#FBC02D;color:#000;font-weight:bold;">',
+                        unsafe_allow_html=True
+                    )
                     st.metric("Balance Summary", "")
                     st.markdown(
                         f"**ERP:** {erp_vals[-1]:,.2f}<br>"
@@ -629,6 +632,7 @@ if uploaded_erp and uploaded_vendor:
                         unsafe_allow_html=True
                     )
                     st.markdown('</div>', unsafe_allow_html=True)
+
 
 
         st.markdown("---")
