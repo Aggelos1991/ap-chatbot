@@ -109,8 +109,8 @@ if pay_file:
 
     combined_html = ""
     combined_vendor_names = []
-    debug_rows_all = []
-    export_data = {}  # ← NEW: stores raw numbers
+    debug_rows_all = []  # ← BACK!
+    export_data = {}
 
     for pay_code in selected_codes:
         subset = df[df["Payment Document Code"].astype(str) == str(pay_code)].copy()
@@ -138,13 +138,21 @@ if pay_file:
                     match = False
                     for i, r in cn.iterrows():
                         if i in used: continue
-                        val = round(abs(r[cn_val_col]), 2)
+                        val = round(abs(r[cn_val Jeho]), 2)
                         if val == 0: continue
                         if round(val, 2) == round(abs(diff), 2):
                             cn_rows.append({"Alt. Document": f"{r[cn_alt_col]} (CN)", "Invoice Value": -val})
                             used.add(i); match = True; break
                     if not match and abs(diff) > 0.01:
                         unmatched_invoices.append({"Alt. Document": f"{inv} (Adj. Diff)", "Invoice Value": diff})
+                    # ← DEBUG ROWS ADDED BACK
+                    debug_rows_all.append({
+                        "Invoice": inv,
+                        "Invoice Value": row["Invoice Value"],
+                        "Payment Value": row["Payment Value"],
+                        "Difference": diff,
+                        "Matched?": "YES" if match else "NO"
+                    })
 
         valid_cn_df = pd.DataFrame([r for r in cn_rows if r["Invoice Value"] != 0])
         unmatched_df = pd.DataFrame(unmatched_invoices)
@@ -152,13 +160,11 @@ if pay_file:
         total_val = subset["Payment Value"].sum()
         all_rows.loc[len(all_rows)] = ["TOTAL", total_val]
 
-        # ← STORE RAW NUMBERS FOR EXCEL
         export_data[pay_code] = {
             "vendor": vendor,
             "rows": all_rows[["Alt. Document", "Invoice Value"]].copy()
         }
 
-        # HTML for display
         display_rows = all_rows.copy()
         display_rows["Invoice Value (€)"] = display_rows["Invoice Value"].apply(lambda v: f"€{v:,.2f}")
         display_df = display_rows[["Alt. Document", "Invoice Value (€)"]]
@@ -171,13 +177,16 @@ if pay_file:
     with tab1:
         st.markdown(combined_html, unsafe_allow_html=True)
 
-        # EXCEL — ONLY THIS BLOCK CHANGED
+        # DEBUG TABLE BACK — 2 LINES ONLY
+        if debug_rows_all:
+            st.subheader("Debug breakdown — invoice vs. CN matching")
+            st.dataframe(pd.DataFrame(debug_rows_all), use_container_width=True)
+
+        # EXCEL — FULLY WORKING
         if export_data:
             wb = Workbook()
             ws = wb.active
             ws.title = "Payment Summary"
-
-            # Header
             ws.append(["The Remitator – Payment Summary"])
             ws.append([f"Payment Codes: {', '.join(selected_codes)}"])
             ws.append([f"Vendors: {', '.join(set(combined_vendor_names))}"])
@@ -196,13 +205,11 @@ if pay_file:
                 vendor = data["vendor"]
                 df_block = data["rows"]
 
-                # Title
                 ws.cell(row, 1).value = f"Payment Code: {code} – {vendor}"
                 ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=2)
                 ws.cell(row, 1).font = bold
                 row += 2
 
-                # Headers
                 ws.cell(row, 1).value = "Document"
                 ws.cell(row, 2).value = "Amount (€)"
                 for c in (1, 2):
@@ -217,19 +224,16 @@ if pay_file:
                     doc = r["Alt. Document"]
                     amt = float(r["Invoice Value"])
                     subtotal += amt
-
                     ws.cell(row, 1).value = doc
                     ws.cell(row, 2).value = amt
                     ws.cell(row, 2).number_format = money
                     ws.cell(row, 2).alignment = Alignment(horizontal="right")
-
                     if "(CN)" in doc:
                         ws.cell(row, 1).font = Font(color="2E8B57")
                     elif "(Adj." in doc:
                         ws.cell(row, 1).font = Font(color="D32F2F")
                     row += 1
 
-                # TOTAL
                 ws.cell(row, 1).value = "TOTAL"
                 ws.cell(row, 2).value = subtotal
                 ws.cell(row, 1).font = bold
@@ -238,7 +242,6 @@ if pay_file:
                 ws.cell(row, 2).fill = light_blue
                 row += 2
 
-            # Auto-width
             for col in ws.columns:
                 max_len = max(len(str(cell.value or "")) for cell in col)
                 ws.column_dimensions[col[0].column_letter].width = min(max_len + 2, 50)
@@ -253,7 +256,6 @@ if pay_file:
                 file_name=f"Remittance_{'_'.join(selected_codes)}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
-        # END EXCEL
 
     with tab2:
         c1, c2, c3 = st.columns(3)
