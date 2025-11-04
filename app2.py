@@ -484,127 +484,53 @@ if uploaded_erp and uploaded_vendor:
         st.write("🧩 ERP columns detected:", list(erp_df.columns))
         st.write("🧩 Vendor columns detected:", list(ven_df.columns))
 
-
         with st.spinner("Analyzing invoices..."):
-            # Tier-1
             tier1, miss_erp, miss_ven = match_invoices(erp_df, ven_df)
 
-            # progressive de-dup after Tier-1
             used_erp_inv = set(tier1["ERP Invoice"].astype(str)) if not tier1.empty else set()
             used_ven_inv = set(tier1["Vendor Invoice"].astype(str)) if not tier1.empty else set()
+
             if not miss_erp.empty:
                 miss_erp = miss_erp[~miss_erp["Invoice"].astype(str).isin(used_erp_inv)]
             if not miss_ven.empty:
                 miss_ven = miss_ven[~miss_ven["Invoice"].astype(str).isin(used_ven_inv)]
 
-            # Tier-2
             tier2, _, _, miss_erp2, miss_ven2 = tier2_match(miss_erp, miss_ven)
-            if not tier2.empty:
+            if tier2.empty:
+                miss_erp2, miss_ven2 = miss_erp, miss_ven
+            else:
                 used_erp_inv |= set(tier2["ERP Invoice"].astype(str))
                 used_ven_inv |= set(tier2["Vendor Invoice"].astype(str))
-                if not miss_erp2.empty:
-                    miss_erp2 = miss_erp2[~miss_erp2["Invoice"].astype(str).isin(used_erp_inv)]
-                if not miss_ven2.empty:
-                    miss_ven2 = miss_ven2[~miss_ven2["Invoice"].astype(str).isin(used_ven_inv)]
-            else:
-                miss_erp2, miss_ven2 = miss_erp, miss_ven
 
-            # Tier-3
             tier3, _, _, final_erp_miss, final_ven_miss = tier3_match(miss_erp2, miss_ven2)
             if not tier3.empty:
                 used_erp_inv |= set(tier3["ERP Invoice"].astype(str))
                 used_ven_inv |= set(tier3["Vendor Invoice"].astype(str))
-                if not final_erp_miss.empty:
-                    final_erp_miss = final_erp_miss[~final_erp_miss["Invoice"].astype(str).isin(used_erp_inv)]
-                if not final_ven_miss.empty:
-                    final_ven_miss = final_ven_miss[~final_ven_miss["Invoice"].astype(str).isin(used_ven_inv)]
 
-            # Payments
             erp_pay, ven_pay, pay_match = extract_payments(erp_df, ven_df)
 
         st.success("Reconciliation Complete!")
-        # --- Safety check: convert accidental floats to empty DataFrames ---
-        for name in ["tier1", "tier2", "tier3", "perf", "diff", "final_erp_miss", "final_ven_miss", "pay_match"]:
-            if name in locals():
-                val = locals()[name]
-                if isinstance(val, (float, int)):
-                    locals()[name] = pd.DataFrame()
+
+        # -------- SAFETY PATCH: ensure no variable is a float --------
+        def df_guard(obj):
+            return obj if isinstance(obj, pd.DataFrame) else pd.DataFrame()
+
+        tier1 = df_guard(tier1)
+        tier2 = df_guard(tier2)
+        tier3 = df_guard(tier3)
+        final_erp_miss = df_guard(final_erp_miss)
+        final_ven_miss = df_guard(final_ven_miss)
+        pay_match = df_guard(pay_match)
 
         # ---------- METRICS ----------
         st.markdown('<h2 class="section-title">Reconciliation Summary</h2>', unsafe_allow_html=True)
         c1, c2, c3, c4, c5, c6, c7, c8 = st.columns([1, 1, 1, 1, 1, 1, 1, 1.2])
+
         perf = tier1[tier1["Status"] == "Perfect Match"] if not tier1.empty else pd.DataFrame()
         diff = tier1[tier1["Status"] == "Difference Match"] if not tier1.empty else pd.DataFrame()
 
         def safe_sum(df, col):
             return float(df[col].sum()) if not df.empty and col in df.columns else 0.0
-
-        with c1:
-            st.markdown('<div class="metric-container perfect-match">', unsafe_allow_html=True)
-            st.metric("Perfect Matches", len(perf))
-            st.markdown(
-                f"**ERP:** {safe_sum(perf, 'ERP Amount'):,.2f}<br>"
-                f"**Vendor:** {safe_sum(perf, 'Vendor Amount'):,.2f}<br>"
-                f"**Diff:** {safe_sum(perf, 'Difference'):,.2f}",
-                unsafe_allow_html=True
-            )
-            st.markdown('</div>', unsafe_allow_html=True)
-
-        with c2:
-            st.markdown('<div class="metric-container difference-match">', unsafe_allow_html=True)
-            st.metric("Differences", len(diff))
-            st.markdown(
-                f"**ERP:** {safe_sum(diff, 'ERP Amount'):,.2f}<br>"
-                f"**Vendor:** {safe_sum(diff, 'Vendor Amount'):,.2f}<br>"
-                f"**Diff:** {safe_sum(diff, 'Difference'):,.2f}",
-                unsafe_allow_html=True
-            )
-            st.markdown('</div>', unsafe_allow_html=True)
-
-        with c3:
-            st.markdown('<div class="metric-container tier2-match">', unsafe_allow_html=True)
-            st.metric("Tier-2", len(tier2))
-            st.markdown(
-                f"**ERP:** {safe_sum(tier2, 'ERP Amount'):,.2f}<br>"
-                f"**Vendor:** {safe_sum(tier2, 'Vendor Amount'):,.2f}<br>"
-                f"**Diff:** {safe_sum(tier2, 'Difference'):,.2f}",
-                unsafe_allow_html=True
-            )
-            st.markdown('</div>', unsafe_allow_html=True)
-
-        with c4:
-            st.markdown('<div class="metric-container tier3-match">', unsafe_allow_html=True)
-            st.metric("Tier-3", len(tier3))
-            st.markdown(
-                f"**ERP:** {safe_sum(tier3, 'ERP Amount'):,.2f}<br>"
-                f"**Vendor:** {safe_sum(tier3, 'Vendor Amount'):,.2f}<br>"
-                f"**Diff:** {safe_sum(tier3, 'Difference'):,.2f}",
-                unsafe_allow_html=True
-            )
-            st.markdown('</div>', unsafe_allow_html=True)
-
-        with c5:
-            st.markdown('<div class="metric-container missing-erp">', unsafe_allow_html=True)
-            st.metric("Unmatched ERP", 0 if final_erp_miss.empty else len(final_erp_miss))
-            st.markdown(
-                f"**Total:** {final_erp_miss['Amount'].sum():,.2f}" if not final_erp_miss.empty and 'Amount' in final_erp_miss.columns else "**Total:** 0.00",
-                unsafe_allow_html=True
-            )
-            st.markdown('</div>', unsafe_allow_html=True)
-
-        with c6:
-            st.markdown('<div class="metric-container missing-vendor">', unsafe_allow_html=True)
-            st.metric("Unmatched Vendor", 0 if final_ven_miss.empty else len(final_ven_miss))
-            st.markdown(
-                f"**Total:** {final_ven_miss['Amount'].sum():,.2f}" if not final_ven_miss.empty and 'Amount' in final_ven_miss.columns else "**Total:** 0.00",
-                unsafe_allow_html=True
-            )
-            st.markdown('</div>', unsafe_allow_html=True)
-
-        with c7:
-            st.markdown('<div class="metric-container payment-match">', unsafe_allow_html=True)
-            st.metric("New Payment Matches", len(pay_match) if not pay_match.empty else 0)
-            st.markdown('</div>', unsafe_allow_html=True)
         with c8:
             # ---------- BALANCE DIFFERENCE METRIC ----------
             possible_vendor_cols = ["balance", "saldo", "total", "υπόλοιπο", "ypolipo", "υπολοιπο"]
