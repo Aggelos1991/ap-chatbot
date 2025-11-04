@@ -601,42 +601,40 @@ if uploaded_erp and uploaded_vendor:
             st.markdown('</div>', unsafe_allow_html=True)
 
         # ---- Balance Summary Metric (C8 • Yellow • bulletproof detection for Vendor Balance) ----
+       # ---- Balance Summary Metric (C8 • Yellow • fully robust detection) ----
         with c8:
-            # Clean column names and detect both ERP + Vendor balances robustly
-            erp_cols = [c.strip().lower().replace(" ", "").replace("_", "") for c in erp_df.columns]
-            ven_cols = [c.strip().lower().replace(" ", "").replace("_", "") for c in ven_df.columns]
+            def parse_amt(v):
+                if pd.isna(v): 
+                    return 0.0
+                s = str(v).strip().replace("€", "").replace(",", ".")
+                s = re.sub(r"[^\d.\-]", "", s)
+                try:
+                    return float(s)
+                except:
+                    return 0.0
         
-            # Map back to original names
-            erp_col_map = dict(zip(erp_cols, erp_df.columns))
-            ven_col_map = dict(zip(ven_cols, ven_df.columns))
+            def find_balance_col(df):
+                # clean all column names
+                clean_cols = {c: c.strip().lower().replace(" ", "").replace("_", "") for c in df.columns}
+                possible = ["balance", "saldo", "total", "υπόλοιπο", "υπολοιπο", "ypolipo", "closing", "ending"]
+                # try by name
+                for raw, clean in clean_cols.items():
+                    if any(p in clean for p in possible):
+                        return raw
+                # if not found by name, look for a numeric-like column with running pattern
+                num_cols = []
+                for c in df.columns:
+                    vals = df[c].dropna().astype(str).apply(lambda x: bool(re.match(r"^-?\d+[.,]?\d*$", x.strip().replace('€',''))))
+                    if vals.sum() > 3:  # at least 3 numeric-like entries
+                        num_cols.append(c)
+                return num_cols[-1] if num_cols else None
         
-            # Try to find ERP balance
-            balance_col_erp = next((erp_col_map[c] for c in erp_cols if "balance" in c), None)
-        
-            # Try to find Vendor balance (any language or variation)
-            possible_vendor_markers = ["balance", "saldo", "total", "υπόλοιπο", "υπολοιπο", "ypolipo", "running", "closing"]
-            balance_col_ven = next((ven_col_map[c] for c in ven_cols if any(p in c for p in possible_vendor_markers)), None)
-        
-            # If still not found, pick last numeric-like column
-            if not balance_col_ven:
-                num_like_cols = [
-                    c for c in ven_df.columns
-                    if ven_df[c].apply(lambda x: re.match(r"^-?\d+[.,]?\d*$", str(x).strip().replace("€","")) is not None).sum() > 3
-                ]
-                balance_col_ven = num_like_cols[-1] if num_like_cols else None
+            balance_col_erp = find_balance_col(erp_df)
+            balance_col_ven = find_balance_col(ven_df)
         
             if balance_col_erp and balance_col_ven:
-                def parse_amt(v):
-                    s = str(v).strip().replace("€", "").replace(",", ".")
-                    s = re.sub(r"[^\d.\-]", "", s)
-                    try:
-                        return float(s)
-                    except:
-                        return 0.0
-        
-                erp_vals = [parse_amt(v) for v in erp_df[balance_col_erp] if str(v).strip()]
-                ven_vals = [parse_amt(v) for v in ven_df[balance_col_ven] if str(v).strip()]
-        
+                erp_vals = erp_df[balance_col_erp].apply(parse_amt).tolist()
+                ven_vals = ven_df[balance_col_ven].apply(parse_amt).tolist()
                 if erp_vals and ven_vals:
                     erp_last = erp_vals[-1]
                     ven_last = ven_vals[-1]
@@ -654,6 +652,11 @@ if uploaded_erp and uploaded_vendor:
                         unsafe_allow_html=True
                     )
                     st.markdown('</div>', unsafe_allow_html=True)
+                else:
+                    st.warning("No numeric balances found in files.")
+            else:
+                st.info("Balance columns not found in ERP or Vendor file.")
+
 
 
 
