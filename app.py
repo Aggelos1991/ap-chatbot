@@ -229,32 +229,45 @@ if pay_file:
             st.dataframe(pd.DataFrame(debug_rows_all), use_container_width=True)
 
         # ✅ FIXED EXCEL EXPORT
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "Final Summary"
+       # --- Excel export (fixed to include all tables) ---
+      wb = Workbook()
+      ws = wb.active
+      ws.title = "Final Summary"
+      
+      # 1️⃣ Header info
+      ws.append(["Payment Codes", ", ".join(selected_codes)])
+      ws.append(["Vendors", ", ".join(combined_vendor_names)])
+      ws.append(["Exported At", datetime.now().strftime("%Y-%m-%d %H:%M:%S")])
+      ws.append([])
+      
+      # 2️⃣ Add each table properly
+      for pay_code in selected_codes:
+          subset = df[df["Payment Document Code"].astype(str) == str(pay_code)].copy()
+          if subset.empty:
+              continue
+      
+          subset["Invoice Value"] = subset["Invoice Value"].apply(parse_amount)
+          subset["Payment Value"] = subset["Payment Value"].apply(parse_amount)
+          vendor = subset["Supplier Name"].iloc[0]
+          summary = subset[["Alt. Document", "Invoice Value"]].copy()
+      
+          ws.append([f"Payment Code: {pay_code}", f"Vendor: {vendor}"])
+          for r in dataframe_to_rows(summary, index=False, header=True):
+              ws.append(r)
+          ws.append([])  # blank row for separation
+      
+      # 3️⃣ Save & download
+      buf = BytesIO()
+      wb.save(buf)
+      buf.seek(0)
+      
+      st.download_button(
+          "💾 Download Excel Summary",
+          buf,
+          file_name=f"Combined_Payments_{'_'.join(selected_codes)}.xlsx",
+          mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      )
 
-        ws.append(["Payment Codes", ", ".join(selected_codes)])
-        ws.append(["Vendors", ", ".join(combined_vendor_names)])
-        ws.append(["Exported At", datetime.now().strftime("%Y-%m-%d %H:%M:%S")])
-        ws.append([])
-
-        for code, df_exp in export_tables.items():
-            vendor_name = df[df["Payment Document Code"].astype(str) == code]["Supplier Name"].iloc[0]
-            ws.append([f"Payment Code: {code}", f"Vendor: {vendor_name}"])
-            for r in dataframe_to_rows(df_exp, index=False, header=True):
-                ws.append(r)
-            ws.append([])
-
-        buf = BytesIO()
-        wb.save(buf)
-        buf.seek(0)
-
-        st.download_button(
-            "💾 Download Excel Summary",
-            buf,
-            file_name=f"Combined_Payments_{'_'.join(selected_codes)}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
 
     with tab2:
         c1, c2, c3 = st.columns(3)
