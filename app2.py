@@ -597,8 +597,13 @@ if uploaded_erp and uploaded_vendor:
 
         with c7:
             st.markdown('<div class="metric-container payment-match">', unsafe_allow_html=True)
-            st.metric("New Payment Matches", len(pay_match) if not pay_match.empty else 0)
+            if not pay_match.empty:
+                total_val = pay_match[["ERP Amount", "Vendor Amount"]].apply(pd.to_numeric, errors="coerce").mean(axis=1).sum()
+                st.metric("New Payment Matches (€)", f"{total_val:,.2f}")
+            else:
+                st.metric("New Payment Matches (€)", "0.00")
             st.markdown('</div>', unsafe_allow_html=True)
+
 
         # ---- Balance Summary Metric (C8 • Yellow • bulletproof detection for Vendor Balance) ----
        # ---- Balance Summary Metric (C8 • Yellow • fully robust detection) ----
