@@ -1,5 +1,5 @@
 # ==========================================================
-# The Remitator — FINAL FINAL (Manual Comma Codes + AP Extras Solution Category ID=10)
+# The Remitator — FINAL FINAL (Icons + Excel + GLPI)
 # ==========================================================
 import os, re, requests
 import pandas as pd
@@ -19,6 +19,8 @@ st.markdown("""
     height:2.4em;width:160px;font-size:15px
   }
   div.stButton > button:first-child:hover{background-color:#0069d9}
+  .checkmark {color: green; font-weight: bold; font-size: 18px;}
+  .cross {color: red; font-weight: bold; font-size: 18px;}
 </style>
 """, unsafe_allow_html=True)
 st.title("The Remitator — Hasta la vista, payment remittance.")
@@ -49,7 +51,7 @@ def find_col(df, names):
                 return c
     return None
 
-# ========== GLPI API ==========
+# ========== GLPI API (unchanged) ==========
 def glpi_login():
     r = requests.get(f"{GLPI_URL}/initSession",
                      headers={"Authorization": f"user_token {USER_TOKEN}", "App-Token": APP_TOKEN})
@@ -59,11 +61,8 @@ def glpi_update_ticket(token, ticket_id, status=None, category_id=None):
     payload = {"input": {}}
     if status is not None: payload["input"]["status"] = status
     if category_id is not None: payload["input"]["itilcategories_id"] = category_id
-    return requests.put(
-        f"{GLPI_URL}/Ticket/{ticket_id}",
-        json=payload,
-        headers={"Session-Token": token, "App-Token": APP_TOKEN, "Content-Type": "application/json"}
-    )
+    return requests.put(f"{GLPI_URL}/Ticket/{ticket_id}", json=payload,
+                        headers={"Session-Token": token, "App-Token": APP_TOKEN, "Content-Type": "application/json"})
 
 def glpi_set_apextras_category(token, ticket_id, solution_cat_id=10):
     body = {"input": {"id": int(ticket_id), "plugin_fields_solutioncategoryfielddropdowns_id": int(solution_cat_id)}}
@@ -109,7 +108,7 @@ if pay_file:
 
     combined_html = ""
     combined_vendor_names = []
-    debug_rows_all = []        # DEBUG LIST
+    debug_rows_all = []
     export_data = {}
 
     for pay_code in selected_codes:
@@ -146,13 +145,13 @@ if pay_file:
                     if not match and abs(diff) > 0.01:
                         unmatched_invoices.append({"Alt. Document": f"{inv} (Adj. Diff)", "Invoice Value": diff})
 
-                    # DEBUG ROW ADDED HERE
+                    # DEBUG WITH ICONS
                     debug_rows_all.append({
                         "Invoice": inv,
-                        "Invoice Value": row["Invoice Value"],
-                        "Payment Value": row["Payment Value"],
-                        "Difference": diff,
-                        "Matched?": "YES" if match else "NO"
+                        "Invoice Value": f"€{row['Invoice Value']:,.2f}",
+                        "Payment Value": f"€{row['Payment Value']:,.2f}",
+                        "Difference": f"€{diff:,.2f}",
+                        "Matched?": "MATCH" if match else "NO MATCH"
                     })
 
         valid_cn_df = pd.DataFrame([r for r in cn_rows if r["Invoice Value"] != 0])
@@ -161,10 +160,7 @@ if pay_file:
         total_val = subset["Payment Value"].sum()
         all_rows.loc[len(all_rows)] = ["TOTAL", total_val]
 
-        export_data[pay_code] = {
-            "vendor": vendor,
-            "rows": all_rows[["Alt. Document", "Invoice Value"]].copy()
-        }
+        export_data[pay_code] = {"vendor": vendor, "rows": all_rows[["Alt. Document", "Invoice Value"]].copy()}
 
         display_rows = all_rows.copy()
         display_rows["Invoice Value (€)"] = display_rows["Invoice Value"].apply(lambda v: f"€{v:,.2f}")
@@ -178,10 +174,15 @@ if pay_file:
     with tab1:
         st.markdown(combined_html, unsafe_allow_html=True)
 
-        # DEBUG TABLE — FULLY RESTORED
+        # DEBUG TABLE WITH CHECKMARK / RED X ICONS
         if debug_rows_all:
             st.subheader("Debug breakdown — invoice vs. CN matching")
-            st.dataframe(pd.DataFrame(debug_rows_all), use_container_width=True)
+            debug_df = pd.DataFrame(debug_rows_all)
+            debug_df["Matched?"] = debug_df["Matched?"].replace({
+                "MATCH": '<span class="checkmark">MATCH</span>',
+                "NO MATCH": '<span class="cross">NO MATCH</span>'
+            })
+            st.write(debug_df.to_html(escape=False, index=False), unsafe_allow_html=True)
 
         # EXCEL — PERFECT
         if export_data:
@@ -252,7 +253,7 @@ if pay_file:
             buf.seek(0)
 
             st.download_button(
-                label="Download Excel Summary (FIXED)",
+                label="Download Excel Summary",
                 data=buf,
                 file_name=f"Remittance_{'_'.join(selected_codes)}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
