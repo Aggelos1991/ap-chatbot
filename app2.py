@@ -362,8 +362,14 @@ def extract_payments(erp_df, ven_df):
             df["Debit"] = df[f"debit_{tag}"].apply(normalize_number)
             df["Credit"] = df[f"credit_{tag}"].apply(normalize_number)
             df["Amount"] = df.apply(
-                lambda r: r["Debit"] if abs(r["Debit"]) > 0 else abs(r["Credit"]), axis=1
+                lambda r: (
+                    r["Debit"]
+                    if (abs(r["Debit"]) > 0 or str(r["Debit"]).strip() not in ["", "0", "0.0"])
+                    else abs(r["Credit"])
+                ),
+                axis=1
             )
+
             df["Amount"] = df["Amount"].round(2)
 
     # Match ERP ↔ Vendor payments by amount (tolerance €0.05)
