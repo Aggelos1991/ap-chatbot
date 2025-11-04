@@ -337,6 +337,7 @@ def tier3_match(erp_miss, ven_miss):
 
 # ------- Payments detection & matching (reason + invoice text) -------
 # ------- Payments detection & matching (reason + invoice text) -------
+# ------- Payments detection & matching (reason + invoice text) -------
 def extract_payments(erp_df, ven_df):
     pay_kw = [
         "πληρωμή", "payment", "remittance", "bank transfer",
@@ -356,23 +357,32 @@ def extract_payments(erp_df, ven_df):
     erp_pay = erp_df[erp_df.apply(lambda r: is_payment(r, "erp"), axis=1)].copy()
     ven_pay = ven_df[ven_df.apply(lambda r: is_payment(r, "ven"), axis=1)].copy()
 
-    # ✅ FIXED: Correctly handle ERP values (nonzero debit OR credit)
+    # ✅ robust amount extraction for both debit & credit text/num values
     for df, tag in [(erp_pay, "erp"), (ven_pay, "ven")]:
         if not df.empty:
-            df["Debit"] = df[f"debit_{tag}"].apply(normalize_number)
+            df["Debit"]  = df[f"debit_{tag}"].apply(normalize_number)
             df["Credit"] = df[f"credit_{tag}"].apply(normalize_number)
-            df["Amount"] = df.apply(
-                lambda r: (
-                    r["Debit"]
-                    if (abs(r["Debit"]) > 0 or str(r["Debit"]).strip() not in ["", "0", "0.0"])
-                    else abs(r["Credit"])
-                ),
-                axis=1
-            )
 
-            df["Amount"] = df["Amount"].round(2)
+            def pick_amount(r):
+                d, c = abs(r["Debit"]), abs(r["Credit"])
+                # take whichever is larger or non-zero
+                if d == 0 and c == 0:
+                    # fallback: parse raw cell strings if numeric text
+                    raw_d = str(r.get(f"debit_{tag}", "")).strip()
+                    raw_c = str(r.get(f"credit_{tag}", "")).strip()
+                    for raw in (raw_d, raw_c):
+                        try:
+                            val = float(raw.replace(",", "."))
+                            if val != 0:
+                                return abs(val)
+                        except:
+                            pass
+                    return 0.0
+                return d if d >= c else c
 
-    # Match ERP ↔ Vendor payments by amount (tolerance €0.05)
+            df["Amount"] = df.apply(pick_amount, axis=1).round(2)
+
+    # match ERP ↔ Vendor payments
     matched, used_v = [], set()
     for _, e in erp_pay.iterrows():
         for vi, v in ven_pay.iterrows():
@@ -391,6 +401,7 @@ def extract_payments(erp_df, ven_df):
 
     pay_match = pd.DataFrame(matched)
     return erp_pay, ven_pay, pay_match
+
 
 
 
