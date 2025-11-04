@@ -483,7 +483,56 @@ if uploaded_erp and uploaded_vendor:
         ven_df = normalize_columns(ven_raw, "ven")
         st.write("🧩 ERP columns detected:", list(erp_df.columns))
         st.write("🧩 Vendor columns detected:", list(ven_df.columns))
+        # ==================== BALANCE DIFFERENCE METRIC ==========================
 
+        def calculate_balance_difference(erp_df, ven_df):
+            """Calculate the difference between ERP and Vendor ending balances."""
+            balance_col_erp = next((c for c in erp_df.columns if "balance" in c.lower()), None)
+            possible_vendor_cols = ["balance", "saldo", "υπόλοιπο", "ypolipo", "υπολοιπο"]
+            balance_col_ven = next((c for c in ven_df.columns if any(p in c.lower() for p in possible_vendor_cols)), None)
+        
+            if not balance_col_erp or not balance_col_ven:
+                return None, None, None
+        
+            def parse_amount(v):
+                s = str(v).strip().replace("€", "").replace(",", ".")
+                s = re.sub(r"[^\d.\-]", "", s)
+                try:
+                    return float(s)
+                except:
+                    return 0.0
+        
+            erp_vals = [parse_amount(v) for v in erp_df[balance_col_erp] if str(v).strip()]
+            ven_vals = [parse_amount(v) for v in ven_df[balance_col_ven] if str(v).strip()]
+            if not erp_vals or not ven_vals:
+                return None, None, None
+        
+            last_erp = erp_vals[-1]
+            last_ven = ven_vals[-1]
+            diff = round(last_erp - last_ven, 2)
+            return last_erp, last_ven, diff
+        
+        
+        # ==================== UI DISPLAY ==========================
+        last_balance_erp, last_balance_ven, balance_diff = calculate_balance_difference(erp_df, ven_df)
+        
+        if balance_diff is not None:
+            st.markdown('<h2 class="section-title">Balance Difference</h2>', unsafe_allow_html=True)
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                st.metric("ERP Balance", f"{last_balance_erp:,.2f}")
+            with c2:
+                st.metric("Vendor Balance", f"{last_balance_ven:,.2f}")
+            with c3:
+                st.metric("Difference (ERP - Vendor)", f"{balance_diff:,.2f}")
+        
+            balance_df = pd.DataFrame({
+                "ERP Balance": [last_balance_erp],
+                "Vendor Balance": [last_balance_ven],
+                "Balance Difference": [balance_diff]
+            })
+            st.dataframe(balance_df, use_container_width=True)
+            st.markdown("---")
 
         with st.spinner("Analyzing invoices..."):
             # Tier-1
