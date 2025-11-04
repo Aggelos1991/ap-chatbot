@@ -338,6 +338,7 @@ def tier3_match(erp_miss, ven_miss):
 # ------- Payments detection & matching (reason + invoice text) -------
 # ------- Payments detection & matching (reason + invoice text) -------
 # ------- Payments detection & matching (reason + invoice text) -------
+# ------- Payments detection & matching (reason + invoice text) -------
 def extract_payments(erp_df, ven_df):
     pay_kw = [
         "πληρωμή", "payment", "remittance", "bank transfer",
@@ -357,32 +358,56 @@ def extract_payments(erp_df, ven_df):
     erp_pay = erp_df[erp_df.apply(lambda r: is_payment(r, "erp"), axis=1)].copy()
     ven_pay = ven_df[ven_df.apply(lambda r: is_payment(r, "ven"), axis=1)].copy()
 
-    # ✅ robust amount extraction for both debit & credit text/num values
-    for df, tag in [(erp_pay, "erp"), (ven_pay, "ven")]:
-        if not df.empty:
-            df["Debit"]  = df[f"debit_{tag}"].apply(normalize_number)
-            df["Credit"] = df[f"credit_{tag}"].apply(normalize_number)
+    # ---- helper: compute Amount column with strong fallbacks ----
+    def compute_amounts(df, tag):
+        if df.empty:
+            return df
 
-            def pick_amount(r):
-                d, c = abs(r["Debit"]), abs(r["Credit"])
-                # take whichever is larger or non-zero
-                if d == 0 and c == 0:
-                    # fallback: parse raw cell strings if numeric text
-                    raw_d = str(r.get(f"debit_{tag}", "")).strip()
-                    raw_c = str(r.get(f"credit_{tag}", "")).strip()
-                    for raw in (raw_d, raw_c):
-                        try:
-                            val = float(raw.replace(",", "."))
-                            if val != 0:
-                                return abs(val)
-                        except:
-                            pass
-                    return 0.0
-                return d if d >= c else c
+        # ensure numeric debit/credit columns exist
+        if f"debit_{tag}" not in df.columns:  df[f"debit_{tag}"]  = 0
+        if f"credit_{tag}" not in df.columns: df[f"credit_{tag}"] = 0
 
-            df["Amount"] = df.apply(pick_amount, axis=1).round(2)
+        df["Debit"]  = df[f"debit_{tag}"].apply(normalize_number)
+        df["Credit"] = df[f"credit_{tag}"].apply(normalize_number)
 
-    # match ERP ↔ Vendor payments
+        # Base rule (like your vendor logic): prefer absolute difference.
+        base_amount = (df["Debit"] - df["Credit"]).abs().round(2)
+
+        # If that’s zero (common in single-column ERP exports), use the larger side.
+        side_max = pd.Series([max(abs(d), abs(c)) for d, c in zip(df["Debit"], df["Credit"])], index=df.index).round(2)
+
+        # Fallback: scan any alternative amountish columns (ERP often uses one)
+        candidate_words = [
+            "amount", "importe", "valor", "total", "document value", "net", "paid",
+            "cobro", "pago", "charge", "base imponible", "importe factura", "importe neto"
+        ]
+        amount_like_cols = [c for c in df.columns if any(w in str(c).lower() for w in candidate_words)
+                            and c not in {f"debit_{tag}", f"credit_{tag}", "Debit", "Credit"}]
+
+        fallback_vals = pd.Series(0.0, index=df.index)
+        for c in amount_like_cols:
+            # take the largest absolute numeric found among candidate columns
+            vals = df[c].apply(normalize_number).abs()
+            fallback_vals = pd.concat([fallback_vals, vals], axis=1).max(axis=1)
+
+        # Now pick, in order of reliability:
+        # 1) base_amount if > 0
+        # 2) side_max if > 0
+        # 3) fallback_vals if > 0
+        df["Amount"] = base_amount
+        zero_mask = df["Amount"] == 0
+        df.loc[zero_mask, "Amount"] = side_max[zero_mask]
+        zero_mask = df["Amount"] == 0
+        df.loc[zero_mask, "Amount"] = fallback_vals[zero_mask]
+        df["Amount"] = df["Amount"].abs().round(2)
+
+        return df
+
+    # Mirror vendor logic and adapt ERP with the fallbacks above
+    erp_pay = compute_amounts(erp_pay, "erp")
+    ven_pay = compute_amounts(ven_pay, "ven")
+
+    # ---- Match ERP ↔ Vendor payments by amount (tolerance €0.05) ----
     matched, used_v = [], set()
     for _, e in erp_pay.iterrows():
         for vi, v in ven_pay.iterrows():
@@ -392,8 +417,8 @@ def extract_payments(erp_df, ven_df):
                 matched.append({
                     "ERP Reason": e.get("reason_erp", ""),
                     "Vendor Reason": v.get("reason_ven", ""),
-                    "ERP Amount": round(e["Amount"], 2),
-                    "Vendor Amount": round(v["Amount"], 2),
+                    "ERP Amount": float(e["Amount"]),
+                    "Vendor Amount": float(v["Amount"]),
                     "Difference": round(abs(e["Amount"] - v["Amount"]), 2)
                 })
                 used_v.add(vi)
@@ -401,6 +426,7 @@ def extract_payments(erp_df, ven_df):
 
     pay_match = pd.DataFrame(matched)
     return erp_pay, ven_pay, pay_match
+
 
 
 
