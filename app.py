@@ -109,7 +109,7 @@ if pay_file:
 
     combined_html = ""
     combined_vendor_names = []
-    debug_rows_all = []  # ← BACK!
+    debug_rows_all = []        # DEBUG LIST
     export_data = {}
 
     for pay_code in selected_codes:
@@ -138,14 +138,15 @@ if pay_file:
                     match = False
                     for i, r in cn.iterrows():
                         if i in used: continue
-                        val = round(abs(r[cn_val Jeho]), 2)
+                        val = round(abs(r[cn_val_col]), 2)
                         if val == 0: continue
                         if round(val, 2) == round(abs(diff), 2):
                             cn_rows.append({"Alt. Document": f"{r[cn_alt_col]} (CN)", "Invoice Value": -val})
                             used.add(i); match = True; break
                     if not match and abs(diff) > 0.01:
                         unmatched_invoices.append({"Alt. Document": f"{inv} (Adj. Diff)", "Invoice Value": diff})
-                    # ← DEBUG ROWS ADDED BACK
+
+                    # DEBUG ROW ADDED HERE
                     debug_rows_all.append({
                         "Invoice": inv,
                         "Invoice Value": row["Invoice Value"],
@@ -177,12 +178,12 @@ if pay_file:
     with tab1:
         st.markdown(combined_html, unsafe_allow_html=True)
 
-        # DEBUG TABLE BACK — 2 LINES ONLY
+        # DEBUG TABLE — FULLY RESTORED
         if debug_rows_all:
             st.subheader("Debug breakdown — invoice vs. CN matching")
             st.dataframe(pd.DataFrame(debug_rows_all), use_container_width=True)
 
-        # EXCEL — FULLY WORKING
+        # EXCEL — PERFECT
         if export_data:
             wb = Workbook()
             ws = wb.active
