@@ -601,6 +601,7 @@ if uploaded_erp and uploaded_vendor:
             st.markdown('</div>', unsafe_allow_html=True)
 
         # ---- Balance Summary Metric (C8 • Yellow with main Difference metric) ----
+        # ---- Balance Summary Metric (C8 • Yellow with Difference metric + detailed breakdown) ----
         with c8:
             possible_vendor_cols = ["balance", "saldo", "υπόλοιπο", "υπολοιπο", "ypolipo"]
             balance_col_erp = next((c for c in erp_df.columns if "balance" in c.lower()), None)
@@ -619,22 +620,24 @@ if uploaded_erp and uploaded_vendor:
                 ven_vals = [parse_amt(v) for v in ven_df[balance_col_ven] if str(v).strip()]
         
                 if erp_vals and ven_vals:
-                    diff_val = round(erp_vals[-1] - ven_vals[-1], 2)
+                    erp_last = erp_vals[-1]
+                    ven_last = ven_vals[-1]
+                    diff_val = round(erp_last - ven_last, 2)
         
                     st.markdown(
                         '<div class="metric-container" style="background:#FBC02D;color:#000;font-weight:bold;">',
                         unsafe_allow_html=True
                     )
+                    # main metric title + value
                     st.metric("Balance Difference", f"{diff_val:,.2f}")
+                    # detailed breakdown (keep diff label too)
                     st.markdown(
-                        f"**ERP:** {erp_vals[-1]:,.2f}<br>"
-                        f"**Vendor:** {ven_vals[-1]:,.2f}",
+                        f"**ERP:** {erp_last:,.2f}<br>"
+                        f"**Vendor:** {ven_last:,.2f}<br>"
+                        f"**Diff:** {diff_val:,.2f}",
                         unsafe_allow_html=True
                     )
                     st.markdown('</div>', unsafe_allow_html=True)
-
-
-
 
         st.markdown("---")
 
