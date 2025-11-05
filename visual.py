@@ -22,13 +22,22 @@ if uploaded_file:
                 st.stop()
             df_raw = pd.read_excel(xls, sheet_name='Outstanding Invoices IB', header=None)
 
-            # === REFERENCE SHEET ===
+            # === REFERENCE SHEET (Vendor Type) ===
             if 'VR CHECK_Special vendors list' in xls.sheet_names:
                 df_ref = pd.read_excel(xls, sheet_name='VR CHECK_Special vendors list', usecols='A:F', header=None)
                 df_ref.columns = ['Vendor_TaxID', 'Col_B', 'Col_C', 'Col_D', 'Col_E', 'Vendor_Category']
             else:
                 df_ref = pd.DataFrame(columns=['Vendor_TaxID', 'Vendor_Category'])
                 st.warning("Sheet 'VR CHECK_Special vendors list' not found. Vendor categories may be missing.")
+
+            # === COUNTRY LOOKUP SHEET ===
+            if 'Vendors' in xls.sheet_names:
+                df_country = pd.read_excel(xls, sheet_name='Vendors', usecols='A:G', header=None)
+                df_country.columns = ['Vendor_TaxID', 'Col_B', 'Col_C', 'Col_D', 'Col_E', 'Col_F', 'Country']
+                df_country['Vendor_TaxID'] = df_country['Vendor_TaxID'].astype(str).str.strip().str.upper()
+            else:
+                df_country = pd.DataFrame(columns=['Vendor_TaxID', 'Country'])
+                st.warning("Sheet 'Vendors' not found. Country classification may be incomplete.")
 
         # === HEADER DETECTION ===
         header_row = df_raw[df_raw.iloc[:, 0].astype(str).str.contains("VENDOR", case=False, na=False)].index
@@ -60,24 +69,30 @@ if uploaded_file:
         # === FIND BS / BA COLUMNS ===
         headers = df_raw.iloc[header_row[0]].astype(str).str.strip().tolist()
         col_map = {h.upper().strip(): i for i, h in enumerate(headers)}
-
         bs_idx = next((i for name, i in col_map.items() if "BS" in name and "FUNC" not in name), 50)
         ba_idx = next((i for name, i in col_map.items() if "BA" in name), 51)
-
         df['Col_BS'] = df_raw.iloc[start_row:, bs_idx].astype(str).str.strip()
         df['Col_BA'] = df_raw.iloc[start_row:, ba_idx].astype(str).str.strip()
 
-        # === MERGE BY VAT (A of VR CHECK) ===
+        # === MERGE VENDOR TYPE ===
         if not df_ref.empty:
             df_ref['Vendor_TaxID'] = df_ref['Vendor_TaxID'].astype(str).str.strip().str.upper()
             df['VAT_ID_clean'] = df['VAT_ID'].astype(str).str.strip().str.upper()
-
             df = df.merge(df_ref[['Vendor_TaxID', 'Vendor_Category']],
                           left_on='VAT_ID_clean', right_on='Vendor_TaxID', how='left')
-
             df['Vendor_Type'] = df['Vendor_Category'].fillna("Uncategorized")
         else:
             df['Vendor_Type'] = "Uncategorized"
+
+        # === MERGE COUNTRY INFO ===
+        df['VAT_ID_clean'] = df['VAT_ID'].astype(str).str.strip().str.upper()
+        df = df.merge(df_country[['Vendor_TaxID', 'Country']],
+                      left_on='VAT_ID_clean', right_on='Vendor_TaxID', how='left')
+        df['Country_Type'] = df['Country'].fillna("Unknown").apply(
+            lambda x: "Spain" if isinstance(x, str) and "spain" in x.lower()
+            else "Foreign" if isinstance(x, str) and x.strip() != ""
+            else "Unknown"
+        )
 
         # === NORMALIZE BFP ===
         def normalize_bs(x):
@@ -118,14 +133,7 @@ if uploaded_file:
             df = df[df['Col_BS'].isin(selected_bs)]
 
         # === COUNTRY FILTER ===
-        def classify_country(x):
-            x = str(x).strip().lower()
-            if "spain" in x or "espa" in x:
-                return "Spain"
-            return "Foreign"
-
-        df['Country_Type'] = df['Col_BA'].apply(classify_country)
-        country_choice = st.radio("Select Country Group", ["All", "Spain", "Foreign"], horizontal=True)
+        country_choice = st.radio("Select Country Group", ["All", "Spain", "Foreign", "Unknown"], horizontal=True)
         if country_choice != "All":
             df = df[df['Country_Type'] == country_choice]
 
