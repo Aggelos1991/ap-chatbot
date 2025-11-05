@@ -21,19 +21,12 @@ except:
 
 # ===== AUTH FIX (PROJECT-BASED API) =====
 api_key = os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY")
-organization = os.getenv("OPENAI_ORG_ID") or st.secrets.get("OPENAI_ORG_ID")
-project = os.getenv("OPENAI_PROJECT_ID") or st.secrets.get("OPENAI_PROJECT_ID")
 
 if not api_key:
     st.error("❌ No OpenAI API key found. Add it to .env or Streamlit Secrets.")
     st.stop()
 
-client = OpenAI(
-    api_key=api_key,
-    organization=organization,
-    project=project
-)
-
+client = OpenAI(api_key=api_key)
 PRIMARY_MODEL = "gpt-4o-mini"
 BACKUP_MODEL = "gpt-4o"
 
