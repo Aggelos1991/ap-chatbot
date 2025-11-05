@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import io
 import numpy as np
 
 st.set_page_config(page_title="Overdue Invoices", layout="wide")
@@ -24,6 +23,7 @@ if uploaded_file:
                 st.stop()
             df_raw = pd.read_excel(xls, sheet_name='Outstanding Invoices IB', header=None)
 
+        # === Detect header row ===
         header_row = df_raw[df_raw.iloc[:, 0].astype(str).str.contains("VENDOR", case=False, na=False)].index
         if header_row.empty:
             st.error("Header 'VENDOR' not found in column A.")
@@ -31,15 +31,28 @@ if uploaded_file:
 
         start_row = header_row[0] + 1
         df = df_raw.iloc[start_row:].copy().reset_index(drop=True)
-        df = df.iloc[:, [0, 1, 4, 6, 29, 30]]
-        df.columns = ['Vendor_Name', 'VAT_ID', 'Due_Date', 'Open_Amount', 'Vendor_Email', 'Account_Email']
 
-        # === Clean & Prepare ===
+        # === Map needed columns ===
+        df = df.iloc[:, [0, 1, 4, 6, 29, 30, 31, 33, 35, 39]]
+        df.columns = [
+            'Vendor_Name', 'VAT_ID', 'Due_Date', 'Open_Amount',
+            'Vendor_Email', 'Account_Email', 'Col_AF', 'Col_AH', 'Col_AJ', 'Col_AN'
+        ]
+
+        # === CLEANUP FILTERS (restore old ones) ===
+        # Remove blank, subtotal, or header-like rows
+        df = df[~df['Vendor_Name'].astype(str).str.contains("nan|^$|total|saldo|asiento|header|proveedor", case=False, na=False)]
+        df = df[~df['Vendor_Name'].astype(str).str.startswith(("Unnamed", "VENDOR", "Vendor"), na=False)]
+        df = df[~df['Open_Amount'].astype(str).str.contains("TOTAL|Total|Saldo", case=False, na=False)]
+        df = df[df['Open_Amount'].notna()]
+
+        # === Type conversions ===
         df['Due_Date'] = pd.to_datetime(df['Due_Date'], errors='coerce').dt.date
         df['Open_Amount'] = pd.to_numeric(df['Open_Amount'], errors='coerce')
         df = df.dropna(subset=['Vendor_Name', 'Open_Amount', 'Due_Date'])
         df = df[df['Open_Amount'] > 0]
 
+        # === Overdue logic ===
         today = pd.Timestamp.now(tz='Europe/Athens').date()
         df['Overdue'] = df['Due_Date'] < today
         df['Status'] = np.where(df['Overdue'], 'Overdue', 'Not Overdue')
@@ -118,17 +131,17 @@ if uploaded_file:
 
         chart = st.plotly_chart(fig, use_container_width=True, on_select="rerun")
 
-        # === Click Handling (with reset) ===
+        # === Click Handling with Reset ===
         if chart.selection and chart.selection['points']:
             point = chart.selection['points'][0]
             st.session_state.clicked_vendor = point.get('y')
         else:
-            # Clicked outside → reset
+            # Reset when clicking outside
             st.session_state.clicked_vendor = None
 
         clicked_vendor = st.session_state.clicked_vendor
 
-        # === Filtered Raw Data ===
+        # === Apply filters for table ===
         filtered_df = df.copy()
         if status_filter == "Overdue Only":
             filtered_df = filtered_df[filtered_df['Status'] == "Overdue"]
@@ -137,12 +150,12 @@ if uploaded_file:
         if clicked_vendor:
             filtered_df = filtered_df[filtered_df['Vendor_Name'] == clicked_vendor]
 
+        # === Show raw data ===
         if not filtered_df.empty:
-            if clicked_vendor:
-                st.subheader(f"Raw Invoices – {clicked_vendor} ({status_filter})")
-            else:
-                st.subheader(f"Raw Invoices – {status_filter}")
-            show_df = filtered_df[['VAT_ID', 'Due_Date', 'Open_Amount', 'Status', 'Vendor_Email', 'Account_Email']].copy()
+            subtitle = f"{clicked_vendor} ({status_filter})" if clicked_vendor else status_filter
+            st.subheader(f"Raw Invoices – {subtitle}")
+            show_df = filtered_df[['Vendor_Name','VAT_ID','Due_Date','Open_Amount','Status',
+                                   'Vendor_Email','Account_Email','Col_AF','Col_AH','Col_AJ','Col_AN']].copy()
             show_df['Due_Date'] = pd.to_datetime(show_df['Due_Date']).dt.strftime("%Y-%m-%d")
             show_df['Open_Amount'] = show_df['Open_Amount'].map('€{:,.2f}'.format)
             st.dataframe(show_df, use_container_width=True)
