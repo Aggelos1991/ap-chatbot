@@ -19,12 +19,21 @@ try:
 except:
     pass
 
+# ===== AUTH FIX (PROJECT-BASED API) =====
 api_key = os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY")
+organization = os.getenv("OPENAI_ORG_ID") or st.secrets.get("OPENAI_ORG_ID")
+project = os.getenv("OPENAI_PROJECT_ID") or st.secrets.get("OPENAI_PROJECT_ID")
+
 if not api_key:
     st.error("❌ No OpenAI API key found. Add it to .env or Streamlit Secrets.")
     st.stop()
 
-client = OpenAI(api_key=api_key)
+client = OpenAI(
+    api_key=api_key,
+    organization=organization,
+    project=project
+)
+
 PRIMARY_MODEL = "gpt-4o-mini"
 BACKUP_MODEL = "gpt-4o"
 
@@ -32,7 +41,7 @@ BACKUP_MODEL = "gpt-4o"
 # OCR-ENHANCED TEXT EXTRACTION
 # ==========================================================
 def extract_text_with_ocr(uploaded_pdf):
-    """Extracts text from PDF using both pdfplumber and OCR fallback."""
+    """Extract text from PDF using both pdfplumber and OCR fallback."""
     all_lines, ocr_pages = [], []
     pdf_bytes = uploaded_pdf.read()
     uploaded_pdf.seek(0)
@@ -42,9 +51,9 @@ def extract_text_with_ocr(uploaded_pdf):
             text = page.extract_text()
             if text and len(text.strip()) > 10:
                 for line in text.split("\n"):
-                    clean_line = " ".join(line.split())
-                    if clean_line:
-                        all_lines.append(clean_line)
+                    clean = " ".join(line.split())
+                    if clean:
+                        all_lines.append(clean)
             else:
                 # OCR fallback
                 ocr_pages.append(i)
@@ -52,19 +61,18 @@ def extract_text_with_ocr(uploaded_pdf):
                     img = convert_from_bytes(pdf_bytes, dpi=250, first_page=i, last_page=i)[0]
                     ocr_text = pytesseract.image_to_string(img, lang="spa+eng+ell")
                     for line in ocr_text.split("\n"):
-                        clean_line = " ".join(line.split())
-                        if clean_line:
-                            all_lines.append(clean_line)
+                        clean = " ".join(line.split())
+                        if clean:
+                            all_lines.append(clean)
                 except Exception as e:
                     st.warning(f"OCR skipped for page {i}: {e}")
 
     return all_lines, ocr_pages
 
 # ==========================================================
-# GPT EXTRACTION (FIXED SALDO + COBRO)
+# GPT EXTRACTION (SALDO FIXED)
 # ==========================================================
 def normalize_number(value):
-    """Convert number-like strings (Spanish/Greek formats) into float."""
     if not value:
         return ""
     s = str(value).strip().replace(" ", "")
@@ -82,7 +90,6 @@ def normalize_number(value):
         return ""
 
 def parse_gpt_response(content, batch_num):
-    """Extract JSON array safely from GPT response."""
     json_match = re.search(r'\[.*\]', content, re.DOTALL)
     if not json_match:
         st.warning(f"⚠️ Batch {batch_num}: No JSON found. First 300 chars:\n{content[:300]}")
@@ -164,7 +171,6 @@ Text:
             balance_val = normalize_number(row.get("Balance", ""))
             reason = str(row.get("Reason", "")).strip()
 
-            # Force reason = Payment if Cobro / Pago / Transferencia appears
             if re.search(r"cobro|pago|transferencia|remesa", str(row), re.IGNORECASE):
                 reason = "Payment"
             elif re.search(r"abono|nota de crédito|crédit|πίστωση", str(row), re.IGNORECASE):
