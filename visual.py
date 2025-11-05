@@ -133,7 +133,7 @@ if uploaded_file:
             df = df[df['Col_BS'].isin(selected_bs)]
 
         # === COUNTRY FILTER ===
-        country_choice = st.radio("Select Country Group", ["All", "Spain", "Foreign", "Unknown"], horizontal=True)
+        country_choice = st.radio("Select Country Group", ["All", "Spain", "Foreign"], horizontal=True)
         if country_choice != "All":
             df = df[df['Country_Type'] == country_choice]
 
