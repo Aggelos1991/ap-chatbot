@@ -103,7 +103,6 @@ cn_file = st.file_uploader("(Optional) Upload Credit Notes Excel", type=["xlsx"]
 
 if pay_file:
     df = pd.read_excel(pay_file)
-    df["Document"] = df["Document"].astype(str).fillna("")
     df.columns = [c.strip() for c in df.columns]
     df = df.loc[:, ~df.columns.duplicated()]
     st.success("Payment file loaded successfully")
