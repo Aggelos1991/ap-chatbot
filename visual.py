@@ -8,11 +8,9 @@ st.set_page_config(page_title="Overdue Invoices", layout="wide")
 st.title("Overdue Invoices Dashboard")
 st.markdown("**Click a bar → See vendor details | Export → Raw data**")
 
-# Session state
 if 'clicked_vendor' not in st.session_state:
     st.session_state.clicked_vendor = None
 
-# Upload
 uploaded_file = st.file_uploader("Upload Excel file", type=['xlsx'])
 
 if uploaded_file:
@@ -33,12 +31,12 @@ if uploaded_file:
         df = df.iloc[:, [0, 1, 4, 6, 29, 30]]
         df.columns = ['Vendor_Name', 'VAT_ID', 'Due_Date', 'Open_Amount', 'Vendor_Email', 'Account_Email']
 
-        df['Due_Date'] = pd.to_datetime(df['Due_Date'], errors='coerce').dt.date
+        df['Due_Date'] = pd.to_datetime(df['Due_Date'], errors='coerce').dt.normalize()
         df['Open_Amount'] = pd.to_numeric(df['Open_Amount'], errors='coerce')
         df = df.dropna(subset=['Vendor_Name', 'Open_Amount', 'Due_Date'])
         df = df[df['Open_Amount'] > 0]
 
-        today = pd.Timestamp.now(tz='Europe/Athens').date()
+        today = pd.Timestamp.now(tz='Europe/Athens').normalize()
         df['Overdue'] = df['Due_Date'] < today
         df['Status'] = np.where(df['Overdue'], 'Overdue', 'Not Overdue')
 
@@ -53,14 +51,13 @@ if uploaded_file:
             if col not in full_summary.columns: full_summary[col] = 0
         full_summary['Total'] = full_summary['Overdue'] + full_summary['Not Overdue']
 
-        # Filters
         c1, c2, c3 = st.columns(3)
         with c1:
             status_filter = st.selectbox("Show", ["All Open", "Overdue Only", "Not Overdue Only"])
         with c2:
             vendor_select = st.selectbox("Vendors", ["Top 20", "Top 30"] + sorted(df['Vendor_Name'].unique()))
         with c3:
-            st.caption(f"Today (Athens): {today}")
+            st.caption(f"Today (Athens): {today.date()}")
 
         top_n = 30 if "30" in vendor_select else 20
         if status_filter == "All Open":
@@ -100,7 +97,6 @@ if uploaded_file:
 
         chart = st.plotly_chart(fig, use_container_width=True, on_select="rerun", key="chart")
 
-        # Click capture
         if chart.selection and chart.selection['points']:
             st.session_state.clicked_vendor = chart.selection['points'][0]['y']
 
@@ -114,7 +110,6 @@ if uploaded_file:
         else:
             st.info("Click any bar to see vendor details.")
 
-        # ===== EMAILS =====
         st.markdown("---")
         st.subheader("📧 Emails (copy for Outlook)")
         scope = df if status_filter=="All Open" else df[df['Overdue']] if status_filter=="Overdue Only" else df[~df['Overdue']]
