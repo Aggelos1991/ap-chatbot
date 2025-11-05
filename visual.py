@@ -7,7 +7,7 @@ st.set_page_config(page_title="Overdue Invoices", layout="wide")
 st.title("Overdue Invoices Dashboard")
 st.markdown("**Click a bar → Filter by vendor | Click outside → Reset to all | Table and emails auto-filter**")
 
-# Session state
+# --- SESSION STATE ---
 if 'clicked_vendor' not in st.session_state:
     st.session_state.clicked_vendor = None
 
@@ -22,29 +22,29 @@ if uploaded_file:
                 st.stop()
             df_raw = pd.read_excel(xls, sheet_name='Outstanding Invoices IB', header=None)
 
-        # Find header row
+        # Detect header row
         header_row = df_raw[df_raw.iloc[:, 0].astype(str).str.contains("VENDOR", case=False, na=False)].index
         if header_row.empty:
             st.error("Header 'VENDOR' not found in column A.")
             st.stop()
-        start_row = header_row[0] + 1
 
-        # Base dataframe
+        start_row = header_row[0] + 1
         df = df_raw.iloc[start_row:].copy().reset_index(drop=True)
+
+        # --- SELECT COLUMNS ---
         df = df.iloc[:, [0, 1, 4, 6, 29, 30, 31, 33, 35, 39]]
         df.columns = [
             'Vendor_Name', 'VAT_ID', 'Due_Date', 'Open_Amount',
             'Vendor_Email', 'Account_Email', 'Col_AF', 'Col_AH', 'Col_AJ', 'Col_AN'
         ]
 
-        # --- BASIC CLEANING ---
+        # --- BASIC CLEANUP ---
         df = df.dropna(how="all")
         df = df[df['Vendor_Name'].notna()]
         df = df[~df['Vendor_Name'].astype(str).str.strip().eq("")]
         bad_patterns = r"(?i)total|saldo|asiento|header|proveedor|unnamed|vendor|facturas|periodo|sum|importe"
         df = df[~df['Vendor_Name'].astype(str).str.contains(bad_patterns, na=False)]
         df = df[~df['Open_Amount'].astype(str).str.contains(bad_patterns, na=False)]
-
         df['Due_Date'] = pd.to_datetime(df['Due_Date'], errors='coerce').dt.date
         df['Open_Amount'] = pd.to_numeric(df['Open_Amount'], errors='coerce')
         df = df.dropna(subset=['Due_Date', 'Open_Amount'])
@@ -53,41 +53,57 @@ if uploaded_file:
         # --- ADVANCED FILTERS ---
         st.markdown("### Advanced Filters")
 
-        # Detect BT / BS / BA columns by header name dynamically
+        # Detect BT / BS / BA columns dynamically
         try:
             headers = df_raw.iloc[header_row[0]].astype(str).str.strip().tolist()
             col_map = {h.upper().strip(): i for i, h in enumerate(headers)}
 
-            bt_idx = next((i for name, i in col_map.items() if "BT" in name), 42)
-            bs_idx = next((i for name, i in col_map.items() if "BS" in name), 50)
+            bt_idx = next((i for name, i in col_map.items() if "BT" in name and "FUNC" not in name), 42)
+            bs_idx = next((i for name, i in col_map.items() if "BS" in name and "FUNC" not in name), 50)
             ba_idx = next((i for name, i in col_map.items() if "BA" in name), 51)
 
-            df['Col_BT'] = df_raw.iloc[start_row:, bt_idx].reset_index(drop=True).astype(str).str.strip()
-            df['Col_BS'] = df_raw.iloc[start_row:, bs_idx].reset_index(drop=True).astype(str).str.strip()
-            df['Col_BA'] = df_raw.iloc[start_row:, ba_idx].reset_index(drop=True).astype(str).str.strip()
+            df['Col_BT'] = df_raw.iloc[start_row:, bt_idx].astype(str).str.strip()
+            df['Col_BS'] = df_raw.iloc[start_row:, bs_idx].astype(str).str.strip()
+            df['Col_BA'] = df_raw.iloc[start_row:, ba_idx].astype(str).str.strip()
+
+            # --- FIX BT (use FUNCTION column if current is YES/NO) ---
+            bt_func_idx = next((i for name, i in col_map.items() if "BT FUNC" in name or "BT_FUNCTION" in name or "BT FUNCTION" in name), bt_idx + 1)
+            if set(df['Col_BT'].dropna().unique()) <= {"YES", "NO", "yes", "no"} and bt_func_idx < df_raw.shape[1]:
+                df['Col_BT'] = df_raw.iloc[start_row:, bt_func_idx].astype(str).str.strip()
+
+            # --- FIX BS (normalize statuses) ---
+            def normalize_bs(x):
+                x = str(x).strip().upper()
+                if x in ["", "OK", "FREE", "0"]:
+                    return "FREE FOR PAYMENT"
+                elif "BLOCK" in x or x in ["1", "BFP"]:
+                    return "BFP"
+                else:
+                    return "FREE FOR PAYMENT"
+            df['Col_BS'] = df['Col_BS'].apply(normalize_bs)
+
         except Exception as e:
             st.warning(f"Couldn't locate BT/BS/BA columns: {e}")
             df['Col_BT'], df['Col_BS'], df['Col_BA'] = "Unknown", "Unknown", "Unknown"
 
-        # Normalize Yes/No filters
+        # --- NORMALIZE YES/NO FILTER COLUMNS ---
         for col in ['Col_AF', 'Col_AH', 'Col_AJ', 'Col_AN']:
             df[col] = df[col].astype(str).str.strip().str.lower()
 
-        # --- YES FILTER ---
         apply_yes = st.checkbox("Filter AF/AH/AJ/AN to 'Yes' only", value=True)
         if apply_yes:
             for col in ['Col_AF', 'Col_AH', 'Col_AJ', 'Col_AN']:
                 df = df[df[col] == 'yes']
 
-        # --- BT MULTISELECT ---
+        # --- BT FILTER ---
         bt_values = sorted(set(v for v in df['Col_BT'] if str(v).strip() not in ["", "nan", "none"]))
-        selected_bt = st.multiselect("Exceptions / Priority Vendors", options=bt_values, default=bt_values)
+        selected_bt = st.multiselect("Exceptions / Priority Vendors", bt_values, default=bt_values)
         if selected_bt:
             df = df[df['Col_BT'].isin(selected_bt)]
 
-        # --- BS MULTISELECT ---
+        # --- BS FILTER ---
         bs_values = sorted(set(v for v in df['Col_BS'] if str(v).strip() not in ["", "nan", "none"]))
-        selected_bs = st.multiselect("BFP Status (BS)", options=bs_values, default=bs_values)
+        selected_bs = st.multiselect("BFP Status (BS)", bs_values, default=bs_values)
         if selected_bs:
             df = df[df['Col_BS'].isin(selected_bs)]
 
@@ -103,7 +119,7 @@ if uploaded_file:
         if country_choice != "All":
             df = df[df['Country_Type'] == country_choice]
 
-        # --- STOP IF NO DATA ---
+        # --- STOP IF EMPTY ---
         if df.empty:
             st.error("No valid vendor data left after filters. Relax your filters or check Excel file.")
             st.stop()
@@ -126,7 +142,7 @@ if uploaded_file:
                 summary[col] = 0
         summary['Total'] = summary['Overdue'] + summary['Not Overdue']
 
-        # --- MAIN FILTERS ---
+        # --- FILTER SELECTIONS ---
         c1, c2 = st.columns(2)
         with c1:
             status_filter = st.selectbox("Show", ["All Open", "Overdue Only", "Not Overdue Only"])
