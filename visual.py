@@ -6,12 +6,12 @@ import numpy as np
 
 st.set_page_config(page_title="Overdue Invoices", layout="wide")
 st.title("Overdue Invoices Dashboard")
-st.markdown("**Click a bar segment → See only that data | Export → Raw data**")
+st.markdown("**Click a bar segment → See only that vendor & status | Export → Raw data**")
 
 if 'clicked_vendor' not in st.session_state:
     st.session_state.clicked_vendor = None
-if 'clicked_type' not in st.session_state:
-    st.session_state.clicked_type = None
+if 'clicked_status' not in st.session_state:
+    st.session_state.clicked_status = None
 
 uploaded_file = st.file_uploader("Upload Excel file", type=['xlsx'])
 
@@ -59,7 +59,8 @@ if uploaded_file:
             status_filter = st.selectbox("Show", ["All Open", "Overdue Only", "Not Overdue Only"])
         with c2:
             vendor_select = st.selectbox("Vendors", ["Top 20", "Top 30"] + sorted(df['Vendor_Name'].unique()))
-     
+        with c3:
+            st.caption(f"Today (Athens): {today}")
 
         top_n = 30 if "30" in vendor_select else 20
         if status_filter == "All Open":
@@ -99,16 +100,16 @@ if uploaded_file:
 
         chart = st.plotly_chart(fig, use_container_width=True, on_select="rerun", key="chart")
 
+        # --- CLICK LOGIC ---
         if chart.selection and chart.selection['points']:
             point = chart.selection['points'][0]
-            st.session_state.clicked_vendor = point['y']
-            st.session_state.clicked_type = point['curveNumber']  # 0 = Overdue, 1 = Not Overdue
+            st.session_state.clicked_vendor = point.get('y')
+            st.session_state.clicked_status = point.get('curveName', None)
 
         clicked_vendor = st.session_state.clicked_vendor
-        clicked_type = st.session_state.clicked_type
+        clicked_status = st.session_state.clicked_status
 
-        if clicked_vendor:
-            clicked_status = "Overdue" if clicked_type == 0 else "Not Overdue"
+        if clicked_vendor and clicked_status:
             st.subheader(f"Raw Invoices – {clicked_vendor} ({clicked_status})")
             raw = df[(df['Vendor_Name'] == clicked_vendor) & (df['Status'] == clicked_status)].copy()
             raw = raw[['VAT_ID', 'Due_Date', 'Open_Amount', 'Status', 'Vendor_Email', 'Account_Email']]
@@ -116,7 +117,7 @@ if uploaded_file:
             raw['Open_Amount'] = raw['Open_Amount'].map('€{:,.2f}'.format)
             st.dataframe(raw, use_container_width=True)
         else:
-            st.info("Click a bar segment to see vendor-specific data.")
+            st.info("Click a specific bar segment to see vendor-specific data.")
 
         st.markdown("---")
         st.subheader("📧 Emails (copy for Outlook)")
