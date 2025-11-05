@@ -8,7 +8,7 @@ from pdf2image import convert_from_bytes
 import easyocr
 
 # ==========================================================
-# 🦅 DataFalcon Pro — Hybrid GPT + OCR Extractor
+# 🦅 DataFalcon Pro — Hybrid GPT + OCR Extractor (Greek Fix)
 # ==========================================================
 st.set_page_config(page_title="🦅 DataFalcon Pro — Hybrid GPT Extractor", layout="wide")
 st.title("🦅 DataFalcon Pro")
@@ -36,8 +36,12 @@ BACKUP_MODEL = "gpt-4o"
 # ==========================================================
 @st.cache_resource
 def load_ocr_reader():
-    """Load EasyOCR once for speed."""
-    return easyocr.Reader(['es', 'el', 'en'], gpu=False)
+    """Load EasyOCR once for speed, with Greek fallback."""
+    try:
+        return easyocr.Reader(['es', 'gr', 'en'], gpu=False)
+    except:
+        st.warning("⚠️ Greek OCR model not found — using Spanish + English only.")
+        return easyocr.Reader(['es', 'en'], gpu=False)
 
 def local_ocr_on_pdf(uploaded_file):
     """Extract text using EasyOCR when PDF is scanned."""
