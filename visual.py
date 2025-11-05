@@ -25,9 +25,9 @@ if uploaded_file:
             # === REFERENCE SHEET (VR CHECK) ===
             if 'VR CHECK_Special vendors list' in xls.sheet_names:
                 df_ref = pd.read_excel(xls, sheet_name='VR CHECK_Special vendors list', usecols='A:F', header=None)
-                df_ref.columns = ['Vendor_Key', 'Col_B', 'Col_C', 'Col_D', 'Col_E', 'Vendor_Category']
+                df_ref.columns = ['Vendor_TaxID', 'Col_B', 'Col_C', 'Col_D', 'Col_E', 'Vendor_Category']
             else:
-                df_ref = pd.DataFrame(columns=['Vendor_Key', 'Vendor_Category'])
+                df_ref = pd.DataFrame(columns=['Vendor_TaxID', 'Vendor_Category'])
                 st.warning("Sheet 'VR CHECK_Special vendors list' not found. Vendor categories may be missing.")
 
         # === HEADER DETECTION ===
@@ -61,29 +61,23 @@ if uploaded_file:
         headers = df_raw.iloc[header_row[0]].astype(str).str.strip().tolist()
         col_map = {h.upper().strip(): i for i, h in enumerate(headers)}
 
-        bt_idx = next((i for name, i in col_map.items() if "BT" in name and "FUNC" not in name), 42)
         bs_idx = next((i for name, i in col_map.items() if "BS" in name and "FUNC" not in name), 50)
         ba_idx = next((i for name, i in col_map.items() if "BA" in name), 51)
-        be_idx = next((i for name, i in col_map.items() if "BE" in name), 56)
 
-        df['Col_BT'] = df_raw.iloc[start_row:, bt_idx].astype(str).str.strip()
         df['Col_BS'] = df_raw.iloc[start_row:, bs_idx].astype(str).str.strip()
         df['Col_BA'] = df_raw.iloc[start_row:, ba_idx].astype(str).str.strip()
-        df['Vendor_Key'] = df_raw.iloc[start_row:, be_idx]
 
-        # === MERGE REAL CATEGORY NAMES (XLOOKUP mimic) ===
+        # === MERGE BY VAT (Column A of VR CHECK) ===
         if not df_ref.empty:
-            df = df.merge(df_ref[['Vendor_Key', 'Vendor_Category']], on='Vendor_Key', how='left')
-            df['Col_BT'] = df['Vendor_Category'].fillna(df['Col_BT'])
+            df_ref['Vendor_TaxID'] = df_ref['Vendor_TaxID'].astype(str).str.strip().str.upper()
+            df['VAT_ID_clean'] = df['VAT_ID'].astype(str).str.strip().str.upper()
 
-        # === KEEP ALL RAW BT CATEGORY NAMES (Dynamic, not grouped) ===
-        df['Col_BT'] = (
-            df['Col_BT']
-            .fillna("")
-            .astype(str)
-            .str.strip()
-            .replace({"nan": "", "None": ""}, regex=True)
-        )
+            df = df.merge(df_ref[['Vendor_TaxID', 'Vendor_Category']],
+                          left_on='VAT_ID_clean', right_on='Vendor_TaxID', how='left')
+
+            df['Vendor_Type'] = df['Vendor_Category'].fillna("Uncategorized")
+        else:
+            df['Vendor_Type'] = "Uncategorized"
 
         # === NORMALIZE BFP (BS) ===
         def normalize_bs(x):
@@ -107,11 +101,11 @@ if uploaded_file:
             for col in ['Col_AF', 'Col_AH', 'Col_AJ', 'Col_AN']:
                 df = df[df[col] == 'yes']
 
-        # === BT FILTER (Dynamic full names) ===
-        bt_values = sorted({v.strip() for v in df['Col_BT'] if v and v.lower() not in ["nan", "none"]})
-        selected_bt = st.multiselect("Exceptions / Priority Vendors", bt_values, default=bt_values)
+        # === BT FILTER (Vendor_Type) ===
+        bt_values = sorted({v.strip() for v in df['Vendor_Type'] if v and v.lower() not in ["nan", "none"]})
+        selected_bt = st.multiselect("Exceptions / Priority Vendors (Vendor Type)", bt_values, default=bt_values)
         if selected_bt:
-            df = df[df['Col_BT'].isin(selected_bt)]
+            df = df[df['Vendor_Type'].isin(selected_bt)]
 
         # === BS FILTER (BFP Status) ===
         bs_values = sorted({v.strip() for v in df['Col_BS'] if v and v.lower() not in ["nan", "none"]})
@@ -204,7 +198,7 @@ if uploaded_file:
             st.subheader("Raw Invoices")
             show = filtered_df[['Vendor_Name','VAT_ID','Due_Date','Open_Amount','Status',
                                 'Vendor_Email','Account_Email','Col_AF','Col_AH','Col_AJ','Col_AN',
-                                'Col_BT','Col_BS','Col_BA','Country_Type']].copy()
+                                'Vendor_Type','Col_BS','Col_BA','Country_Type']].copy()
             show['Due_Date'] = pd.to_datetime(show['Due_Date']).dt.strftime("%Y-%m-%d")
             show['Open_Amount'] = show['Open_Amount'].map('€{:,.2f}'.format)
             st.dataframe(show, use_container_width=True)
