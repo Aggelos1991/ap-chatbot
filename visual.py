@@ -22,7 +22,7 @@ if uploaded_file:
                 st.stop()
             df_raw = pd.read_excel(xls, sheet_name='Outstanding Invoices IB', header=None)
 
-            # === REFERENCE SHEET (VR CHECK) ===
+            # === REFERENCE SHEET ===
             if 'VR CHECK_Special vendors list' in xls.sheet_names:
                 df_ref = pd.read_excel(xls, sheet_name='VR CHECK_Special vendors list', usecols='A:F', header=None)
                 df_ref.columns = ['Vendor_TaxID', 'Col_B', 'Col_C', 'Col_D', 'Col_E', 'Vendor_Category']
@@ -57,7 +57,7 @@ if uploaded_file:
         df = df.dropna(subset=['Due_Date', 'Open_Amount'])
         df = df[df['Open_Amount'] > 0]
 
-        # === FIND BT, BS, BA COLUMNS ===
+        # === FIND BS / BA COLUMNS ===
         headers = df_raw.iloc[header_row[0]].astype(str).str.strip().tolist()
         col_map = {h.upper().strip(): i for i, h in enumerate(headers)}
 
@@ -67,7 +67,7 @@ if uploaded_file:
         df['Col_BS'] = df_raw.iloc[start_row:, bs_idx].astype(str).str.strip()
         df['Col_BA'] = df_raw.iloc[start_row:, ba_idx].astype(str).str.strip()
 
-        # === MERGE BY VAT (Column A of VR CHECK) ===
+        # === MERGE BY VAT (A of VR CHECK) ===
         if not df_ref.empty:
             df_ref['Vendor_TaxID'] = df_ref['Vendor_TaxID'].astype(str).str.strip().str.upper()
             df['VAT_ID_clean'] = df['VAT_ID'].astype(str).str.strip().str.upper()
@@ -79,7 +79,7 @@ if uploaded_file:
         else:
             df['Vendor_Type'] = "Uncategorized"
 
-        # === NORMALIZE BFP (BS) ===
+        # === NORMALIZE BFP ===
         def normalize_bs(x):
             x = str(x).strip().upper()
             if x in ["", "OK", "FREE", "0", "FREE FOR PAYMENT"]:
@@ -96,10 +96,14 @@ if uploaded_file:
 
         # === ADVANCED FILTERS ===
         st.markdown("### Advanced Filters")
-        apply_yes = st.checkbox("Filter AF/AH/AJ/AN to 'Yes' only", value=True)
+        apply_yes = st.checkbox("Filter AF/AH/AN to 'Yes' only", value=True)
         if apply_yes:
-            for col in ['Col_AF', 'Col_AH', 'Col_AJ', 'Col_AN']:
+            for col in ['Col_AF', 'Col_AH', 'Col_AN']:
                 df = df[df[col] == 'yes']
+
+        aj_yes_only = st.checkbox("Filter AJ = 'Yes' only", value=False)
+        if aj_yes_only:
+            df = df[df['Col_AJ'] == 'yes']
 
         # === BT FILTER (Vendor_Type) ===
         bt_values = sorted({v.strip() for v in df['Vendor_Type'] if v and v.lower() not in ["nan", "none"]})
@@ -113,7 +117,7 @@ if uploaded_file:
         if selected_bs:
             df = df[df['Col_BS'].isin(selected_bs)]
 
-        # === COUNTRY FILTER (BA) ===
+        # === COUNTRY FILTER ===
         def classify_country(x):
             x = str(x).strip().lower()
             if "spain" in x or "espa" in x:
@@ -148,16 +152,20 @@ if uploaded_file:
         with c1:
             status_filter = st.selectbox("Show", ["All Open", "Overdue Only", "Not Overdue Only"])
         with c2:
-            vendor_select = st.selectbox("Vendors", ["Top 20", "Top 30"] + sorted(df['Vendor_Name'].unique()))
+            vendor_select = st.selectbox("Vendors", ["All Vendors", "Top 20", "Top 30"] + sorted(df['Vendor_Name'].unique()))
 
         top_n = 30 if "30" in vendor_select else 20
-        if status_filter == "All Open":
-            top_df = summary.nlargest(top_n, 'Total')
-        elif status_filter == "Overdue Only":
-            top_df = summary.nlargest(top_n, 'Overdue').assign(**{'Not Overdue': 0})
+        if vendor_select == "All Vendors":
+            base_df = summary
+        elif "Top" in vendor_select:
+            if status_filter == "All Open":
+                base_df = summary.nlargest(top_n, 'Total')
+            elif status_filter == "Overdue Only":
+                base_df = summary.nlargest(top_n, 'Overdue').assign(**{'Not Overdue': 0})
+            else:
+                base_df = summary.nlargest(top_n, 'Not Overdue').assign(**{'Overdue': 0})
         else:
-            top_df = summary.nlargest(top_n, 'Not Overdue').assign(**{'Overdue': 0})
-        base_df = top_df if "Top" in vendor_select else summary[summary['Vendor_Name'] == vendor_select]
+            base_df = summary[summary['Vendor_Name'] == vendor_select]
 
         # === CHART ===
         plot_df = base_df.melt(id_vars='Vendor_Name',
@@ -165,7 +173,7 @@ if uploaded_file:
                                var_name='Type', value_name='Amount').query("Amount>0")
         fig = px.bar(plot_df, x='Amount', y='Vendor_Name', color='Type',
                      orientation='h', color_discrete_map={'Overdue': '#8B0000', 'Not Overdue': '#4682B4'},
-                     title=f"Top {top_n} Vendors ({status_filter}) — {country_choice}",
+                     title=f"{vendor_select} ({status_filter}) — {country_choice}",
                      height=max(500, len(plot_df) * 45))
         totals = plot_df.groupby('Vendor_Name')['Amount'].sum().reset_index()
         fig.add_scatter(x=totals['Amount'], y=totals['Vendor_Name'], mode='text',
