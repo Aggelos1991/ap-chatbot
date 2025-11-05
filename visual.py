@@ -15,12 +15,20 @@ uploaded_file = st.file_uploader("Upload Excel file", type=['xlsx'])
 
 if uploaded_file:
     try:
-        # === LOAD RAW DATA ===
         with pd.ExcelFile(uploaded_file) as xls:
+            # === MAIN SHEET ===
             if 'Outstanding Invoices IB' not in xls.sheet_names:
                 st.error("Sheet 'Outstanding Invoices IB' not found.")
                 st.stop()
             df_raw = pd.read_excel(xls, sheet_name='Outstanding Invoices IB', header=None)
+
+            # === REFERENCE SHEET (VR CHECK) ===
+            if 'VR CHECK_Special vendors list' in xls.sheet_names:
+                df_ref = pd.read_excel(xls, sheet_name='VR CHECK_Special vendors list', usecols='A:F', header=None)
+                df_ref.columns = ['Vendor_Key', 'Col_B', 'Col_C', 'Col_D', 'Col_E', 'Vendor_Category']
+            else:
+                df_ref = pd.DataFrame(columns=['Vendor_Key', 'Vendor_Category'])
+                st.warning("Sheet 'VR CHECK_Special vendors list' not found. Vendor categories may be missing.")
 
         # === HEADER DETECTION ===
         header_row = df_raw[df_raw.iloc[:, 0].astype(str).str.contains("VENDOR", case=False, na=False)].index
@@ -29,7 +37,7 @@ if uploaded_file:
             st.stop()
         start_row = header_row[0] + 1
 
-        # === BASE DATA ===
+        # === BASE COLUMNS ===
         df = df_raw.iloc[start_row:].copy().reset_index(drop=True)
         df = df.iloc[:, [0, 1, 4, 6, 29, 30, 31, 33, 35, 39]]
         df.columns = [
@@ -37,7 +45,7 @@ if uploaded_file:
             'Vendor_Email', 'Account_Email', 'Col_AF', 'Col_AH', 'Col_AJ', 'Col_AN'
         ]
 
-        # === CLEAN DATA ===
+        # === CLEAN ===
         df = df.dropna(how="all")
         df = df[df['Vendor_Name'].notna()]
         df = df[~df['Vendor_Name'].astype(str).str.strip().eq("")]
@@ -49,73 +57,60 @@ if uploaded_file:
         df = df.dropna(subset=['Due_Date', 'Open_Amount'])
         df = df[df['Open_Amount'] > 0]
 
+        # === FIND BT, BS, BA COLUMNS ===
+        headers = df_raw.iloc[header_row[0]].astype(str).str.strip().tolist()
+        col_map = {h.upper().strip(): i for i, h in enumerate(headers)}
+
+        bt_idx = next((i for name, i in col_map.items() if "BT" in name and "FUNC" not in name), 42)
+        bs_idx = next((i for name, i in col_map.items() if "BS" in name and "FUNC" not in name), 50)
+        ba_idx = next((i for name, i in col_map.items() if "BA" in name), 51)
+        be_idx = next((i for name, i in col_map.items() if "BE" in name), 56)
+
+        df['Col_BT'] = df_raw.iloc[start_row:, bt_idx].astype(str).str.strip()
+        df['Col_BS'] = df_raw.iloc[start_row:, bs_idx].astype(str).str.strip()
+        df['Col_BA'] = df_raw.iloc[start_row:, ba_idx].astype(str).str.strip()
+        df['Vendor_Key'] = df_raw.iloc[start_row:, be_idx]
+
+        # === MERGE REAL CATEGORY NAMES (XLOOKUP mimic) ===
+        if not df_ref.empty:
+            df = df.merge(df_ref[['Vendor_Key', 'Vendor_Category']], on='Vendor_Key', how='left')
+            df['Col_BT'] = df['Vendor_Category'].fillna(df['Col_BT'])
+
+        # === NORMALIZE BFP (BS) ===
+        def normalize_bs(x):
+            x = str(x).strip().upper()
+            if x in ["", "OK", "FREE", "0", "FREE FOR PAYMENT"]:
+                return "Free for Payment"
+            elif "BLOCK" in x or x in ["1", "BFP"]:
+                return "Blocked for Payment"
+            else:
+                return x
+        df['Col_BS'] = df['Col_BS'].apply(normalize_bs)
+
+        # === NORMALIZE YES FILTERS ===
+        for col in ['Col_AF', 'Col_AH', 'Col_AJ', 'Col_AN']:
+            df[col] = df[col].fillna("").astype(str).apply(lambda x: x.strip().lower() if isinstance(x, str) else "")
+
         # === ADVANCED FILTERS ===
         st.markdown("### Advanced Filters")
-
-        try:
-            headers = df_raw.iloc[header_row[0]].astype(str).str.strip().tolist()
-            col_map = {h.upper().strip(): i for i, h in enumerate(headers)}
-
-            bt_idx = next((i for name, i in col_map.items() if "BT" in name and "FUNC" not in name), 42)
-            bs_idx = next((i for name, i in col_map.items() if "BS" in name and "FUNC" not in name), 50)
-            ba_idx = next((i for name, i in col_map.items() if "BA" in name), 51)
-
-            def safe_text(col_index):
-                return df_raw.iloc[start_row:, col_index].fillna("").apply(lambda x: str(x).strip())
-
-            df['Col_BT'] = safe_text(bt_idx)
-            df['Col_BS'] = safe_text(bs_idx)
-            df['Col_BA'] = safe_text(ba_idx)
-
-            # ---- BT FIX (auto-switch if flags or numeric codes) ----
-            bt_values = [str(v).strip().upper() for v in df['Col_BT'].dropna().unique()]
-            if all(v in {"YES", "NO", "Y", "N", ""} or v.replace('.', '', 1).isdigit() for v in bt_values):
-                bt_func_idx = bt_idx + 1
-                if bt_func_idx < df_raw.shape[1]:
-                    df['Col_BT'] = safe_text(bt_func_idx)
-                    st.info("Detected BT has only flags or numeric codes — switched to next column with real vendor type names.")
-
-            # ---- BS NORMALIZATION ----
-            def normalize_bs(x):
-                x = str(x).strip().upper()
-                if x in ["", "OK", "FREE", "0", "FREE FOR PAYMENT"]:
-                    return "FREE FOR PAYMENT"
-                elif "BLOCK" in x or x in ["1", "BFP"]:
-                    return "BFP"
-                else:
-                    return "FREE FOR PAYMENT"
-            df['Col_BS'] = df['Col_BS'].apply(normalize_bs)
-
-        except Exception as e:
-            st.warning(f"Couldn't locate BT/BS/BA columns: {e}")
-            df['Col_BT'], df['Col_BS'], df['Col_BA'] = "Unknown", "Unknown", "Unknown"
-
-        # === YES FILTERS (SAFE) ===
-        for col in ['Col_AF', 'Col_AH', 'Col_AJ', 'Col_AN']:
-            df[col] = (
-                df[col]
-                .fillna("")
-                .apply(lambda x: str(x).strip().lower() if isinstance(x, (str, int, float)) else "")
-            )
-
         apply_yes = st.checkbox("Filter AF/AH/AJ/AN to 'Yes' only", value=True)
         if apply_yes:
             for col in ['Col_AF', 'Col_AH', 'Col_AJ', 'Col_AN']:
                 df = df[df[col] == 'yes']
 
-        # === BT MULTISELECT ===
-        bt_values = sorted({str(v).strip() for v in df['Col_BT'] if str(v).strip().lower() not in ["nan", "none", ""]})
+        # === BT FILTER (Exceptions/Priority Vendors) ===
+        bt_values = sorted({v.strip() for v in df['Col_BT'] if v and v.lower() not in ["nan", "none"]})
         selected_bt = st.multiselect("Exceptions / Priority Vendors", bt_values, default=bt_values)
         if selected_bt:
             df = df[df['Col_BT'].isin(selected_bt)]
 
-        # === BS MULTISELECT ===
-        bs_values = sorted({str(v).strip() for v in df['Col_BS'] if str(v).strip().lower() not in ["nan", "none", ""]})
+        # === BS FILTER (BFP Status) ===
+        bs_values = sorted({v.strip() for v in df['Col_BS'] if v and v.lower() not in ["nan", "none"]})
         selected_bs = st.multiselect("BFP Status (BS)", bs_values, default=bs_values)
         if selected_bs:
             df = df[df['Col_BS'].isin(selected_bs)]
 
-        # === COUNTRY FILTER ===
+        # === COUNTRY FILTER (BA) ===
         def classify_country(x):
             x = str(x).strip().lower()
             if "spain" in x or "espa" in x:
@@ -126,11 +121,6 @@ if uploaded_file:
         country_choice = st.radio("Select Country Group", ["All", "Spain", "Foreign"], horizontal=True)
         if country_choice != "All":
             df = df[df['Country_Type'] == country_choice]
-
-        # === STOP IF EMPTY ===
-        if df.empty:
-            st.error("No valid vendor data left after filters. Relax your filters or check Excel file.")
-            st.stop()
 
         # === OVERDUE LOGIC ===
         today = pd.Timestamp.now(tz='Europe/Athens').date()
@@ -167,35 +157,21 @@ if uploaded_file:
         base_df = top_df if "Top" in vendor_select else summary[summary['Vendor_Name'] == vendor_select]
 
         # === CHART ===
-        plot_df = base_df.melt(
-            id_vars='Vendor_Name',
-            value_vars=['Overdue', 'Not Overdue'],
-            var_name='Type', value_name='Amount'
-        ).query("Amount>0")
-
-        fig = px.bar(
-            plot_df,
-            x='Amount',
-            y='Vendor_Name',
-            color='Type',
-            orientation='h',
-            color_discrete_map={'Overdue': '#8B0000', 'Not Overdue': '#4682B4'},
-            title=f"Top {top_n} Vendors ({status_filter}) — {len(selected_bt)} BT | {len(selected_bs)} BS | {country_choice}",
-            height=max(500, len(plot_df) * 45)
-        )
+        plot_df = base_df.melt(id_vars='Vendor_Name',
+                               value_vars=['Overdue', 'Not Overdue'],
+                               var_name='Type', value_name='Amount').query("Amount>0")
+        fig = px.bar(plot_df, x='Amount', y='Vendor_Name', color='Type',
+                     orientation='h', color_discrete_map={'Overdue': '#8B0000', 'Not Overdue': '#4682B4'},
+                     title=f"Top {top_n} Vendors ({status_filter}) — {country_choice}",
+                     height=max(500, len(plot_df) * 45))
         totals = plot_df.groupby('Vendor_Name')['Amount'].sum().reset_index()
-        fig.add_scatter(
-            x=totals['Amount'], y=totals['Vendor_Name'],
-            mode='text', text=totals['Amount'].apply(lambda x: f"€{x:,.0f}"),
-            textposition='top center',
-            textfont=dict(size=14, color='white', family='Arial Black'),
-            showlegend=False, hoverinfo='skip'
-        )
-        fig.update_layout(
-            xaxis_title="Amount (€)", yaxis_title="Vendor", legend_title="Status",
-            barmode='stack', plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
-            margin=dict(l=150, r=50, t=80, b=50)
-        )
+        fig.add_scatter(x=totals['Amount'], y=totals['Vendor_Name'], mode='text',
+                        text=totals['Amount'].apply(lambda x: f"€{x:,.0f}"),
+                        textposition='top center', textfont=dict(size=14, color='white', family='Arial Black'),
+                        showlegend=False, hoverinfo='skip')
+        fig.update_layout(xaxis_title="Amount (€)", yaxis_title="Vendor", legend_title="Status",
+                          barmode='stack', plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
+                          margin=dict(l=150, r=50, t=80, b=50))
         chart = st.plotly_chart(fig, use_container_width=True, on_select="rerun")
 
         # === CLICK HANDLING ===
@@ -203,7 +179,6 @@ if uploaded_file:
             st.session_state.clicked_vendor = chart.selection['points'][0].get('y')
         else:
             st.session_state.clicked_vendor = None
-
         clicked_vendor = st.session_state.clicked_vendor
 
         # === FILTERED TABLE ===
@@ -215,7 +190,7 @@ if uploaded_file:
         if clicked_vendor:
             filtered_df = filtered_df[filtered_df['Vendor_Name'] == clicked_vendor]
 
-        # === RAW TABLE ===
+        # === TABLE DISPLAY ===
         if not filtered_df.empty:
             st.subheader("Raw Invoices")
             show = filtered_df[['Vendor_Name','VAT_ID','Due_Date','Open_Amount','Status',
@@ -227,7 +202,7 @@ if uploaded_file:
         else:
             st.info("Click a bar to filter by vendor or adjust filters above.")
 
-        # === EMAIL SECTION ===
+        # === EMAILS ===
         st.markdown("---")
         st.subheader("📧 Emails (copy for Outlook)")
         emails = pd.concat([filtered_df['Vendor_Email'], filtered_df['Account_Email']], ignore_index=True)
@@ -236,7 +211,7 @@ if uploaded_file:
         lang = "Spanish" if country_choice == "Spain" else "English" if country_choice == "Foreign" else "Mixed"
         unique = sorted(set(emails))
         st.text_area(f"Ctrl + C to copy ({lang} vendors):", ", ".join(unique), height=120)
-        st.success(f"{len(unique)} {lang} {'' if len(unique)==1 else 'emails'} collected")
+        st.success(f"{len(unique)} {lang} emails collected")
 
     except Exception as e:
         st.error(f"Error: {e}")
