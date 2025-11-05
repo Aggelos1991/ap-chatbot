@@ -31,12 +31,12 @@ if uploaded_file:
         df = df.iloc[:, [0, 1, 4, 6, 29, 30]]
         df.columns = ['Vendor_Name', 'VAT_ID', 'Due_Date', 'Open_Amount', 'Vendor_Email', 'Account_Email']
 
-        df['Due_Date'] = pd.to_datetime(df['Due_Date'], errors='coerce').dt.normalize()
+        df['Due_Date'] = pd.to_datetime(df['Due_Date'], errors='coerce').dt.date
         df['Open_Amount'] = pd.to_numeric(df['Open_Amount'], errors='coerce')
         df = df.dropna(subset=['Vendor_Name', 'Open_Amount', 'Due_Date'])
         df = df[df['Open_Amount'] > 0]
 
-        today = pd.Timestamp.now(tz='Europe/Athens').normalize()
+        today = pd.Timestamp.now(tz='Europe/Athens').date()
         df['Overdue'] = df['Due_Date'] < today
         df['Status'] = np.where(df['Overdue'], 'Overdue', 'Not Overdue')
 
@@ -57,7 +57,7 @@ if uploaded_file:
         with c2:
             vendor_select = st.selectbox("Vendors", ["Top 20", "Top 30"] + sorted(df['Vendor_Name'].unique()))
         with c3:
-            st.caption(f"Today (Athens): {today.date()}")
+            st.caption(f"Today (Athens): {today}")
 
         top_n = 30 if "30" in vendor_select else 20
         if status_filter == "All Open":
