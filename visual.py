@@ -5,7 +5,7 @@ import numpy as np
 
 st.set_page_config(page_title="Overdue Invoices", layout="wide")
 st.title("Overdue Invoices Dashboard")
-st.markdown("**Click a bar → Filter by vendor | Click outside → Reset to all | Table and emails auto-filter**")
+
 
 # --- SESSION STATE ---
 if 'clicked_vendor' not in st.session_state:
