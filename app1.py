@@ -61,7 +61,7 @@ def extract_text_with_ocr(uploaded_pdf):
     return all_lines, ocr_pages
 
 # ==========================================================
-# GPT EXTRACTION (ENHANCED WITH BALANCE)
+# GPT EXTRACTION (ENHANCED FOR SALDO & COBRO)
 # ==========================================================
 def normalize_number(value):
     if not value:
@@ -92,13 +92,14 @@ def parse_gpt_response(content, batch_num):
         return []
 
 def extract_with_gpt(lines):
-    """Multilingual GPT extraction tuned for Spanish, Greek, and English — includes Balance column."""
+    """Multilingual GPT extraction tuned for Spanish/Greek/English statements."""
     BATCH_SIZE = 60
     all_records = []
 
     for i in range(0, len(lines), BATCH_SIZE):
         batch = lines[i:i + BATCH_SIZE]
         text_block = "\n".join(batch)
+
         prompt = f"""
 You are a multilingual financial data extractor for vendor statements (Spanish / Greek / English).
 
@@ -107,13 +108,14 @@ For each line, extract:
 - Date (Fecha, Ημερομηνία)
 - Reason (Invoice | Payment | Credit Note)
 - Debit (DEBE / Χρέωση / TOTAL / ΣΥΝΟΛΟ when DEBE/HABER missing)
-- Credit (HABER / Πίστωση)
-- Balance (Saldo / Υπόλοιπο / Συνολικό Υπόλοιπο / Balance)
+- Credit (HABER / Πίστωση / SALDO / Υπόλοιπο / Balance)
 
 Rules:
-- Ignore lines with Asiento, IVA, Total Saldo, or headers.
-- Use TOTAL/TOTALES/ΣΥΝΟΛΟ only if DEBE/HABER missing.
-- If 'Saldo', 'Balance', 'Υπόλοιπο', or 'Συνολικό Υπόλοιπο' appear, treat as Balance.
+- Treat SALDO / Balance / Υπόλοιπο / Συνολικό Υπόλοιπο as CREDIT values, not separate columns.
+- Ignore headers or lines with 'Asiento', 'IVA', 'Total Saldo'.
+- If text contains 'Cobro', 'Pago', 'Transferencia', or 'Remesa', set Reason = Payment.
+- If text contains 'Abono', 'Nota de crédito', or 'Πίστωση', set Reason = Credit Note.
+- TOTAL/TOTALES/ΣΥΝΟΛΟ used only if DEBE/HABER missing.
 
 Output only valid JSON:
 [
@@ -122,8 +124,7 @@ Output only valid JSON:
     "Date": "dd/mm/yy or yyyy-mm-dd",
     "Reason": "Invoice | Payment | Credit Note",
     "Debit": "number",
-    "Credit": "number",
-    "Balance": "number or empty if missing"
+    "Credit": "number"
   }}
 ]
 
@@ -156,26 +157,28 @@ Text:
                 continue
             debit_val = normalize_number(row.get("Debit", ""))
             credit_val = normalize_number(row.get("Credit", ""))
-            balance_val = normalize_number(row.get("Balance", ""))
             reason = str(row.get("Reason", "")).strip()
 
-            if debit_val and not credit_val:
+            # --- Logic for SALDO as Credit ---
+            if "saldo" in str(row).lower() or "balance" in str(row).lower() or "υπόλοιπο" in str(row).lower():
+                if not credit_val and debit_val:
+                    credit_val = debit_val
+                    debit_val = ""
+
+            # --- Logic for Concepto = Cobro (Payment) ---
+            if re.search(r"cobro|pago|transferencia|remesa", str(row), re.IGNORECASE):
+                reason = "Payment"
+            elif re.search(r"abono|nota de crédito|crédit|πίστωση", str(row), re.IGNORECASE):
+                reason = "Credit Note"
+            elif not reason:
                 reason = "Invoice"
-            elif credit_val and not debit_val:
-                if re.search(r"abono|nota|crédit|descuento|πίστωση|credit", str(row), re.IGNORECASE):
-                    reason = "Credit Note"
-                else:
-                    reason = "Payment"
-            elif debit_val == "" and credit_val == "":
-                continue
 
             all_records.append({
                 "Alternative Document": alt_doc,
                 "Date": str(row.get("Date", "")).strip(),
                 "Reason": reason,
                 "Debit": debit_val,
-                "Credit": credit_val,
-                "Balance": balance_val
+                "Credit": credit_val
             })
 
     return all_records
@@ -200,9 +203,9 @@ if uploaded_pdf:
         lines, ocr_pages = extract_text_with_ocr(uploaded_pdf)
 
     if len(lines) == 0:
-        st.error("❌ No text detected. Make sure the PDF is not password-protected or empty.")
+        st.error("❌ No text detected. Make sure Tesseract OCR is installed and language packs (spa, ell, eng) are available.")
     else:
-        st.success(f"✅ Found {len(lines)} text lines.")
+        st.success(f"✅ Found {len(lines)} lines of text!")
         if ocr_pages:
             st.info(f"OCR applied on pages: {', '.join(map(str, ocr_pages))}")
 
@@ -214,17 +217,15 @@ if uploaded_pdf:
 
             if data:
                 df = pd.DataFrame(data)
-                st.success(f"✅ Extraction complete — {len(df)} valid records found.")
+                st.success(f"✅ Extraction complete — {len(df)} valid records found!")
                 st.dataframe(df, use_container_width=True, hide_index=True)
-
                 total_debit = df["Debit"].apply(pd.to_numeric, errors="coerce").sum()
                 total_credit = df["Credit"].apply(pd.to_numeric, errors="coerce").sum()
                 net = round(total_debit - total_credit, 2)
-
-                c1, c2, c3 = st.columns(3)
-                c1.metric("💰 Total Debit", f"{total_debit:,.2f}")
-                c2.metric("💳 Total Credit", f"{total_credit:,.2f}")
-                c3.metric("⚖️ Net", f"{net:,.2f}")
+                col1, col2, col3 = st.columns(3)
+                col1.metric("💰 Total Debit", f"{total_debit:,.2f}")
+                col2.metric("💳 Total Credit", f"{total_credit:,.2f}")
+                col3.metric("⚖️ Net", f"{net:,.2f}")
 
                 st.download_button(
                     "⬇️ Download Excel",
