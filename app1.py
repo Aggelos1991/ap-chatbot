@@ -11,7 +11,7 @@ import pytesseract
 # CONFIGURATION
 # ==========================================================
 st.set_page_config(page_title="🦅 DataFalcon Pro — Hybrid GPT+OCR Extractor", layout="wide")
-st.title("🦅 DataFalcon Pro")
+st.title("🦅 DataFalcon Pro — Hybrid GPT + OCR Extractor")
 
 # === Load environment ===
 try:
@@ -146,13 +146,23 @@ Text:
             balance_val = normalize_number(row.get("Balance", ""))
             reason = str(row.get("Reason", "")).strip()
 
-            # Auto-classify if missing
-            if re.search(r"pago|cobro|transferencia|remesa", str(row), re.IGNORECASE):
+            text_row = str(row)
+            if re.search(r"pago|cobro|transferencia|remesa", text_row, re.IGNORECASE):
                 reason = "Payment"
-            elif re.search(r"abono|nota de crédito|crédit", str(row), re.IGNORECASE):
+            elif re.search(r"abono|nota de crédito|crédit", text_row, re.IGNORECASE):
                 reason = "Credit Note"
             elif not reason:
                 reason = "Invoice"
+
+            # ✅ Correct placement logic
+            if reason.lower() == "payment":
+                # Payments should appear on Credit side
+                credit_val = debit_val or credit_val
+                debit_val = 0
+            elif reason.lower() in ["invoice", "credit note"]:
+                # Invoices and Credit Notes on Debit side
+                debit_val = debit_val or credit_val
+                credit_val = 0
 
             all_records.append({
                 "Alternative Document": alt_doc,
