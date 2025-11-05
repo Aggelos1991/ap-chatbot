@@ -17,6 +17,7 @@ uploaded_file = st.file_uploader("Upload Excel file", type=['xlsx'])
 
 if uploaded_file:
     try:
+        # --- Load & prepare ---
         with pd.ExcelFile(uploaded_file) as xls:
             if 'Outstanding Invoices IB' not in xls.sheet_names:
                 st.error("Sheet 'Outstanding Invoices IB' not found.")
@@ -42,6 +43,7 @@ if uploaded_file:
         df['Overdue'] = df['Due_Date'] < today
         df['Status'] = np.where(df['Overdue'], 'Overdue', 'Not Overdue')
 
+        # --- Summary ---
         full_summary = (
             df.groupby(['Vendor_Name', 'Status'], as_index=False)['Open_Amount']
               .sum()
@@ -54,6 +56,7 @@ if uploaded_file:
                 full_summary[col] = 0
         full_summary['Total'] = full_summary['Overdue'] + full_summary['Not Overdue']
 
+        # --- Filters ---
         c1, c2, c3 = st.columns(3)
         with c1:
             status_filter = st.selectbox("Show", ["All Open", "Overdue Only", "Not Overdue Only"])
@@ -72,14 +75,15 @@ if uploaded_file:
 
         base_df = top_df if "Top" in vendor_select else full_summary[full_summary['Vendor_Name'] == vendor_select]
 
+        # --- Chart ---
         plot_df = base_df.melt(
             id_vars='Vendor_Name',
             value_vars=['Overdue', 'Not Overdue'],
-            var_name='Type', value_name='Amount'
+            var_name='Status', value_name='Amount'
         ).query("Amount>0")
 
         fig = px.bar(
-            plot_df, x='Amount', y='Vendor_Name', color='Type', orientation='h',
+            plot_df, x='Amount', y='Vendor_Name', color='Status', orientation='h',
             color_discrete_map={'Overdue': '#8B0000', 'Not Overdue': '#4682B4'},
             title=f"Top {top_n} Vendors ({status_filter})",
             height=max(500, len(plot_df) * 45)
@@ -98,31 +102,42 @@ if uploaded_file:
             margin=dict(l=150, r=50, t=80, b=50)
         )
 
-        chart = st.plotly_chart(fig, use_container_width=True, on_select="rerun", key="chart")
+        selected = st.plotly_chart(fig, use_container_width=True, on_select="rerun", key="chart")
 
-        # --- CLICK LOGIC ---
-        if chart.selection and chart.selection['points']:
-            point = chart.selection['points'][0]
+        # --- Selection Handling ---
+        if selected.selection and selected.selection['points']:
+            point = selected.selection['points'][0]
             st.session_state.clicked_vendor = point.get('y')
-            st.session_state.clicked_status = point.get('curveName', None)
+            st.session_state.clicked_status = point.get('curve_name', None)
 
-        clicked_vendor = st.session_state.clicked_vendor
-        clicked_status = st.session_state.clicked_status
+        vendor_clicked = st.session_state.clicked_vendor
+        status_clicked = st.session_state.clicked_status
 
-        if clicked_vendor and clicked_status:
-            st.subheader(f"Raw Invoices – {clicked_vendor} ({clicked_status})")
-            raw = df[(df['Vendor_Name'] == clicked_vendor) & (df['Status'] == clicked_status)].copy()
-            raw = raw[['VAT_ID', 'Due_Date', 'Open_Amount', 'Status', 'Vendor_Email', 'Account_Email']]
-            raw['Due_Date'] = pd.to_datetime(raw['Due_Date']).dt.strftime("%Y-%m-%d")
-            raw['Open_Amount'] = raw['Open_Amount'].map('€{:,.2f}'.format)
-            st.dataframe(raw, use_container_width=True)
+        # --- Raw Data ---
+        if vendor_clicked and status_clicked:
+            st.subheader(f"Raw Invoices – {vendor_clicked} ({status_clicked})")
+            filtered = df[(df['Vendor_Name'] == vendor_clicked) & (df['Status'] == status_clicked)]
+            if filtered.empty:
+                st.warning("No invoices match this segment.")
+            else:
+                filtered = filtered[['VAT_ID', 'Due_Date', 'Open_Amount', 'Status', 'Vendor_Email', 'Account_Email']]
+                filtered['Due_Date'] = pd.to_datetime(filtered['Due_Date']).dt.strftime("%Y-%m-%d")
+                filtered['Open_Amount'] = filtered['Open_Amount'].map('€{:,.2f}'.format)
+                st.dataframe(filtered, use_container_width=True)
         else:
-            st.info("Click a specific bar segment to see vendor-specific data.")
+            st.info("Click a bar segment to view specific vendor data.")
 
+        # --- Email Section ---
         st.markdown("---")
         st.subheader("📧 Emails (copy for Outlook)")
-        scope = df if status_filter == "All Open" else df[df['Overdue']] if status_filter == "Overdue Only" else df[~df['Overdue']]
-        emails = pd.concat([scope['Vendor_Email'], scope['Account_Email']], ignore_index=True).dropna().astype(str)
+        if status_filter == "All Open":
+            scope = df
+        elif status_filter == "Overdue Only":
+            scope = df[df['Overdue']]
+        else:
+            scope = df[~df['Overdue']]
+        emails = pd.concat([scope['Vendor_Email'], scope['Account_Email']], ignore_index=True)
+        emails = emails.dropna().astype(str)
         emails = emails[emails.str.contains('@')]
         unique_emails = sorted(set(emails))
         st.text_area("Ctrl + C to copy:", ", ".join(unique_emails), height=120)
@@ -131,4 +146,4 @@ if uploaded_file:
     except Exception as e:
         st.error(f"Error: {e}")
 else:
-    st.info("Upload Excel → Click bar segment → See data → Copy emails")
+    st.info("Upload Excel → Click a bar segment → View raw data & copy emails")
