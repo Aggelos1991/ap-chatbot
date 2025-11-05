@@ -4,13 +4,14 @@ import pandas as pd
 import streamlit as st
 from io import BytesIO
 from openai import OpenAI
+from pdf2image import convert_from_bytes
 import pytesseract
 
 # ==========================================================
 # CONFIG
 # ==========================================================
-st.set_page_config(page_title="🦅 DataFalcon Pro", layout="wide")
-st.title("🦅 DataFalcon Pro")
+st.set_page_config(page_title="🦅 DataFalcon Pro — Hybrid GPT+OCR Extractor", layout="wide")
+st.title("🦅 DataFalcon Pro — Hybrid GPT + OCR Extractor")
 
 try:
     from dotenv import load_dotenv
@@ -28,55 +29,39 @@ PRIMARY_MODEL = "gpt-4o-mini"
 BACKUP_MODEL = "gpt-4o"
 
 # ==========================================================
-# SAFE OCR + TEXT EXTRACTION
+# OCR-ENHANCED TEXT EXTRACTION
 # ==========================================================
 def extract_text_with_ocr(uploaded_pdf):
-    """Extract text using pdfplumber, fallback to OCR if available."""
+    """Extracts text from PDF using both pdfplumber and OCR fallback."""
     all_lines, ocr_pages = [], []
     pdf_bytes = uploaded_pdf.read()
     uploaded_pdf.seek(0)
 
-    # --- Check OCR availability ---
-    ocr_enabled = True
-    try:
-        pytesseract.get_tesseract_version()
-        from pdf2image import convert_from_bytes
-    except Exception:
-        ocr_enabled = False
-        st.warning("⚠️ OCR engine not detected (Poppler/Tesseract). Proceeding with text extraction only.")
-
-    # --- Extract text page by page ---
     with pdfplumber.open(BytesIO(pdf_bytes)) as pdf:
         for i, page in enumerate(pdf.pages, start=1):
-            try:
-                text = page.extract_text()
-            except Exception:
-                text = None
-
+            text = page.extract_text()
             if text and len(text.strip()) > 10:
                 for line in text.split("\n"):
-                    clean = " ".join(line.split())
-                    if clean:
-                        all_lines.append(clean)
-            elif ocr_enabled:
-                # Fallback OCR for image-based pages
+                    clean_line = " ".join(line.split())
+                    if clean_line:
+                        all_lines.append(clean_line)
+            else:
+                # OCR fallback
+                ocr_pages.append(i)
                 try:
                     img = convert_from_bytes(pdf_bytes, dpi=250, first_page=i, last_page=i)[0]
                     ocr_text = pytesseract.image_to_string(img, lang="spa+eng+ell")
-                    ocr_pages.append(i)
                     for line in ocr_text.split("\n"):
-                        clean = " ".join(line.split())
-                        if clean:
-                            all_lines.append(clean)
+                        clean_line = " ".join(line.split())
+                        if clean_line:
+                            all_lines.append(clean_line)
                 except Exception as e:
                     st.warning(f"OCR skipped for page {i}: {e}")
-            else:
-                continue
 
     return all_lines, ocr_pages
 
 # ==========================================================
-# GPT EXTRACTOR (WITH SALDO)
+# GPT EXTRACTION (ENHANCED WITH BALANCE)
 # ==========================================================
 def normalize_number(value):
     if not value:
@@ -107,31 +92,30 @@ def parse_gpt_response(content, batch_num):
         return []
 
 def extract_with_gpt(lines):
-    """Multilingual GPT extraction tuned for Spanish/Greek/English statements."""
+    """Multilingual GPT extraction tuned for Spanish, Greek, and English — includes Balance column."""
     BATCH_SIZE = 60
     all_records = []
 
     for i in range(0, len(lines), BATCH_SIZE):
         batch = lines[i:i + BATCH_SIZE]
         text_block = "\n".join(batch)
-
         prompt = f"""
-You are a multilingual financial statement parser (Spanish, Greek, English).
+You are a multilingual financial data extractor for vendor statements (Spanish / Greek / English).
 
-For each line, detect:
+For each line, extract:
 - Document / Reference / Invoice number (Documento, N° DOC, Αρ. Παραστατικού, Reference, Fra., Τιμολόγιο)
 - Date (Fecha, Ημερομηνία)
 - Reason (Invoice | Payment | Credit Note)
 - Debit (DEBE / Χρέωση / TOTAL / ΣΥΝΟΛΟ when DEBE/HABER missing)
 - Credit (HABER / Πίστωση)
-- Balance (Saldo / Υπόλοιπο / Balance / Running total)
+- Balance (Saldo / Υπόλοιπο / Συνολικό Υπόλοιπο / Balance)
 
 Rules:
-• Ignore lines with Asiento, IVA, or Total Saldo.
-• Use TOTAL/TOTALES/ΣΥΝΟΛΟ only if DEBE/HABER not found.
-• If "Saldo" appears, extract it as Balance.
+- Ignore lines with Asiento, IVA, Total Saldo, or headers.
+- Use TOTAL/TOTALES/ΣΥΝΟΛΟ only if DEBE/HABER missing.
+- If 'Saldo', 'Balance', 'Υπόλοιπο', or 'Συνολικό Υπόλοιπο' appear, treat as Balance.
 
-Return JSON only:
+Output only valid JSON:
 [
   {{
     "Alternative Document": "Invoice or reference number",
@@ -139,7 +123,7 @@ Return JSON only:
     "Reason": "Invoice | Payment | Credit Note",
     "Debit": "number",
     "Credit": "number",
-    "Balance": "number or empty if not shown"
+    "Balance": "number or empty if missing"
   }}
 ]
 
@@ -163,7 +147,6 @@ Text:
                     break
             except Exception as e:
                 st.warning(f"GPT error ({model}): {e}")
-
         if not data:
             continue
 
@@ -213,11 +196,11 @@ def to_excel_bytes(records):
 uploaded_pdf = st.file_uploader("📂 Upload Vendor Statement (PDF)", type=["pdf"])
 
 if uploaded_pdf:
-    with st.spinner("📄 Extracting text (OCR fallback if available)..."):
+    with st.spinner("📄 Extracting text + running OCR fallback..."):
         lines, ocr_pages = extract_text_with_ocr(uploaded_pdf)
 
     if len(lines) == 0:
-        st.error("❌ No text detected. Ensure your PDF is not password-protected or empty.")
+        st.error("❌ No text detected. Make sure the PDF is not password-protected or empty.")
     else:
         st.success(f"✅ Found {len(lines)} text lines.")
         if ocr_pages:
@@ -252,4 +235,4 @@ if uploaded_pdf:
             else:
                 st.warning("⚠️ No structured data found in GPT output.")
 else:
-    st.info("Upload a vendor statement PDF to begin.")
+    st.info("Upload a PDF to begin.")
