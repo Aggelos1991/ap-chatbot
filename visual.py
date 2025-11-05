@@ -71,10 +71,30 @@ if uploaded_file:
         df['Col_BA'] = df_raw.iloc[start_row:, ba_idx].astype(str).str.strip()
         df['Vendor_Key'] = df_raw.iloc[start_row:, be_idx]
 
-        # === MERGE REAL CATEGORY NAMES (XLOOKUP mimic) ===
+        # === MERGE REAL CATEGORY NAMES (XLOOKUP mimic + mapping) ===
         if not df_ref.empty:
             df = df.merge(df_ref[['Vendor_Key', 'Vendor_Category']], on='Vendor_Key', how='left')
             df['Col_BT'] = df['Vendor_Category'].fillna(df['Col_BT'])
+
+            # Map shorthand or numeric codes to full vendor categories
+            bt_map = {
+                "YES": "Priority Vendor OS&E",
+                "NO": "Regular Priority Vendor",
+                "REGULAR": "Regular Priority Vendor",
+                "ENT": "Entertainment",
+                "ENTERTAINMENT": "Entertainment",
+                "VR": "VR Without SOA",
+                "VR WITHOUT SOA": "VR Without SOA",
+                "OS&E": "Priority Vendor OS&E",
+                "PRIORITY": "Priority Vendor OS&E",
+                "BFP": "Blocked for Payment",
+                "FREE": "Free for Payment",
+                "0": "Regular Priority Vendor",
+                "27": "Entertainment",
+                "30": "Priority Vendor OS&E",
+                "60": "VR Without SOA"
+            }
+            df['Col_BT'] = df['Col_BT'].astype(str).str.strip().str.upper().map(bt_map).fillna(df['Col_BT'])
 
         # === NORMALIZE BFP (BS) ===
         def normalize_bs(x):
