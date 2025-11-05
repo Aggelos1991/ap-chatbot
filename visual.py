@@ -7,7 +7,6 @@ st.set_page_config(page_title="Overdue Invoices", layout="wide")
 st.title("Overdue Invoices Dashboard")
 st.markdown("**Click a bar → Filter by vendor | Click outside → Reset to all | Table and emails auto-filter**")
 
-# --- SESSION STATE ---
 if 'clicked_vendor' not in st.session_state:
     st.session_state.clicked_vendor = None
 
@@ -15,21 +14,21 @@ uploaded_file = st.file_uploader("Upload Excel file", type=['xlsx'])
 
 if uploaded_file:
     try:
-        # --- LOAD RAW DATA ---
+        # === LOAD RAW DATA ===
         with pd.ExcelFile(uploaded_file) as xls:
             if 'Outstanding Invoices IB' not in xls.sheet_names:
                 st.error("Sheet 'Outstanding Invoices IB' not found.")
                 st.stop()
             df_raw = pd.read_excel(xls, sheet_name='Outstanding Invoices IB', header=None)
 
-        # --- HEADER DETECTION ---
+        # === HEADER DETECTION ===
         header_row = df_raw[df_raw.iloc[:, 0].astype(str).str.contains("VENDOR", case=False, na=False)].index
         if header_row.empty:
             st.error("Header 'VENDOR' not found in column A.")
             st.stop()
         start_row = header_row[0] + 1
 
-        # --- BASE DF (key columns) ---
+        # === BASE DATA ===
         df = df_raw.iloc[start_row:].copy().reset_index(drop=True)
         df = df.iloc[:, [0, 1, 4, 6, 29, 30, 31, 33, 35, 39]]
         df.columns = [
@@ -37,7 +36,7 @@ if uploaded_file:
             'Vendor_Email', 'Account_Email', 'Col_AF', 'Col_AH', 'Col_AJ', 'Col_AN'
         ]
 
-        # --- BASIC CLEAN ---
+        # === CLEAN DATA ===
         df = df.dropna(how="all")
         df = df[df['Vendor_Name'].notna()]
         df = df[~df['Vendor_Name'].astype(str).str.strip().eq("")]
@@ -49,9 +48,10 @@ if uploaded_file:
         df = df.dropna(subset=['Due_Date', 'Open_Amount'])
         df = df[df['Open_Amount'] > 0]
 
-        # --- ADVANCED FILTERS ---
+        # === ADVANCED FILTERS ===
         st.markdown("### Advanced Filters")
 
+        # ---- Locate BT / BS / BA columns ----
         try:
             headers = df_raw.iloc[header_row[0]].astype(str).str.strip().tolist()
             col_map = {h.upper().strip(): i for i, h in enumerate(headers)}
@@ -60,18 +60,21 @@ if uploaded_file:
             bs_idx = next((i for name, i in col_map.items() if "BS" in name and "FUNC" not in name), 50)
             ba_idx = next((i for name, i in col_map.items() if "BA" in name), 51)
 
-            df['Col_BT'] = df_raw.iloc[start_row:, bt_idx].fillna("").astype(str).str.strip()
-            df['Col_BS'] = df_raw.iloc[start_row:, bs_idx].fillna("").astype(str).str.strip()
-            df['Col_BA'] = df_raw.iloc[start_row:, ba_idx].fillna("").astype(str).str.strip()
+            def safe_text(col_index):
+                return df_raw.iloc[start_row:, col_index].fillna("").apply(lambda x: str(x).strip())
 
-            # --- BT FIX ---
-            bt_unique = set(df['Col_BT'].dropna().str.upper().unique())
-            if bt_unique <= {"YES", "NO"} or bt_unique <= {"Y", "N"}:
+            df['Col_BT'] = safe_text(bt_idx)
+            df['Col_BS'] = safe_text(bs_idx)
+            df['Col_BA'] = safe_text(ba_idx)
+
+            # ---- BT FIX ----
+            bt_unique = set(df['Col_BT'].dropna().astype(str).str.upper().unique())
+            if bt_unique <= {"YES", "NO", "Y", "N"}:
                 bt_func_idx = bt_idx + 1
                 if bt_func_idx < df_raw.shape[1]:
-                    df['Col_BT'] = df_raw.iloc[start_row:, bt_func_idx].fillna("").astype(str).str.strip()
+                    df['Col_BT'] = safe_text(bt_func_idx)
 
-            # --- BS FIX ---
+            # ---- BS NORMALIZE ----
             def normalize_bs(x):
                 x = str(x).strip().upper()
                 if x in ["", "OK", "FREE", "0", "FREE FOR PAYMENT"]:
@@ -86,13 +89,12 @@ if uploaded_file:
             st.warning(f"Couldn't locate BT/BS/BA columns: {e}")
             df['Col_BT'], df['Col_BS'], df['Col_BA'] = "Unknown", "Unknown", "Unknown"
 
-        # --- YES FILTERS (SAFE VERSION) ---
+        # === SAFE YES FILTERS ===
         for col in ['Col_AF', 'Col_AH', 'Col_AJ', 'Col_AN']:
             df[col] = (
                 df[col]
-                .fillna("")  # replace NaN/float with empty text
-                .astype(str)
-                .apply(lambda x: x.strip().lower() if isinstance(x, str) else "")
+                .fillna("")
+                .apply(lambda x: str(x).strip().lower() if isinstance(x, (str, int, float)) else "")
             )
 
         apply_yes = st.checkbox("Filter AF/AH/AJ/AN to 'Yes' only", value=True)
@@ -100,19 +102,19 @@ if uploaded_file:
             for col in ['Col_AF', 'Col_AH', 'Col_AJ', 'Col_AN']:
                 df = df[df[col] == 'yes']
 
-        # --- BT MULTISELECT ---
-        bt_values = sorted({v.strip() for v in df['Col_BT'] if v and v.lower() not in ["nan", "none"]})
+        # === BT MULTISELECT ===
+        bt_values = sorted({str(v).strip() for v in df['Col_BT'] if str(v).strip().lower() not in ["nan", "none", ""]})
         selected_bt = st.multiselect("Exceptions / Priority Vendors", bt_values, default=bt_values)
         if selected_bt:
             df = df[df['Col_BT'].isin(selected_bt)]
 
-        # --- BS MULTISELECT ---
-        bs_values = sorted({v.strip() for v in df['Col_BS'] if v and v.lower() not in ["nan", "none"]})
+        # === BS MULTISELECT ===
+        bs_values = sorted({str(v).strip() for v in df['Col_BS'] if str(v).strip().lower() not in ["nan", "none", ""]})
         selected_bs = st.multiselect("BFP Status (BS)", bs_values, default=bs_values)
         if selected_bs:
             df = df[df['Col_BS'].isin(selected_bs)]
 
-        # --- COUNTRY FILTER ---
+        # === COUNTRY FILTER ===
         def classify_country(x):
             x = str(x).strip().lower()
             if "spain" in x or "espa" in x:
@@ -124,17 +126,17 @@ if uploaded_file:
         if country_choice != "All":
             df = df[df['Country_Type'] == country_choice]
 
-        # --- STOP IF NO DATA ---
+        # === STOP IF EMPTY ===
         if df.empty:
             st.error("No valid vendor data left after filters. Relax your filters or check Excel file.")
             st.stop()
 
-        # --- OVERDUE LOGIC ---
+        # === OVERDUE LOGIC ===
         today = pd.Timestamp.now(tz='Europe/Athens').date()
         df['Overdue'] = df['Due_Date'] < today
         df['Status'] = np.where(df['Overdue'], 'Overdue', 'Not Overdue')
 
-        # --- SUMMARY ---
+        # === SUMMARY ===
         summary = (
             df.groupby(['Vendor_Name', 'Status'], as_index=False)['Open_Amount']
               .sum()
@@ -147,7 +149,7 @@ if uploaded_file:
                 summary[col] = 0
         summary['Total'] = summary['Overdue'] + summary['Not Overdue']
 
-        # --- FILTERS FOR CHART ---
+        # === CHART FILTERS ===
         c1, c2 = st.columns(2)
         with c1:
             status_filter = st.selectbox("Show", ["All Open", "Overdue Only", "Not Overdue Only"])
@@ -163,7 +165,7 @@ if uploaded_file:
             top_df = summary.nlargest(top_n, 'Not Overdue').assign(**{'Overdue': 0})
         base_df = top_df if "Top" in vendor_select else summary[summary['Vendor_Name'] == vendor_select]
 
-        # --- CHART ---
+        # === CHART ===
         plot_df = base_df.melt(
             id_vars='Vendor_Name',
             value_vars=['Overdue', 'Not Overdue'],
@@ -195,7 +197,7 @@ if uploaded_file:
         )
         chart = st.plotly_chart(fig, use_container_width=True, on_select="rerun")
 
-        # --- CLICK HANDLING ---
+        # === CLICK HANDLING ===
         if chart.selection and chart.selection['points']:
             st.session_state.clicked_vendor = chart.selection['points'][0].get('y')
         else:
@@ -203,7 +205,7 @@ if uploaded_file:
 
         clicked_vendor = st.session_state.clicked_vendor
 
-        # --- FILTER TABLE ---
+        # === FILTERED TABLE ===
         filtered_df = df.copy()
         if status_filter == "Overdue Only":
             filtered_df = filtered_df[filtered_df['Status'] == "Overdue"]
@@ -212,7 +214,7 @@ if uploaded_file:
         if clicked_vendor:
             filtered_df = filtered_df[filtered_df['Vendor_Name'] == clicked_vendor]
 
-        # --- RAW TABLE ---
+        # === RAW TABLE ===
         if not filtered_df.empty:
             st.subheader("Raw Invoices")
             show = filtered_df[['Vendor_Name','VAT_ID','Due_Date','Open_Amount','Status',
@@ -224,7 +226,7 @@ if uploaded_file:
         else:
             st.info("Click a bar to filter by vendor or adjust filters above.")
 
-        # --- EMAILS ---
+        # === EMAIL SECTION ===
         st.markdown("---")
         st.subheader("📧 Emails (copy for Outlook)")
         emails = pd.concat([filtered_df['Vendor_Email'], filtered_df['Account_Email']], ignore_index=True)
@@ -233,7 +235,7 @@ if uploaded_file:
         lang = "Spanish" if country_choice == "Spain" else "English" if country_choice == "Foreign" else "Mixed"
         unique = sorted(set(emails))
         st.text_area(f"Ctrl + C to copy ({lang} vendors):", ", ".join(unique), height=120)
-        st.success(f"{len(unique)} {lang} emails collected")
+        st.success(f"{len(unique)} {lang} {'' if len(unique)==1 else 'emails'} collected")
 
     except Exception as e:
         st.error(f"Error: {e}")
