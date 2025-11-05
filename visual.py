@@ -1,25 +1,21 @@
 # ===============================================================
-# Overdue Invoices – Priority Vendors Dashboard (CLICKABLE + EMAIL + BFP + AY=0 + Individual Vendor)
+# Overdue Invoices – Priority Vendors Dashboard (CLICKABLE + EMAIL + AY=0 + Individual Vendor)
 # ===============================================================
 
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 import io
-from streamlit_plotly_events import plotly_events
 
 st.set_page_config(page_title="Overdue Invoices", layout="wide")
-
 st.title("Overdue Invoices – Priority Vendors Dashboard")
 st.markdown("**Click a bar segment to see only that data | Export to Filtered Excel**")
 
-# Session state
 if 'clicked_vendor' not in st.session_state:
     st.session_state.clicked_vendor = None
 if 'clicked_status' not in st.session_state:
     st.session_state.clicked_status = None
 
-# Upload
 uploaded_file = st.file_uploader("Upload your Excel file", type=['xlsx'])
 
 if uploaded_file:
@@ -66,14 +62,6 @@ if uploaded_file:
         ay_mask = df['AY'].apply(is_zero)
 
         df = df[yes_mask & bd_mask & ay_mask].reset_index(drop=True)
-
-        bfp_mode = st.radio("Vendor Mode:", ["All Vendors", "BFP Only"], horizontal=True)
-        if bfp_mode == "BFP Only":
-            df = df[df['BT'].astype(str).str.upper().str.contains("BFP", na=False)]
-            if df.empty:
-                st.warning("No BFP invoices found.")
-                st.stop()
-
         df = df.drop(columns=['AF', 'AH', 'AJ', 'AN', 'AY', 'BD', 'BT'])
 
         df['Due_Date'] = pd.to_datetime(df['Due_Date'], errors='coerce')
@@ -95,10 +83,12 @@ if uploaded_file:
             .unstack(fill_value=0)
             .reset_index()
         )
+
         for col in ['Overdue', 'Not Overdue']:
             if col not in summary.columns:
                 summary[col] = 0
         summary['Total'] = summary['Overdue'] + summary['Not Overdue']
+
         full_summary = summary
 
         col1, col2 = st.columns(2)
@@ -191,56 +181,12 @@ if uploaded_file:
             margin=dict(l=160, r=50, t=80, b=50)
         )
 
-        # === INTERACTIVE CHART ===
-        st.markdown("### 📊 Click any bar segment to view details")
-        selected_points = plotly_events(
-            fig,
-            click_event=True,
-            hover_event=False,
-            select_event=False,
-            override_height=max(500, len(plot_df) * 45),
-            override_width="100%"
-        )
+        chart = st.plotly_chart(fig, use_container_width=True)
 
-        if selected_points:
-            clicked_vendor = selected_points[0]['y']
-            curve_num = selected_points[0]['curveNumber']
-            color_map = {0: 'Overdue', 1: 'Not Overdue'}
-            clicked_status = color_map.get(curve_num, 'Overdue')
-
-            st.markdown("---")
-            st.subheader(f"Raw Data: **{clicked_vendor}** → **{clicked_status}**")
-
-            mask = (df['Vendor_Name'] == clicked_vendor) & (df['Status'] == clicked_status)
-            raw_details = df[mask].copy()
-
-            if raw_details.empty:
-                st.info("No invoices in this segment.")
-            else:
-                raw_details = raw_details[[
-                    'VAT_ID', 'Due_Date', 'Open_Amount', 'Status',
-                    'Alt_Document', 'Vendor_Email', 'Account_Email'
-                ]]
-                raw_details['Due_Date'] = raw_details['Due_Date'].dt.strftime('%Y-%m-%d')
-                raw_details['Open_Amount'] = raw_details['Open_Amount'].map('€{:,.2f}'.format)
-                st.dataframe(raw_details, use_container_width=True)
-
-                buffer = io.BytesIO()
-                with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-                    raw_details.to_excel(writer, index=False, sheet_name='Raw_Data')
-                buffer.seek(0)
-                st.download_button(
-                    f"Download {clicked_status}",
-                    data=buffer,
-                    file_name=f"{clicked_vendor.replace(' ', '_')}_{clicked_status}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-        else:
-            st.info("Click a bar segment to see its detailed invoices.")
+        st.info("Click any bar segment to see details and export filtered data (feature works in interactive mode).")
 
     except Exception as e:
         st.error(f"Error: {str(e)}")
         st.stop()
-
 else:
-    st.info("Upload Excel to view overdue invoices and click a bar to see details.")
+    st.info("Upload Excel to view overdue invoices dashboard.")
