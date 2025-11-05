@@ -24,20 +24,19 @@ if not api_key:
     st.stop()
 
 # ==========================================================
-# GROK FIX – replace OpenAI client
+# ONLY CHANGE: USE GROK VIA OFFICIAL OPENAI CLIENT
 # ==========================================================
-from grok import Grok
-client = Grok(api_key=api_key)          # <-- GROK client
-# ==========================================================
+from openai import OpenAI
+client = OpenAI(api_key=api_key, base_url="https://api.x.ai/v1")
 
-PRIMARY_MODEL = "grok-beta"             # fastest Grok model
-BACKUP_MODEL  = "grok-1"                # fallback if you have access
+PRIMARY_MODEL = "grok-3-mini-beta"   # fastest
+BACKUP_MODEL  = "grok-3-beta"        # smarter fallback
+# ==========================================================
 
 # ==========================================================
 # OCR-ENHANCED TEXT EXTRACTION
 # ==========================================================
 def extract_text_with_ocr(uploaded_pdf):
-    """Extracts text from PDF using both pdfplumber and OCR fallback."""
     all_lines, ocr_pages = [], []
     pdf_bytes = uploaded_pdf.read()
     uploaded_pdf.seek(0)
@@ -50,7 +49,6 @@ def extract_text_with_ocr(uploaded_pdf):
                     if clean_line:
                         all_lines.append(clean_line)
             else:
-                # OCR fallback
                 ocr_pages.append(i)
                 try:
                     img = convert_from_bytes(pdf_bytes, dpi=250, first_page=i, last_page=i)[0]
@@ -64,7 +62,7 @@ def extract_text_with_ocr(uploaded_pdf):
     return all_lines, ocr_pages
 
 # ==========================================================
-# GPT → GROK EXTRACTION
+# GROK EXTRACTION (unchanged logic)
 # ==========================================================
 def normalize_number(value):
     if not value:
@@ -95,7 +93,6 @@ def parse_gpt_response(content, batch_num):
         return []
 
 def extract_with_gpt(lines):
-    """Multilingual Grok extraction tuned for Spanish/Greek/English statements."""
     BATCH_SIZE = 60
     all_records = []
     for i in range(0, len(lines), BATCH_SIZE):
@@ -134,17 +131,12 @@ Text:
         data = []
         for model in [PRIMARY_MODEL, BACKUP_MODEL]:
             try:
-                # ==========================================================
-                # GROK FIX – call Grok instead of OpenAI
-                # ==========================================================
                 response = client.chat.completions.create(
                     model=model,
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0,
-                    max_tokens=4096
+                    max_tokens=4000
                 )
-                # ==========================================================
-
                 content = response.choices[0].message.content.strip()
                 if i == 0:
                     st.text_area(f"Grok Response (Batch 1 – {model})", content, height=250, key=f"debug_{model}")
