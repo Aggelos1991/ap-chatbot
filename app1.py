@@ -146,7 +146,7 @@ Each line may contain:
 - TOTAL / TOTALES / ΤΕΛΙΚΟ / ΣΥΝΟΛΟ / IMPORTE TOTAL / TOTAL FACTURA — treat as invoice total if no DEBE/HABER available
 
 ⚠️ RULES
-1. Ignore lines with 'Asiento', 'Saldo', 'IVA', or 'Total Saldo'.
+1. Ignore lines with 'Asiento', 'Saldo', 'IVA', 'Total Saldo' or 'Base Imponible'.
 2. Exclude codes like "Código IC N" or similar from document detection.
 3. If "N° DOC" or "Documento" missing, detect invoice-like code (FAC123, F23, INV-2024, FRA-005, ΤΙΜ 123, etc).
 4. Detect reason:
