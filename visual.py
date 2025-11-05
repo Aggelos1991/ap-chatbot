@@ -22,23 +22,22 @@ if uploaded_file:
                 st.stop()
             df_raw = pd.read_excel(xls, sheet_name='Outstanding Invoices IB', header=None)
 
-        # Detect header row
+        # --- HEADER DETECTION ---
         header_row = df_raw[df_raw.iloc[:, 0].astype(str).str.contains("VENDOR", case=False, na=False)].index
         if header_row.empty:
             st.error("Header 'VENDOR' not found in column A.")
             st.stop()
-
         start_row = header_row[0] + 1
-        df = df_raw.iloc[start_row:].copy().reset_index(drop=True)
 
-        # --- SELECT COLUMNS ---
+        # --- BASE DF (key columns) ---
+        df = df_raw.iloc[start_row:].copy().reset_index(drop=True)
         df = df.iloc[:, [0, 1, 4, 6, 29, 30, 31, 33, 35, 39]]
         df.columns = [
             'Vendor_Name', 'VAT_ID', 'Due_Date', 'Open_Amount',
             'Vendor_Email', 'Account_Email', 'Col_AF', 'Col_AH', 'Col_AJ', 'Col_AN'
         ]
 
-        # --- BASIC CLEANUP ---
+        # --- BASIC CLEAN ---
         df = df.dropna(how="all")
         df = df[df['Vendor_Name'].notna()]
         df = df[~df['Vendor_Name'].astype(str).str.strip().eq("")]
@@ -53,7 +52,6 @@ if uploaded_file:
         # --- ADVANCED FILTERS ---
         st.markdown("### Advanced Filters")
 
-        # Detect BT / BS / BA columns dynamically
         try:
             headers = df_raw.iloc[header_row[0]].astype(str).str.strip().tolist()
             col_map = {h.upper().strip(): i for i, h in enumerate(headers)}
@@ -66,15 +64,17 @@ if uploaded_file:
             df['Col_BS'] = df_raw.iloc[start_row:, bs_idx].astype(str).str.strip()
             df['Col_BA'] = df_raw.iloc[start_row:, ba_idx].astype(str).str.strip()
 
-            # --- FIX BT (use FUNCTION column if current is YES/NO) ---
-            bt_func_idx = next((i for name, i in col_map.items() if "BT FUNC" in name or "BT_FUNCTION" in name or "BT FUNCTION" in name), bt_idx + 1)
-            if set(df['Col_BT'].dropna().unique()) <= {"YES", "NO", "yes", "no"} and bt_func_idx < df_raw.shape[1]:
-                df['Col_BT'] = df_raw.iloc[start_row:, bt_func_idx].astype(str).str.strip()
+            # --- BT FIX ---
+            bt_unique = set(df['Col_BT'].dropna().str.upper().unique())
+            if bt_unique <= {"YES", "NO"} or bt_unique <= {"Y", "N"}:
+                bt_func_idx = bt_idx + 1
+                if bt_func_idx < df_raw.shape[1]:
+                    df['Col_BT'] = df_raw.iloc[start_row:, bt_func_idx].astype(str).str.strip()
 
-            # --- FIX BS (normalize statuses) ---
+            # --- BS FIX ---
             def normalize_bs(x):
                 x = str(x).strip().upper()
-                if x in ["", "OK", "FREE", "0"]:
+                if x in ["", "OK", "FREE", "0", "FREE FOR PAYMENT"]:
                     return "FREE FOR PAYMENT"
                 elif "BLOCK" in x or x in ["1", "BFP"]:
                     return "BFP"
@@ -86,7 +86,7 @@ if uploaded_file:
             st.warning(f"Couldn't locate BT/BS/BA columns: {e}")
             df['Col_BT'], df['Col_BS'], df['Col_BA'] = "Unknown", "Unknown", "Unknown"
 
-        # --- NORMALIZE YES/NO FILTER COLUMNS ---
+        # --- YES FILTERS ---
         for col in ['Col_AF', 'Col_AH', 'Col_AJ', 'Col_AN']:
             df[col] = df[col].astype(str).str.strip().str.lower()
 
@@ -95,14 +95,14 @@ if uploaded_file:
             for col in ['Col_AF', 'Col_AH', 'Col_AJ', 'Col_AN']:
                 df = df[df[col] == 'yes']
 
-        # --- BT FILTER ---
-        bt_values = sorted(set(v for v in df['Col_BT'] if str(v).strip() not in ["", "nan", "none"]))
+        # --- BT MULTISELECT ---
+        bt_values = sorted({v.strip() for v in df['Col_BT'] if v and v.lower() not in ["nan", "none"]})
         selected_bt = st.multiselect("Exceptions / Priority Vendors", bt_values, default=bt_values)
         if selected_bt:
             df = df[df['Col_BT'].isin(selected_bt)]
 
-        # --- BS FILTER ---
-        bs_values = sorted(set(v for v in df['Col_BS'] if str(v).strip() not in ["", "nan", "none"]))
+        # --- BS MULTISELECT ---
+        bs_values = sorted({v.strip() for v in df['Col_BS'] if v and v.lower() not in ["nan", "none"]})
         selected_bs = st.multiselect("BFP Status (BS)", bs_values, default=bs_values)
         if selected_bs:
             df = df[df['Col_BS'].isin(selected_bs)]
@@ -119,7 +119,7 @@ if uploaded_file:
         if country_choice != "All":
             df = df[df['Country_Type'] == country_choice]
 
-        # --- STOP IF EMPTY ---
+        # --- STOP IF NO DATA ---
         if df.empty:
             st.error("No valid vendor data left after filters. Relax your filters or check Excel file.")
             st.stop()
@@ -142,7 +142,7 @@ if uploaded_file:
                 summary[col] = 0
         summary['Total'] = summary['Overdue'] + summary['Not Overdue']
 
-        # --- FILTER SELECTIONS ---
+        # --- FILTERS FOR CHART ---
         c1, c2 = st.columns(2)
         with c1:
             status_filter = st.selectbox("Show", ["All Open", "Overdue Only", "Not Overdue Only"])
@@ -156,7 +156,6 @@ if uploaded_file:
             top_df = summary.nlargest(top_n, 'Overdue').assign(**{'Not Overdue': 0})
         else:
             top_df = summary.nlargest(top_n, 'Not Overdue').assign(**{'Overdue': 0})
-
         base_df = top_df if "Top" in vendor_select else summary[summary['Vendor_Name'] == vendor_select]
 
         # --- CHART ---
@@ -199,7 +198,7 @@ if uploaded_file:
 
         clicked_vendor = st.session_state.clicked_vendor
 
-        # --- APPLY FILTERS TO TABLE ---
+        # --- FILTER TABLE ---
         filtered_df = df.copy()
         if status_filter == "Overdue Only":
             filtered_df = filtered_df[filtered_df['Status'] == "Overdue"]
@@ -208,7 +207,7 @@ if uploaded_file:
         if clicked_vendor:
             filtered_df = filtered_df[filtered_df['Vendor_Name'] == clicked_vendor]
 
-        # --- RAW DATA ---
+        # --- RAW TABLE ---
         if not filtered_df.empty:
             st.subheader("Raw Invoices")
             show = filtered_df[['Vendor_Name','VAT_ID','Due_Date','Open_Amount','Status',
