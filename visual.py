@@ -22,15 +22,15 @@ if uploaded_file:
                 st.stop()
             df_raw = pd.read_excel(xls, sheet_name='Outstanding Invoices IB', header=None)
 
+        # Find header row
         header_row = df_raw[df_raw.iloc[:, 0].astype(str).str.contains("VENDOR", case=False, na=False)].index
         if header_row.empty:
             st.error("Header 'VENDOR' not found in column A.")
             st.stop()
-
         start_row = header_row[0] + 1
-        df = df_raw.iloc[start_row:].copy().reset_index(drop=True)
 
-        # --- SELECT MAIN COLUMNS ---
+        # Base dataframe
+        df = df_raw.iloc[start_row:].copy().reset_index(drop=True)
         df = df.iloc[:, [0, 1, 4, 6, 29, 30, 31, 33, 35, 39]]
         df.columns = [
             'Vendor_Name', 'VAT_ID', 'Due_Date', 'Open_Amount',
@@ -50,48 +50,48 @@ if uploaded_file:
         df = df.dropna(subset=['Due_Date', 'Open_Amount'])
         df = df[df['Open_Amount'] > 0]
 
-        # --- ADVANCED FILTERS SECTION ---
+        # --- ADVANCED FILTERS ---
         st.markdown("### Advanced Filters")
 
-        # Detect BT / BA / BS dynamically
+        # Detect BT / BS / BA columns by header name dynamically
         try:
             headers = df_raw.iloc[header_row[0]].astype(str).str.strip().tolist()
             col_map = {h.upper().strip(): i for i, h in enumerate(headers)}
 
             bt_idx = next((i for name, i in col_map.items() if "BT" in name), 42)
-            ba_idx = next((i for name, i in col_map.items() if "BA" in name), 51)
             bs_idx = next((i for name, i in col_map.items() if "BS" in name), 50)
+            ba_idx = next((i for name, i in col_map.items() if "BA" in name), 51)
 
             df['Col_BT'] = df_raw.iloc[start_row:, bt_idx].reset_index(drop=True).astype(str).str.strip()
-            df['Col_BA'] = df_raw.iloc[start_row:, ba_idx].reset_index(drop=True).astype(str).str.strip()
             df['Col_BS'] = df_raw.iloc[start_row:, bs_idx].reset_index(drop=True).astype(str).str.strip()
+            df['Col_BA'] = df_raw.iloc[start_row:, ba_idx].reset_index(drop=True).astype(str).str.strip()
         except Exception as e:
-            st.warning(f"Couldn't locate BT/BA/BS columns: {e}")
-            df['Col_BT'], df['Col_BA'], df['Col_BS'] = "Unknown", "Unknown", "Unknown"
+            st.warning(f"Couldn't locate BT/BS/BA columns: {e}")
+            df['Col_BT'], df['Col_BS'], df['Col_BA'] = "Unknown", "Unknown", "Unknown"
 
-        # Normalize Yes/No
+        # Normalize Yes/No filters
         for col in ['Col_AF', 'Col_AH', 'Col_AJ', 'Col_AN']:
             df[col] = df[col].astype(str).str.strip().str.lower()
 
-        # YES Filter
+        # --- YES FILTER ---
         apply_yes = st.checkbox("Filter AF/AH/AJ/AN to 'Yes' only", value=True)
         if apply_yes:
             for col in ['Col_AF', 'Col_AH', 'Col_AJ', 'Col_AN']:
                 df = df[df[col] == 'yes']
 
-        # --- BT Filter ---
-        bt_values = sorted(set(x for x in df['Col_BT'].dropna() if str(x).strip() not in ["", "nan"]))
-        selected_bt = st.multiselect("Exceptions / Priority Vendors", bt_values, default=bt_values)
+        # --- BT MULTISELECT ---
+        bt_values = sorted(set(v for v in df['Col_BT'] if str(v).strip() not in ["", "nan", "none"]))
+        selected_bt = st.multiselect("Exceptions / Priority Vendors", options=bt_values, default=bt_values)
         if selected_bt:
             df = df[df['Col_BT'].isin(selected_bt)]
 
-        # --- BS Filter (BFP STATUS) ---
-        bs_values = sorted(set(x for x in df['Col_BS'].dropna() if str(x).strip() not in ["", "nan"]))
-        selected_bs = st.multiselect("BFP Status (BS)", bs_values, default=bs_values)
+        # --- BS MULTISELECT ---
+        bs_values = sorted(set(v for v in df['Col_BS'] if str(v).strip() not in ["", "nan", "none"]))
+        selected_bs = st.multiselect("BFP Status (BS)", options=bs_values, default=bs_values)
         if selected_bs:
             df = df[df['Col_BS'].isin(selected_bs)]
 
-        # --- Country Filter ---
+        # --- COUNTRY FILTER ---
         def classify_country(x):
             x = str(x).strip().lower()
             if "spain" in x or "espa" in x:
@@ -126,7 +126,7 @@ if uploaded_file:
                 summary[col] = 0
         summary['Total'] = summary['Overdue'] + summary['Not Overdue']
 
-        # --- CHART FILTERS ---
+        # --- MAIN FILTERS ---
         c1, c2 = st.columns(2)
         with c1:
             status_filter = st.selectbox("Show", ["All Open", "Overdue Only", "Not Overdue Only"])
@@ -173,7 +173,6 @@ if uploaded_file:
             barmode='stack', plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
             margin=dict(l=150, r=50, t=80, b=50)
         )
-
         chart = st.plotly_chart(fig, use_container_width=True, on_select="rerun")
 
         # --- CLICK HANDLING ---
@@ -193,7 +192,7 @@ if uploaded_file:
         if clicked_vendor:
             filtered_df = filtered_df[filtered_df['Vendor_Name'] == clicked_vendor]
 
-        # --- RAW DATA TABLE ---
+        # --- RAW DATA ---
         if not filtered_df.empty:
             st.subheader("Raw Invoices")
             show = filtered_df[['Vendor_Name','VAT_ID','Due_Date','Open_Amount','Status',
@@ -205,7 +204,7 @@ if uploaded_file:
         else:
             st.info("Click a bar to filter by vendor or adjust filters above.")
 
-        # --- EMAIL SECTION ---
+        # --- EMAILS ---
         st.markdown("---")
         st.subheader("📧 Emails (copy for Outlook)")
         emails = pd.concat([filtered_df['Vendor_Email'], filtered_df['Account_Email']], ignore_index=True)
