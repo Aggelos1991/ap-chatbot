@@ -86,14 +86,18 @@ if uploaded_file:
             st.warning(f"Couldn't locate BT/BS/BA columns: {e}")
             df['Col_BT'], df['Col_BS'], df['Col_BA'] = "Unknown", "Unknown", "Unknown"
 
-        # --- YES FILTERS ---
+                # --- YES FILTERS (SAFE VERSION) ---
         for col in ['Col_AF', 'Col_AH', 'Col_AJ', 'Col_AN']:
-            df[col] = df[col].astype(str).str.strip().str.lower()
-
-        apply_yes = st.checkbox("Filter AF/AH/AJ/AN to 'Yes' only", value=True)
-        if apply_yes:
-            for col in ['Col_AF', 'Col_AH', 'Col_AJ', 'Col_AN']:
-                df = df[df[col] == 'yes']
+            df[col] = (
+                df[col]
+                .fillna("")  # replace NaN/float with empty text
+                .astype(str)
+                .apply(lambda x: x.strip().lower() if isinstance(x, str) else "")
+            )
+                apply_yes = st.checkbox("Filter AF/AH/AJ/AN to 'Yes' only", value=True)
+                if apply_yes:
+                    for col in ['Col_AF', 'Col_AH', 'Col_AJ', 'Col_AN']:
+                        df = df[df[col] == 'yes']
 
         # --- BT MULTISELECT ---
         bt_values = sorted({v.strip() for v in df['Col_BT'] if v and v.lower() not in ["nan", "none"]})
