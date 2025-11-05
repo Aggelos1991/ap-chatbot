@@ -9,8 +9,8 @@ import pytesseract
 # ==========================================================
 # CONFIG
 # ==========================================================
-st.set_page_config(page_title="🦅 DataFalcon Pro — Hybrid GPT+OCR Extractor", layout="wide")
-st.title("🦅 DataFalcon Pro — Hybrid GPT + OCR Extractor")
+st.set_page_config(page_title="🦅 DataFalcon Pro", layout="wide")
+st.title("🦅 DataFalcon Pro")
 
 try:
     from dotenv import load_dotenv
@@ -71,13 +71,12 @@ def extract_text_with_ocr(uploaded_pdf):
                 except Exception as e:
                     st.warning(f"OCR skipped for page {i}: {e}")
             else:
-                # OCR disabled — skip page silently
                 continue
 
     return all_lines, ocr_pages
 
 # ==========================================================
-# GPT EXTRACTOR
+# GPT EXTRACTOR (WITH SALDO)
 # ==========================================================
 def normalize_number(value):
     if not value:
@@ -119,26 +118,28 @@ def extract_with_gpt(lines):
         prompt = f"""
 You are a multilingual financial statement parser (Spanish, Greek, English).
 
-Identify for each line:
+For each line, detect:
 - Document / Reference / Invoice number (Documento, N° DOC, Αρ. Παραστατικού, Reference, Fra., Τιμολόγιο)
 - Date (Fecha, Ημερομηνία)
 - Reason (Invoice | Payment | Credit Note)
 - Debit (DEBE / Χρέωση / TOTAL / ΣΥΝΟΛΟ when DEBE/HABER missing)
 - Credit (HABER / Πίστωση)
+- Balance (Saldo / Υπόλοιπο / Balance / Running total)
 
-Ignore lines with:
-Saldo, Asiento, IVA, Total Saldo.
+Rules:
+• Ignore lines with Asiento, IVA, or Total Saldo.
+• Use TOTAL/TOTALES/ΣΥΝΟΛΟ only if DEBE/HABER not found.
+• If "Saldo" appears, extract it as Balance.
 
-Use TOTAL/TOTALES/ΣΥΝΟΛΟ only if DEBE/HABER not found.
-
-Output JSON only:
+Return JSON only:
 [
   {{
     "Alternative Document": "Invoice or reference number",
     "Date": "dd/mm/yy or yyyy-mm-dd",
     "Reason": "Invoice | Payment | Credit Note",
     "Debit": "number",
-    "Credit": "number"
+    "Credit": "number",
+    "Balance": "number or empty if not shown"
   }}
 ]
 
@@ -172,6 +173,7 @@ Text:
                 continue
             debit_val = normalize_number(row.get("Debit", ""))
             credit_val = normalize_number(row.get("Credit", ""))
+            balance_val = normalize_number(row.get("Balance", ""))
             reason = str(row.get("Reason", "")).strip()
 
             if debit_val and not credit_val:
@@ -189,7 +191,8 @@ Text:
                 "Date": str(row.get("Date", "")).strip(),
                 "Reason": reason,
                 "Debit": debit_val,
-                "Credit": credit_val
+                "Credit": credit_val,
+                "Balance": balance_val
             })
 
     return all_records
