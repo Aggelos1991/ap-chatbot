@@ -252,7 +252,7 @@ if pay_file:
                     ws.cell(row, 2).value = amt
                     ws.cell(row, 2).number_format = money
                     ws.cell(row, 2).alignment = Alignment(horizontal="right")
-                    if isinstance(doc, str) and "(CN)" in doc:
+                    if "(CN)" in doc:
                         ws.cell(row, 1).font = Font(color="2E8B57")
                     elif "(Adj." in doc:
                         ws.cell(row, 1).font = Font(color="D32F2F")
