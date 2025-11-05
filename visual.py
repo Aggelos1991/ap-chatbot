@@ -214,7 +214,7 @@ if uploaded_file:
             st.subheader("Raw Invoices")
             show = filtered_df[['Vendor_Name','VAT_ID','Due_Date','Open_Amount','Status',
                                 'Vendor_Email','Account_Email','Col_AF','Col_AH','Col_AJ','Col_AN',
-                                'Vendor_Type','Col_BS','Col_BA','Country_Type']].copy()
+                                'Vendor_Type','Col_BS','Country_Type']].copy()
             show['Due_Date'] = pd.to_datetime(show['Due_Date']).dt.strftime("%Y-%m-%d")
             show['Open_Amount'] = show['Open_Amount'].map('€{:,.2f}'.format)
             st.dataframe(show, use_container_width=True)
