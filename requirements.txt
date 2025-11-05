@@ -3,6 +3,8 @@ streamlit
 plotly
 pandas
 numpy
+streamlit-plotly-events
+
 
 # --- OCR Engine (Spanish + Greek + English) ---
 easyocr
