@@ -4,13 +4,18 @@ import pandas as pd
 import streamlit as st
 from io import BytesIO
 from openai import OpenAI
+from pdf2image import convert_from_bytes
+import easyocr
 
 # ==========================================================
-# CONFIGURATION
+# 🦅 DataFalcon Pro — Hybrid GPT + OCR Extractor
 # ==========================================================
 st.set_page_config(page_title="🦅 DataFalcon Pro — Hybrid GPT Extractor", layout="wide")
 st.title("🦅 DataFalcon Pro")
 
+# ==========================================================
+# CONFIGURATION
+# ==========================================================
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -25,6 +30,33 @@ if not api_key:
 client = OpenAI(api_key=api_key)
 PRIMARY_MODEL = "gpt-4o-mini"
 BACKUP_MODEL = "gpt-4o"
+
+# ==========================================================
+# OCR FALLBACK (for scanned PDFs)
+# ==========================================================
+@st.cache_resource
+def load_ocr_reader():
+    """Load EasyOCR once for speed."""
+    return easyocr.Reader(['es', 'el', 'en'], gpu=False)
+
+def local_ocr_on_pdf(uploaded_file):
+    """Extract text using EasyOCR when PDF is scanned."""
+    try:
+        reader = load_ocr_reader()
+        pdf_bytes = uploaded_file.getvalue()
+        images = convert_from_bytes(pdf_bytes, dpi=200)
+        all_lines = []
+
+        for i, img in enumerate(images):
+            results = reader.readtext(img, detail=0, paragraph=True)
+            for line in results:
+                clean = " ".join(str(line).split())
+                if clean.strip():
+                    all_lines.append(clean)
+        return all_lines
+    except Exception as e:
+        st.error(f"OCR failed: {e}")
+        return []
 
 # ==========================================================
 # HELPERS
@@ -48,17 +80,28 @@ def normalize_number(value):
         return ""
 
 def extract_raw_lines(uploaded_pdf):
-    """Extract ALL text lines from every page of the PDF."""
+    """Extract text from PDF; fallback to OCR if no selectable text found."""
     all_lines = []
+    empty_pages = 0
+    total_pages = 0
+
     with pdfplumber.open(uploaded_pdf) as pdf:
         for page in pdf.pages:
+            total_pages += 1
             text = page.extract_text()
-            if not text:
+            if not text or not text.strip():
+                empty_pages += 1
                 continue
             for line in text.split("\n"):
                 clean_line = " ".join(line.split())
                 if clean_line.strip():
                     all_lines.append(clean_line)
+
+    # If too many empty pages → scanned PDF
+    if total_pages > 0 and empty_pages / total_pages > 0.5:
+        st.info("🔍 Scanned PDF detected — running OCR extraction...")
+        all_lines = local_ocr_on_pdf(uploaded_pdf)
+
     return all_lines
 
 def parse_gpt_response(content, batch_num):
@@ -149,7 +192,6 @@ Text to analyze:
         # === Post-process records ===
         for row in data:
             alt_doc = str(row.get("Alternative Document", "")).strip()
-            # exclude "Código IC N" and variants
             if re.search(r"codigo\s*ic\s*n", alt_doc, re.IGNORECASE):
                 continue
             if not alt_doc or re.search(r"(asiento|saldo|iva|total\s+saldo)", alt_doc, re.IGNORECASE):
@@ -159,7 +201,6 @@ Text to analyze:
             credit_val = normalize_number(row.get("Credit", ""))
             reason = row.get("Reason", "").strip()
 
-            # SALDO or dual values cleanup
             if debit_val and credit_val:
                 if reason.lower() in ["payment", "credit note"]:
                     debit_val = ""
@@ -172,7 +213,6 @@ Text to analyze:
                         else:
                             credit_val = ""
 
-            # Classification fix
             if debit_val and not credit_val:
                 reason = "Invoice"
             elif credit_val and not debit_val:
