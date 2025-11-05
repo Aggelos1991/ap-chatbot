@@ -5,7 +5,7 @@ pandas
 numpy
 streamlit-plotly-events
 pytesseract
-openai>=1.30.0
+
 
 # --- OCR Engine (Spanish + Greek + English) ---
 easyocr
