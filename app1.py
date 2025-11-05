@@ -61,7 +61,7 @@ def extract_text_with_ocr(uploaded_pdf):
     return all_lines, ocr_pages
 
 # ==========================================================
-# GPT EXTRACTION (ENHANCED FOR SALDO & COBRO)
+# GPT EXTRACTION (FIXED SALDO + COBRO)
 # ==========================================================
 def normalize_number(value):
     if not value:
@@ -92,14 +92,13 @@ def parse_gpt_response(content, batch_num):
         return []
 
 def extract_with_gpt(lines):
-    """Multilingual GPT extraction tuned for Spanish/Greek/English statements."""
+    """Multilingual GPT extraction tuned for Spanish/Greek/English statements with Balance column."""
     BATCH_SIZE = 60
     all_records = []
 
     for i in range(0, len(lines), BATCH_SIZE):
         batch = lines[i:i + BATCH_SIZE]
         text_block = "\n".join(batch)
-
         prompt = f"""
 You are a multilingual financial data extractor for vendor statements (Spanish / Greek / English).
 
@@ -108,23 +107,25 @@ For each line, extract:
 - Date (Fecha, Ημερομηνία)
 - Reason (Invoice | Payment | Credit Note)
 - Debit (DEBE / Χρέωση / TOTAL / ΣΥΝΟΛΟ when DEBE/HABER missing)
-- Credit (HABER / Πίστωση / SALDO / Υπόλοιπο / Balance)
+- Credit (HABER / Πίστωση)
+- Balance (Saldo / Υπόλοιπο / Συνολικό Υπόλοιπο / Balance)
 
 Rules:
-- Treat SALDO / Balance / Υπόλοιπο / Συνολικό Υπόλοιπο as CREDIT values, not separate columns.
-- Ignore headers or lines with 'Asiento', 'IVA', 'Total Saldo'.
-- If text contains 'Cobro', 'Pago', 'Transferencia', or 'Remesa', set Reason = Payment.
-- If text contains 'Abono', 'Nota de crédito', or 'Πίστωση', set Reason = Credit Note.
+- SALDO or Υπόλοιπο always represents BALANCE, not Credit.
+- Ignore headers like Asiento, IVA, Total Saldo, or empty lines.
+- If line text contains 'Cobro', 'Pago', 'Transferencia', 'Remesa', classify it as Payment (even if Reason missing).
+- If text contains 'Abono', 'Nota de crédito', 'Crédit', or 'Πίστωση', classify as Credit Note.
 - TOTAL/TOTALES/ΣΥΝΟΛΟ used only if DEBE/HABER missing.
 
-Output only valid JSON:
+Return valid JSON only:
 [
   {{
     "Alternative Document": "Invoice or reference number",
     "Date": "dd/mm/yy or yyyy-mm-dd",
     "Reason": "Invoice | Payment | Credit Note",
     "Debit": "number",
-    "Credit": "number"
+    "Credit": "number",
+    "Balance": "number"
   }}
 ]
 
@@ -157,15 +158,10 @@ Text:
                 continue
             debit_val = normalize_number(row.get("Debit", ""))
             credit_val = normalize_number(row.get("Credit", ""))
+            balance_val = normalize_number(row.get("Balance", ""))
             reason = str(row.get("Reason", "")).strip()
 
-            # --- Logic for SALDO as Credit ---
-            if "saldo" in str(row).lower() or "balance" in str(row).lower() or "υπόλοιπο" in str(row).lower():
-                if not credit_val and debit_val:
-                    credit_val = debit_val
-                    debit_val = ""
-
-            # --- Logic for Concepto = Cobro (Payment) ---
+            # Force reason = Payment if line mentions Cobro/Pago/Transferencia
             if re.search(r"cobro|pago|transferencia|remesa", str(row), re.IGNORECASE):
                 reason = "Payment"
             elif re.search(r"abono|nota de crédito|crédit|πίστωση", str(row), re.IGNORECASE):
@@ -178,7 +174,8 @@ Text:
                 "Date": str(row.get("Date", "")).strip(),
                 "Reason": reason,
                 "Debit": debit_val,
-                "Credit": credit_val
+                "Credit": credit_val,
+                "Balance": balance_val
             })
 
     return all_records
@@ -221,11 +218,13 @@ if uploaded_pdf:
                 st.dataframe(df, use_container_width=True, hide_index=True)
                 total_debit = df["Debit"].apply(pd.to_numeric, errors="coerce").sum()
                 total_credit = df["Credit"].apply(pd.to_numeric, errors="coerce").sum()
+                total_balance = df["Balance"].apply(pd.to_numeric, errors="coerce").dropna().iloc[-1] if df["Balance"].notna().any() else 0
                 net = round(total_debit - total_credit, 2)
-                col1, col2, col3 = st.columns(3)
+                col1, col2, col3, col4 = st.columns(4)
                 col1.metric("💰 Total Debit", f"{total_debit:,.2f}")
                 col2.metric("💳 Total Credit", f"{total_credit:,.2f}")
                 col3.metric("⚖️ Net", f"{net:,.2f}")
+                col4.metric("📊 Final Balance", f"{total_balance:,.2f}")
 
                 st.download_button(
                     "⬇️ Download Excel",
