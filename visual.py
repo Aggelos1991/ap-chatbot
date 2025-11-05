@@ -6,8 +6,8 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import io
+from streamlit_plotly_events import plotly_events
 
-# === MUST BE FIRST STREAMLIT COMMAND ===
 st.set_page_config(page_title="Overdue Invoices", layout="wide")
 
 st.title("Overdue Invoices – Priority Vendors Dashboard")
@@ -29,11 +29,9 @@ if uploaded_file:
                 st.error("Sheet 'Outstanding Invoices IB' not found.")
                 st.stop()
 
-            # === Added AY(50) and BT(71) ===
             keep_cols = [0, 1, 4, 6, 10, 29, 30, 31, 33, 35, 39, 50, 55, 71]
             df_raw = pd.read_excel(xls, sheet_name='Outstanding Invoices IB', header=None, usecols=keep_cols)
 
-        # Find header row
         header_row = df_raw[df_raw.iloc[:, 0].astype(str).str.contains("VENDOR", case=False, na=False)].index
         if header_row.empty:
             st.error("Header 'VENDOR' not found in column A.")
@@ -42,14 +40,12 @@ if uploaded_file:
         start_row = header_row[0] + 1
         df = df_raw.iloc[start_row:].copy().reset_index(drop=True)
 
-        # Assign column names
         df.columns = [
             'Vendor_Name', 'VAT_ID', 'Due_Date', 'Open_Amount',
             'Alt_Document', 'Vendor_Email', 'Account_Email',
             'AF', 'AH', 'AJ', 'AN', 'AY', 'BD', 'BT'
         ]
 
-        # === Original YES + BD Filter ===
         yes_mask = (
             (df['AF'].astype(str).str.strip().str.upper() == 'YES') &
             (df['AH'].astype(str).str.strip().str.upper() == 'YES') &
@@ -60,7 +56,6 @@ if uploaded_file:
         bd_keywords = ['ENTERTAINMENT', 'FALSE', 'REGULAR', 'PRIORITY VENDOR', 'PRIORITY VENDOR OS&E']
         bd_mask = df['BD'].astype(str).str.upper().apply(lambda x: any(k in x for k in bd_keywords))
 
-        # === AY = 0 filter ===
         def is_zero(v):
             try:
                 v = str(v).replace(",", ".").strip()
@@ -70,10 +65,8 @@ if uploaded_file:
 
         ay_mask = df['AY'].apply(is_zero)
 
-        # === Apply combined filters ===
         df = df[yes_mask & bd_mask & ay_mask].reset_index(drop=True)
 
-        # === BFP filter radio ===
         bfp_mode = st.radio("Vendor Mode:", ["All Vendors", "BFP Only"], horizontal=True)
         if bfp_mode == "BFP Only":
             df = df[df['BT'].astype(str).str.upper().str.contains("BFP", na=False)]
@@ -83,7 +76,6 @@ if uploaded_file:
 
         df = df.drop(columns=['AF', 'AH', 'AJ', 'AN', 'AY', 'BD', 'BT'])
 
-        # === Clean ===
         df['Due_Date'] = pd.to_datetime(df['Due_Date'], errors='coerce')
         df['Open_Amount'] = pd.to_numeric(df['Open_Amount'], errors='coerce')
         df = df.dropna(subset=['Vendor_Name', 'Open_Amount', 'Due_Date'])
@@ -93,12 +85,10 @@ if uploaded_file:
             st.warning("No valid open invoices.")
             st.stop()
 
-        # Overdue logic
         today = pd.Timestamp.today().normalize()
         df['Overdue'] = df['Due_Date'] < today
         df['Status'] = df['Overdue'].map({True: 'Overdue', False: 'Not Overdue'})
 
-        # === Summary ===
         summary = (
             df.groupby(['Vendor_Name', 'Status'])['Open_Amount']
             .sum()
@@ -111,7 +101,6 @@ if uploaded_file:
         summary['Total'] = summary['Overdue'] + summary['Not Overdue']
         full_summary = summary
 
-        # === Filters ===
         col1, col2 = st.columns(2)
         with col1:
             status_filter = st.selectbox("Show", ["All Open", "Overdue Only", "Not Overdue Only"], key="status")
@@ -120,11 +109,9 @@ if uploaded_file:
 
         n = 30 if top_n_option == "Top 30" else 20
 
-        # === Individual Vendor Selector ===
         vendor_list = sorted(df['Vendor_Name'].dropna().unique().tolist())
         selected_vendor = st.selectbox("Or Select Individual Vendor", [""] + vendor_list, key="vendor_select")
 
-        # === TOP N logic ===
         if selected_vendor and selected_vendor != "":
             top_df = full_summary[full_summary['Vendor_Name'] == selected_vendor].copy()
             title = f"Vendor: {selected_vendor}"
@@ -140,7 +127,6 @@ if uploaded_file:
             top_df['Overdue'] = 0
             title = f"{top_n_option} Vendors (Not Overdue Only)"
 
-        # === EMAIL extraction ===
         st.markdown("### 📧 Extract Vendor Emails for Outlook")
         vendor_subset = df[df['Vendor_Name'].isin(top_df['Vendor_Name'])].copy()
         emails = pd.concat([
@@ -164,7 +150,6 @@ if uploaded_file:
         else:
             st.info("No emails found for this selection.")
 
-        # === PLOT DATA ===
         plot_df = top_df.melt(
             id_vars='Vendor_Name',
             value_vars=['Overdue', 'Not Overdue'],
@@ -172,9 +157,7 @@ if uploaded_file:
             value_name='Amount'
         )
         plot_df = plot_df[plot_df['Amount'] > 0].copy()
-        plot_df['Status_Label'] = plot_df['Type']
 
-        # === BAR CHART ===
         fig = px.bar(
             plot_df,
             x='Amount',
@@ -183,8 +166,7 @@ if uploaded_file:
             orientation='h',
             title=title,
             color_discrete_map={'Overdue': '#8B0000', 'Not Overdue': '#4682B4'},
-            height=max(500, len(plot_df) * 45),
-            custom_data=['Status_Label']
+            height=max(500, len(plot_df) * 45)
         )
 
         totals = plot_df.groupby('Vendor_Name')['Amount'].sum().reset_index()
@@ -210,32 +192,26 @@ if uploaded_file:
         )
 
         # === INTERACTIVE CHART ===
-        chart = st.plotly_chart(fig, use_container_width=True, key="vendor_chart", on_select="rerun")
+        st.markdown("### 📊 Click any bar segment to view details")
+        selected_points = plotly_events(
+            fig,
+            click_event=True,
+            hover_event=False,
+            select_event=False,
+            override_height=max(500, len(plot_df) * 45),
+            override_width="100%"
+        )
 
-        # === CAPTURE CLICK ===
-        clicked_vendor = None
-        clicked_status = None
-        if chart.selection and 'points' in chart.selection and chart.selection['points']:
-            point = chart.selection['points'][0]
-            if 'y' in point and 'customdata' in point and point['customdata']:
-                clicked_vendor = point['y']
-                clicked_status = point['customdata'][0]
-            elif 'y' in point:
-                clicked_vendor = point['y']
-                clicked_status = 'Overdue' if point.get('marker.color') == '#8B0000' else 'Not Overdue'
+        if selected_points:
+            clicked_vendor = selected_points[0]['y']
+            curve_num = selected_points[0]['curveNumber']
+            color_map = {0: 'Overdue', 1: 'Not Overdue'}
+            clicked_status = color_map.get(curve_num, 'Overdue')
 
-        st.session_state.clicked_vendor = clicked_vendor
-        st.session_state.clicked_status = clicked_status
-
-        # === SHOW RAW DATA (CLICKED SEGMENT) ===
-        show_vendor = st.session_state.clicked_vendor
-        show_status = st.session_state.clicked_status
-
-        if show_vendor and show_status:
             st.markdown("---")
-            st.subheader(f"Raw Data: **{show_vendor}** → **{show_status}**")
+            st.subheader(f"Raw Data: **{clicked_vendor}** → **{clicked_status}**")
 
-            mask = (df['Vendor_Name'] == show_vendor) & (df['Status'] == show_status)
+            mask = (df['Vendor_Name'] == clicked_vendor) & (df['Status'] == clicked_status)
             raw_details = df[mask].copy()
 
             if raw_details.empty:
@@ -254,17 +230,17 @@ if uploaded_file:
                     raw_details.to_excel(writer, index=False, sheet_name='Raw_Data')
                 buffer.seek(0)
                 st.download_button(
-                    f"Download {show_status}",
+                    f"Download {clicked_status}",
                     data=buffer,
-                    file_name=f"{show_vendor.replace(' ', '_')}_{show_status}.xlsx",
+                    file_name=f"{clicked_vendor.replace(' ', '_')}_{clicked_status}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
         else:
-            st.info("**Click any colored bar segment** to view only that data.**")
+            st.info("Click a bar segment to see its detailed invoices.")
 
     except Exception as e:
         st.error(f"Error: {str(e)}")
         st.stop()
 
 else:
-    st.info("Upload Excel to Click bar segment to See only that data to Export")
+    st.info("Upload Excel to view overdue invoices and click a bar to see details.")
