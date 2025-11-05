@@ -37,11 +37,10 @@ if uploaded_file:
             'Vendor_Email', 'Account_Email', 'Col_AF', 'Col_AH', 'Col_AJ', 'Col_AN'
         ]
 
-        # --- HARD FILTERS: REMOVE ALL NON-DATA ROWS ---
-        df = df.dropna(how="all")                                      # remove fully blank rows
+        # --- HARD FILTERS ---
+        df = df.dropna(how="all")
         df = df[df['Vendor_Name'].notna()]
         df = df[~df['Vendor_Name'].astype(str).str.strip().eq("")]
-
         bad_patterns = r"(?i)total|saldo|asiento|header|proveedor|unnamed|vendor|facturas|periodo|sum|importe"
         df = df[~df['Vendor_Name'].astype(str).str.contains(bad_patterns, na=False)]
         df = df[~df['Open_Amount'].astype(str).str.contains(bad_patterns, na=False)]
@@ -52,9 +51,48 @@ if uploaded_file:
         df = df.dropna(subset=['Due_Date', 'Open_Amount'])
         df = df[df['Open_Amount'] > 0]
 
+        # --- ADDITIONAL FILTERS (BT + BA + YES Logic) ---
+        st.markdown("### Advanced Filters")
+
+        # Try to load BT and BA columns dynamically (BT ≈ col 42, BA ≈ col 51)
+        try:
+            df['Col_BT'] = df_raw.iloc[start_row:, 42].reset_index(drop=True).astype(str).str.strip()
+            df['Col_BA'] = df_raw.iloc[start_row:, 51].reset_index(drop=True).astype(str).str.strip()
+        except Exception as e:
+            st.warning(f"Couldn't load BT/BA columns dynamically: {e}")
+
+        # Normalize Yes/No
+        for col in ['Col_AF', 'Col_AH', 'Col_AJ', 'Col_AN']:
+            if col in df.columns:
+                df[col] = df[col].astype(str).str.strip().str.lower()
+
+        apply_yes = st.checkbox("Filter AF/AH/AJ/AN to 'Yes' only", value=True)
+        if apply_yes:
+            for col in ['Col_AF', 'Col_AH', 'Col_AJ', 'Col_AN']:
+                df = df[df[col] == 'yes']
+
+        # BT Vendor Type multiselect
+        bt_options = sorted(df['Col_BT'].dropna().unique().tolist())
+        default_bt = [x for x in bt_options if any(y in x for y in ["Priority", "Entertainment", "Regular"])]
+        selected_bt = st.multiselect("Vendor Type (BT)", options=bt_options, default=default_bt)
+        if selected_bt:
+            df = df[df['Col_BT'].isin(selected_bt)]
+
+        # Country classification (BA)
+        def classify_country(x):
+            x = str(x).strip().lower()
+            if "spain" in x or "espa" in x:
+                return "Spain"
+            return "Foreign"
+
+        df['Country_Type'] = df.get('Col_BA', "").apply(classify_country)
+        country_choice = st.radio("Select Country Group", ["All", "Spain", "Foreign"], horizontal=True)
+        if country_choice != "All":
+            df = df[df['Country_Type'] == country_choice]
+
         # --- IF NOTHING CLEAN REMAINS ---
         if df.empty:
-            st.error("No valid vendor data left after cleaning. Check your file.")
+            st.error("No valid vendor data left after cleaning/filters. Check your file or relax filters.")
             st.stop()
 
         # --- OVERDUE LOGIC ---
@@ -75,7 +113,7 @@ if uploaded_file:
                 summary[col] = 0
         summary['Total'] = summary['Overdue'] + summary['Not Overdue']
 
-        # --- FILTERS ---
+        # --- FILTERS (TOP + STATUS) ---
         c1, c2, c3 = st.columns(3)
         with c1:
             status_filter = st.selectbox("Show", ["All Open", "Overdue Only", "Not Overdue Only"])
@@ -108,7 +146,7 @@ if uploaded_file:
             color='Type',
             orientation='h',
             color_discrete_map={'Overdue': '#8B0000', 'Not Overdue': '#4682B4'},
-            title=f"Top {top_n} Vendors ({status_filter})",
+            title=f"Top {top_n} Vendors ({status_filter}) — Filters: {country_choice}, {len(selected_bt)} BT types",
             height=max(500, len(plot_df) * 45)
         )
         totals = plot_df.groupby('Vendor_Name')['Amount'].sum().reset_index()
@@ -149,7 +187,8 @@ if uploaded_file:
             sub = f"{clicked_vendor} ({status_filter})" if clicked_vendor else status_filter
             st.subheader(f"Raw Invoices – {sub}")
             show = filtered_df[['Vendor_Name','VAT_ID','Due_Date','Open_Amount','Status',
-                                'Vendor_Email','Account_Email','Col_AF','Col_AH','Col_AJ','Col_AN']].copy()
+                                'Vendor_Email','Account_Email','Col_AF','Col_AH','Col_AJ','Col_AN',
+                                'Col_BT','Col_BA','Country_Type']].copy()
             show['Due_Date'] = pd.to_datetime(show['Due_Date']).dt.strftime("%Y-%m-%d")
             show['Open_Amount'] = show['Open_Amount'].map('€{:,.2f}'.format)
             st.dataframe(show, use_container_width=True)
@@ -159,14 +198,25 @@ if uploaded_file:
         # --- EMAILS ---
         st.markdown("---")
         st.subheader("📧 Emails (copy for Outlook)")
+
         emails = pd.concat([filtered_df['Vendor_Email'], filtered_df['Account_Email']], ignore_index=True)
         emails = emails.dropna().astype(str)
         emails = emails[emails.str.contains('@')]
+
+        # Apply language logic
+        if country_choice == "Spain":
+            lang = "Spanish"
+        elif country_choice == "Foreign":
+            lang = "English"
+        else:
+            lang = "Mixed"
+
         unique = sorted(set(emails))
-        st.text_area("Ctrl + C to copy:", ", ".join(unique), height=120)
-        st.success(f"{len(unique)} emails collected")
+        st.text_area(f"Ctrl + C to copy ({lang} vendors):", ", ".join(unique), height=120)
+        st.success(f"{len(unique)} {lang} emails collected")
 
     except Exception as e:
         st.error(f"Error: {e}")
+
 else:
     st.info("Upload Excel → Click a bar → Filter data | Click outside → Reset to all")
