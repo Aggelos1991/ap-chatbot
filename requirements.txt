@@ -5,6 +5,11 @@ pandas
 numpy
 streamlit-plotly-events
 pytesseract
+poppler-utils
+tesseract-ocr
+tesseract-ocr-spa
+tesseract-ocr-ell
+tesseract-ocr-eng
 
 
 # --- OCR Engine (Spanish + Greek + English) ---
