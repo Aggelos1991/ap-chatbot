@@ -4,6 +4,7 @@ plotly
 pandas
 numpy
 streamlit-plotly-events
+pytesseract
 
 
 # --- OCR Engine (Spanish + Greek + English) ---
