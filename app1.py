@@ -7,6 +7,9 @@ from openai import OpenAI
 from pdf2image import convert_from_bytes
 import pytesseract
 
+# ==========================================================
+# APP CONFIG
+# ==========================================================
 st.set_page_config(page_title="🦅 DataFalcon Pro — Hybrid GPT+OCR Extractor", layout="wide")
 st.title("🦅 DataFalcon Pro — Hybrid GPT + OCR Extractor")
 
@@ -31,10 +34,9 @@ BACKUP_MODEL = "gpt-4o"
 def extract_text_with_ocr(uploaded_pdf):
     """Extracts text from PDF using both pdfplumber and OCR fallback."""
     all_lines, ocr_pages = [], []
-    pdf_bytes = uploaded_pdf.read()  # read once and reuse
-    uploaded_pdf.seek(0)  # reset for safety
+    pdf_bytes = uploaded_pdf.read()
+    uploaded_pdf.seek(0)
 
-    # --- Try normal text extraction first ---
     with pdfplumber.open(BytesIO(pdf_bytes)) as pdf:
         for i, page in enumerate(pdf.pages, start=1):
             text = page.extract_text()
@@ -44,7 +46,7 @@ def extract_text_with_ocr(uploaded_pdf):
                     if clean_line:
                         all_lines.append(clean_line)
             else:
-                # --- OCR fallback for this page ---
+                # OCR fallback for scanned pages
                 ocr_pages.append(i)
                 img = convert_from_bytes(pdf_bytes, dpi=250, first_page=i, last_page=i)[0]
                 ocr_text = pytesseract.image_to_string(img, lang="spa+eng+ell")
@@ -56,9 +58,10 @@ def extract_text_with_ocr(uploaded_pdf):
     return all_lines, ocr_pages
 
 # ==========================================================
-# GPT Extraction (same as before)
+# GPT EXTRACTION
 # ==========================================================
 def normalize_number(value):
+    """Normalize Spanish/Greek numeric formats like 1.234,56 → 1234.56"""
     if not value:
         return ""
     s = str(value).strip().replace(" ", "")
@@ -87,24 +90,46 @@ def parse_gpt_response(content, batch_num):
         return []
 
 def extract_with_gpt(lines):
+    """GPT-based multilingual statement extraction with Spanish/Greek emphasis."""
     BATCH_SIZE = 60
     all_records = []
 
     for i in range(0, len(lines), BATCH_SIZE):
         batch = lines[i:i + BATCH_SIZE]
         text_block = "\n".join(batch)
+
         prompt = f"""
-You are a financial data extractor for vendor statements (Spanish / Greek / English).
-Extract JSON only with:
+You are a multilingual financial data extractor (Spanish, Greek, English).
+
+Analyze the following text lines from a vendor statement and extract structured data.
+
+Possible column meanings:
+- Date (Fecha / Ημερομηνία)
+- Document or Reference (Documento / N° DOC / Αρ. Παραστατικού / Reference / Invoice)
+- Description (Concepto / Περιγραφή / Description)
+- DEBE / Χρέωση / Charge = Invoice amount
+- HABER / Πίστωση / Credit = Payment or credit note amount
+- TOTAL / TOTALES / ΣΥΝΟΛΟ / ΤΕΛΙΚΟ / IMPORTE TOTAL only used **if DEBE/HABER missing**
+- SALDO lines should be ignored (running balance)
+- “Referencia”, “Factura”, “Fra.”, “Τιμολόγιο”, “Invoice” can all indicate an invoice number.
+- “Cobro”, “Pago”, “Transferencia”, “Trf”, “Bank” → Payment
+- “Abono”, “Nota de crédito”, “Crédito”, “Πίστωση” → Credit Note
+- “Factura”, “Τιμολόγιο”, “Invoice”, “Παρ.” → Invoice
+
+If both DEBE and HABER missing but TOTAL exists → treat TOTAL as Debit (Invoice).
+Ignore SALDO, IVA, Asiento, or summary lines.
+
+Output strictly JSON array (no text), e.g.:
 [
   {{
-    "Alternative Document": "string",
+    "Alternative Document": "Invoice or reference number",
     "Date": "dd/mm/yy or yyyy-mm-dd",
     "Reason": "Invoice | Payment | Credit Note",
-    "Debit": "DEBE or TOTAL amount",
-    "Credit": "HABER amount"
+    "Debit": "Invoice amount",
+    "Credit": "Payment/Credit amount"
   }}
 ]
+
 Text:
 {text_block}
 """
@@ -125,21 +150,29 @@ Text:
                     break
             except Exception as e:
                 st.warning(f"GPT error ({model}): {e}")
+
         if not data:
             continue
 
+        # --- Post-process records ---
         for row in data:
             alt_doc = str(row.get("Alternative Document", "")).strip()
             if not alt_doc:
                 continue
+
             debit_val = normalize_number(row.get("Debit", ""))
             credit_val = normalize_number(row.get("Credit", ""))
-            reason = row.get("Reason", "").strip()
+            reason = str(row.get("Reason", "")).strip()
 
+            # Cleanup and classification logic
             if debit_val and not credit_val:
                 reason = "Invoice"
             elif credit_val and not debit_val:
-                reason = "Payment"
+                # Credit or payment
+                if re.search(r"abono|nota|crédit|descuento|πίστωση|credit", str(row), re.IGNORECASE):
+                    reason = "Credit Note"
+                else:
+                    reason = "Payment"
             elif debit_val == "" and credit_val == "":
                 continue
 
@@ -153,6 +186,9 @@ Text:
 
     return all_records
 
+# ==========================================================
+# EXPORT
+# ==========================================================
 def to_excel_bytes(records):
     df = pd.DataFrame(records)
     buf = BytesIO()
@@ -166,29 +202,31 @@ def to_excel_bytes(records):
 uploaded_pdf = st.file_uploader("📂 Upload Vendor Statement (PDF)", type=["pdf"])
 
 if uploaded_pdf:
-    with st.spinner("📄 Extracting text + running OCR fallback..."):
+    with st.spinner("📄 Extracting text + OCR fallback..."):
         lines, ocr_pages = extract_text_with_ocr(uploaded_pdf)
 
     if len(lines) == 0:
-        st.error("❌ No text detected. Make sure Tesseract OCR is installed and language packs (spa, ell, eng) are available.")
+        st.error("❌ No text detected. Ensure Tesseract OCR and Poppler are installed (spa, ell, eng).")
     else:
-        st.success(f"✅ Found {len(lines)} lines of text!")
+        st.success(f"✅ Found {len(lines)} text lines.")
         if ocr_pages:
             st.info(f"OCR applied on pages: {', '.join(map(str, ocr_pages))}")
 
         st.text_area("📄 Preview (first 30 lines):", "\n".join(lines[:30]), height=300)
 
         if st.button("🤖 Run Hybrid Extraction", type="primary"):
-            with st.spinner("Analyzing with GPT..."):
+            with st.spinner("Analyzing text with GPT..."):
                 data = extract_with_gpt(lines)
 
             if data:
                 df = pd.DataFrame(data)
-                st.success(f"✅ Extraction complete — {len(df)} valid records found!")
+                st.success(f"✅ Extraction complete — {len(df)} valid records found.")
                 st.dataframe(df, use_container_width=True, hide_index=True)
+
                 total_debit = df["Debit"].apply(pd.to_numeric, errors="coerce").sum()
                 total_credit = df["Credit"].apply(pd.to_numeric, errors="coerce").sum()
                 net = round(total_debit - total_credit, 2)
+
                 col1, col2, col3 = st.columns(3)
                 col1.metric("💰 Total Debit", f"{total_debit:,.2f}")
                 col2.metric("💳 Total Credit", f"{total_credit:,.2f}")
@@ -203,4 +241,4 @@ if uploaded_pdf:
             else:
                 st.warning("⚠️ No structured data found in GPT output.")
 else:
-    st.info("Upload a PDF to begin.")
+    st.info("Upload a vendor statement PDF to begin.")
