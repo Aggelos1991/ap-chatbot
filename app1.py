@@ -4,12 +4,14 @@ import pandas as pd
 import streamlit as st
 from io import BytesIO
 from openai import OpenAI
+from pdf2image import convert_from_bytes
+import pytesseract
 
 # ==========================================================
 # CONFIGURATION
 # ==========================================================
-st.set_page_config(page_title="🦅 DataFalcon Pro — Hybrid GPT Extractor", layout="wide")
-st.title("🦅 DataFalcon Pro")
+st.set_page_config(page_title="🦅 DataFalcon Pro — Hybrid GPT+OCR Extractor", layout="wide")
+st.title("🦅 DataFalcon Pro — Hybrid GPT + OCR Extractor")
 
 try:
     from dotenv import load_dotenv
@@ -30,7 +32,6 @@ BACKUP_MODEL = "gpt-4o"
 # HELPERS
 # ==========================================================
 def normalize_number(value):
-    """Normalize decimals like 1.234,56 → 1234.56"""
     if not value:
         return ""
     s = str(value).strip().replace(" ", "")
@@ -48,37 +49,45 @@ def normalize_number(value):
         return ""
 
 def extract_raw_lines(uploaded_pdf):
-    """Extract ALL text lines from every page of the PDF."""
-    all_lines = []
-    with pdfplumber.open(uploaded_pdf) as pdf:
-        for page in pdf.pages:
+    """Extracts all lines from PDF, automatically running OCR if no text layer is found."""
+    all_lines, ocr_pages = [], []
+    pdf_bytes = uploaded_pdf.read()
+
+    with pdfplumber.open(BytesIO(pdf_bytes)) as pdf:
+        for i, page in enumerate(pdf.pages, start=1):
             text = page.extract_text()
-            if not text:
-                continue
-            for line in text.split("\n"):
-                clean_line = " ".join(line.split())
-                if clean_line.strip():
-                    all_lines.append(clean_line)
-    return all_lines
+            if text and len(text.strip()) > 20:
+                for line in text.split("\n"):
+                    clean_line = " ".join(line.split())
+                    if clean_line:
+                        all_lines.append(clean_line)
+            else:
+                # --- OCR fallback ---
+                ocr_pages.append(i)
+                image = convert_from_bytes(pdf_bytes, dpi=200, first_page=i, last_page=i)[0]
+                ocr_text = pytesseract.image_to_string(image, lang="spa+ell+eng")
+                for line in ocr_text.split("\n"):
+                    clean_line = " ".join(line.split())
+                    if clean_line:
+                        all_lines.append(clean_line)
+
+    return all_lines, ocr_pages
 
 def parse_gpt_response(content, batch_num):
-    """Try to extract JSON from GPT output safely."""
     json_match = re.search(r'\[.*\]', content, re.DOTALL)
     if not json_match:
         st.warning(f"⚠️ Batch {batch_num}: No JSON found. First 300 chars:\n{content[:300]}")
         return []
     try:
-        data = json.loads(json_match.group(0))
-        return data
+        return json.loads(json_match.group(0))
     except json.JSONDecodeError as e:
         st.warning(f"⚠️ Batch {batch_num}: JSON decode error → {e}")
         return []
 
 # ==========================================================
-# GPT EXTRACTOR — Enhanced + Auto-Retry + Código ICN exclusion
+# GPT EXTRACTOR
 # ==========================================================
 def extract_with_gpt(lines):
-    """Use GPT to detect Debit (DEBE) and Credit (HABER) or fallback TOTAL lines."""
     BATCH_SIZE = 60
     all_records = []
 
@@ -95,88 +104,57 @@ Each line may contain:
 - Concepto / Περιγραφή / Comentario (description)
 - DEBE / Χρέωση (Invoice amount)
 - HABER / Πίστωση (Payments or credit notes)
-- SALDO (ignore)
-- TOTAL / TOTALES / ΤΕΛΙΚΟ / ΣΥΝΟΛΟ / IMPORTE TOTAL / TOTAL FACTURA — treat as invoice total if no DEBE/HABER available
+- TOTAL lines (if no DEBE/HABER)
+Follow the same extraction logic as before.
 
-⚠️ RULES
-1. Ignore lines with 'Asiento', 'Saldo', 'IVA', or 'Total Saldo'.
-2. Exclude codes like "Código IC N" or similar from document detection.
-3. If "N° DOC" or "Documento" missing, detect invoice-like code (FAC123, F23, INV-2024, FRA-005, ΤΙΜ 123, etc).
-4. Detect reason:
-   - "Cobro", "Pago", "Transferencia", "Remesa", "Bank", "Trf", "Pagado" → Payment
-   - "Abono", "Nota de crédito", "Crédito", "Descuento", "Πίστωση" → Credit Note
-   - "Fra.", "Factura", "Τιμολόγιο", "Παραστατικό" → Invoice
-5. DEBE / Χρέωση → Invoice
-6. HABER / Πίστωση → Payment or Credit Note
-7. If neither DEBE nor HABER exists but TOTAL/TOTALES/ΤΕΛΙΚΟ/ΣΥΝΟΛΟ appear, use that value as Debit (Invoice total).
-8. Output strictly JSON array only, no explanations.
-
-OUTPUT FORMAT:
+OUTPUT JSON ONLY:
 [
   {{
-    "Alternative Document": "string (invoice or payment ref)",
+    "Alternative Document": "string",
     "Date": "dd/mm/yy or yyyy-mm-dd",
     "Reason": "Invoice | Payment | Credit Note",
     "Debit": "DEBE or TOTAL amount",
     "Credit": "HABER amount"
   }}
 ]
-
-Text to analyze:
+Text:
 {text_block}
 """
-
+        data = []
         for model in [PRIMARY_MODEL, BACKUP_MODEL]:
             try:
-                response = client.chat.completions.create(
+                resp = client.chat.completions.create(
                     model=model,
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.0
                 )
-                content = response.choices[0].message.content.strip()
+                content = resp.choices[0].message.content.strip()
                 if i == 0:
                     st.text_area(f"🧠 GPT Response (Batch 1 – {model})", content, height=250, key=f"debug_{model}")
                 data = parse_gpt_response(content, i // BATCH_SIZE + 1)
                 if data:
                     break
             except Exception as e:
-                st.warning(f"❌ GPT error with {model}: {e}")
+                st.warning(f"GPT error ({model}): {e}")
                 data = []
-
         if not data:
             continue
 
-        # === Post-process records ===
         for row in data:
             alt_doc = str(row.get("Alternative Document", "")).strip()
-            # exclude "Código IC N" and variants
-            if re.search(r"codigo\s*ic\s*n", alt_doc, re.IGNORECASE):
+            if re.search(r"codigo\s*ic\s*n", alt_doc, re.I): 
                 continue
-            if not alt_doc or re.search(r"(asiento|saldo|iva|total\s+saldo)", alt_doc, re.IGNORECASE):
+            if not alt_doc or re.search(r"(asiento|saldo|iva|total\s+saldo)", alt_doc, re.I):
                 continue
 
             debit_val = normalize_number(row.get("Debit", ""))
             credit_val = normalize_number(row.get("Credit", ""))
             reason = row.get("Reason", "").strip()
 
-            # SALDO or dual values cleanup
-            if debit_val and credit_val:
-                if reason.lower() in ["payment", "credit note"]:
-                    debit_val = ""
-                elif reason.lower() == "invoice":
-                    credit_val = ""
-                else:
-                    if abs(debit_val - credit_val) < 0.01 or min(debit_val, credit_val) / max(debit_val, credit_val) < 0.3:
-                        if debit_val < credit_val:
-                            debit_val = ""
-                        else:
-                            credit_val = ""
-
-            # Classification fix
             if debit_val and not credit_val:
                 reason = "Invoice"
             elif credit_val and not debit_val:
-                if re.search(r"abono|nota|crédit|descuento|πίστωση", str(row), re.IGNORECASE):
+                if re.search(r"abono|nota|crédit|descuento|πίστωση", str(row), re.I):
                     reason = "Credit Note"
                 else:
                     reason = "Payment"
@@ -209,30 +187,32 @@ def to_excel_bytes(records):
 uploaded_pdf = st.file_uploader("📂 Upload Vendor Statement (PDF)", type=["pdf"])
 
 if uploaded_pdf:
-    with st.spinner("📄 Extracting text from all pages..."):
-        lines = extract_raw_lines(uploaded_pdf)
+    with st.spinner("📄 Extracting text + OCR from pages..."):
+        lines, ocr_pages = extract_raw_lines(uploaded_pdf)
 
-    st.success(f"✅ Found {len(lines)} lines of text!")
+    st.success(f"✅ {len(lines)} lines extracted.")
+    if ocr_pages:
+        st.info(f"OCR applied on pages: {', '.join(map(str, ocr_pages))}")
+
     st.text_area("📄 Preview (first 30 lines):", "\n".join(lines[:30]), height=300)
 
-    if st.button("🤖 Run Hybrid Extraction", type="primary"):
-        with st.spinner("Analyzing with GPT models..."):
+    if st.button("🤖 Run Hybrid GPT Extraction", type="primary"):
+        with st.spinner("Analyzing text with GPT..."):
             data = extract_with_gpt(lines)
 
         if data:
             df = pd.DataFrame(data)
-            st.success(f"✅ Extraction complete — {len(df)} valid records found!")
+            st.success(f"✅ Extraction complete — {len(df)} records found!")
             st.dataframe(df, use_container_width=True, hide_index=True)
 
             try:
                 total_debit = df["Debit"].apply(pd.to_numeric, errors="coerce").sum()
                 total_credit = df["Credit"].apply(pd.to_numeric, errors="coerce").sum()
                 net = round(total_debit - total_credit, 2)
-
-                col1, col2, col3 = st.columns(3)
-                col1.metric("💰 Total Debit", f"{total_debit:,.2f}")
-                col2.metric("💳 Total Credit", f"{total_credit:,.2f}")
-                col3.metric("⚖️ Net", f"{net:,.2f}")
+                c1, c2, c3 = st.columns(3)
+                c1.metric("💰 Total Debit", f"{total_debit:,.2f}")
+                c2.metric("💳 Total Credit", f"{total_credit:,.2f}")
+                c3.metric("⚖️ Net", f"{net:,.2f}")
             except Exception as e:
                 st.error(f"Totals error: {e}")
 
