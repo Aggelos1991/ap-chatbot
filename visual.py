@@ -6,11 +6,13 @@ import numpy as np
 
 st.set_page_config(page_title="Overdue Invoices", layout="wide")
 st.title("Overdue Invoices Dashboard")
-st.markdown("**Click a bar → Filter by vendor | Table and emails auto-filter**")
+st.markdown("**Click a bar → Filter by vendor | Click outside → Reset to all | Table and emails auto-filter**")
 
+# --- Session state ---
 if 'clicked_vendor' not in st.session_state:
     st.session_state.clicked_vendor = None
 
+# --- File upload ---
 uploaded_file = st.file_uploader("Upload Excel file", type=['xlsx'])
 
 if uploaded_file:
@@ -116,10 +118,13 @@ if uploaded_file:
 
         chart = st.plotly_chart(fig, use_container_width=True, on_select="rerun")
 
-        # === Click Handling ===
+        # === Click Handling (with reset) ===
         if chart.selection and chart.selection['points']:
             point = chart.selection['points'][0]
             st.session_state.clicked_vendor = point.get('y')
+        else:
+            # Clicked outside → reset
+            st.session_state.clicked_vendor = None
 
         clicked_vendor = st.session_state.clicked_vendor
 
@@ -157,4 +162,4 @@ if uploaded_file:
     except Exception as e:
         st.error(f"Error: {e}")
 else:
-    st.info("Upload Excel → Click a bar → Filter data & copy emails")
+    st.info("Upload Excel → Click a bar → Filter data | Click outside → Reset to all")
