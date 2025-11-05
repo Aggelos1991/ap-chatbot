@@ -67,13 +67,13 @@ if uploaded_file:
             df['Col_BS'] = safe_text(bs_idx)
             df['Col_BA'] = safe_text(ba_idx)
 
-            # ---- BT FIX (switch to next column if only YES/NO flags) ----
-            bt_values = set(str(v).strip().upper() for v in df['Col_BT'].dropna().unique())
-            if all(v in {"YES", "NO", "Y", "N", ""} for v in bt_values):
+            # ---- BT FIX (auto-switch if flags or numeric codes) ----
+            bt_values = [str(v).strip().upper() for v in df['Col_BT'].dropna().unique()]
+            if all(v in {"YES", "NO", "Y", "N", ""} or v.replace('.', '', 1).isdigit() for v in bt_values):
                 bt_func_idx = bt_idx + 1
                 if bt_func_idx < df_raw.shape[1]:
                     df['Col_BT'] = safe_text(bt_func_idx)
-                    st.info("Detected BT has only flags (YES/NO) — switched to next column with real vendor type names.")
+                    st.info("Detected BT has only flags or numeric codes — switched to next column with real vendor type names.")
 
             # ---- BS NORMALIZATION ----
             def normalize_bs(x):
