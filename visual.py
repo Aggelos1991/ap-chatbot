@@ -60,16 +60,16 @@ if uploaded_file:
             bs_idx = next((i for name, i in col_map.items() if "BS" in name and "FUNC" not in name), 50)
             ba_idx = next((i for name, i in col_map.items() if "BA" in name), 51)
 
-            df['Col_BT'] = df_raw.iloc[start_row:, bt_idx].astype(str).str.strip()
-            df['Col_BS'] = df_raw.iloc[start_row:, bs_idx].astype(str).str.strip()
-            df['Col_BA'] = df_raw.iloc[start_row:, ba_idx].astype(str).str.strip()
+            df['Col_BT'] = df_raw.iloc[start_row:, bt_idx].fillna("").astype(str).str.strip()
+            df['Col_BS'] = df_raw.iloc[start_row:, bs_idx].fillna("").astype(str).str.strip()
+            df['Col_BA'] = df_raw.iloc[start_row:, ba_idx].fillna("").astype(str).str.strip()
 
             # --- BT FIX ---
             bt_unique = set(df['Col_BT'].dropna().str.upper().unique())
             if bt_unique <= {"YES", "NO"} or bt_unique <= {"Y", "N"}:
                 bt_func_idx = bt_idx + 1
                 if bt_func_idx < df_raw.shape[1]:
-                    df['Col_BT'] = df_raw.iloc[start_row:, bt_func_idx].astype(str).str.strip()
+                    df['Col_BT'] = df_raw.iloc[start_row:, bt_func_idx].fillna("").astype(str).str.strip()
 
             # --- BS FIX ---
             def normalize_bs(x):
@@ -86,7 +86,7 @@ if uploaded_file:
             st.warning(f"Couldn't locate BT/BS/BA columns: {e}")
             df['Col_BT'], df['Col_BS'], df['Col_BA'] = "Unknown", "Unknown", "Unknown"
 
-                # --- YES FILTERS (SAFE VERSION) ---
+        # --- YES FILTERS (SAFE VERSION) ---
         for col in ['Col_AF', 'Col_AH', 'Col_AJ', 'Col_AN']:
             df[col] = (
                 df[col]
@@ -94,10 +94,11 @@ if uploaded_file:
                 .astype(str)
                 .apply(lambda x: x.strip().lower() if isinstance(x, str) else "")
             )
-                apply_yes = st.checkbox("Filter AF/AH/AJ/AN to 'Yes' only", value=True)
-                if apply_yes:
-                    for col in ['Col_AF', 'Col_AH', 'Col_AJ', 'Col_AN']:
-                        df = df[df[col] == 'yes']
+
+        apply_yes = st.checkbox("Filter AF/AH/AJ/AN to 'Yes' only", value=True)
+        if apply_yes:
+            for col in ['Col_AF', 'Col_AH', 'Col_AJ', 'Col_AN']:
+                df = df[df[col] == 'yes']
 
         # --- BT MULTISELECT ---
         bt_values = sorted({v.strip() for v in df['Col_BT'] if v and v.lower() not in ["nan", "none"]})
