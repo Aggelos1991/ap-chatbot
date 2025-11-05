@@ -39,12 +39,13 @@ if uploaded_file:
             'Vendor_Email', 'Account_Email', 'Col_AF', 'Col_AH', 'Col_AJ', 'Col_AN'
         ]
 
-        # === CLEANUP FILTERS (restore old ones) ===
-        # Remove blank, subtotal, or header-like rows
+        # === REMOVE JUNK ROWS BEFORE ANYTHING ===
         df = df[~df['Vendor_Name'].astype(str).str.contains("nan|^$|total|saldo|asiento|header|proveedor", case=False, na=False)]
         df = df[~df['Vendor_Name'].astype(str).str.startswith(("Unnamed", "VENDOR", "Vendor"), na=False)]
         df = df[~df['Open_Amount'].astype(str).str.contains("TOTAL|Total|Saldo", case=False, na=False)]
         df = df[df['Open_Amount'].notna()]
+        df = df[df['Vendor_Name'].notna()]
+        df = df[~df['Vendor_Name'].astype(str).str.strip().eq("")]
 
         # === Type conversions ===
         df['Due_Date'] = pd.to_datetime(df['Due_Date'], errors='coerce').dt.date
@@ -56,6 +57,8 @@ if uploaded_file:
         today = pd.Timestamp.now(tz='Europe/Athens').date()
         df['Overdue'] = df['Due_Date'] < today
         df['Status'] = np.where(df['Overdue'], 'Overdue', 'Not Overdue')
+
+        # === ✅ From here on: only clean data remains ===
 
         # === Summary ===
         summary = (
