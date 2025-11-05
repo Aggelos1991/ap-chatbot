@@ -117,21 +117,15 @@ if uploaded_file:
         if selected_bs:
             df = df[df['Col_BS'].isin(selected_bs)]
 
-        # === COUNTRY FILTER (SAFE FIX) ===
+        # === COUNTRY FILTER ===
         def classify_country(x):
-            try:
-                x_str = str(x).strip().lower()
-                if any(k in x_str for k in ["spain", "espa"]):
-                    return "Spain"
-                elif x_str.replace('.', '', 1).isdigit():
-                    return "Unknown"
-                else:
-                    return "Foreign"
-            except Exception:
-                return "Unknown"
+            x = str(x).strip().lower()
+            if "spain" in x or "espa" in x:
+                return "Spain"
+            return "Foreign"
 
         df['Country_Type'] = df['Col_BA'].apply(classify_country)
-        country_choice = st.radio("Select Country Group", ["All", "Spain", "Foreign", "Unknown"], horizontal=True)
+        country_choice = st.radio("Select Country Group", ["All", "Spain", "Foreign"], horizontal=True)
         if country_choice != "All":
             df = df[df['Country_Type'] == country_choice]
 
