@@ -7,6 +7,7 @@ st.set_page_config(page_title="Overdue Invoices", layout="wide")
 st.title("Overdue Invoices Dashboard")
 st.markdown("**Click a bar → Filter by vendor | Click outside → Reset to all | Table and emails auto-filter**")
 
+# --- SESSION STATE ---
 if 'clicked_vendor' not in st.session_state:
     st.session_state.clicked_vendor = None
 
@@ -51,7 +52,6 @@ if uploaded_file:
         # === ADVANCED FILTERS ===
         st.markdown("### Advanced Filters")
 
-        # ---- Locate BT / BS / BA columns ----
         try:
             headers = df_raw.iloc[header_row[0]].astype(str).str.strip().tolist()
             col_map = {h.upper().strip(): i for i, h in enumerate(headers)}
@@ -67,14 +67,15 @@ if uploaded_file:
             df['Col_BS'] = safe_text(bs_idx)
             df['Col_BA'] = safe_text(ba_idx)
 
-            # ---- BT FIX ----
-            bt_unique = set(df['Col_BT'].dropna().astype(str).str.upper().unique())
-            if bt_unique <= {"YES", "NO", "Y", "N"}:
+            # ---- BT FIX (switch to next column if only YES/NO flags) ----
+            bt_values = set(str(v).strip().upper() for v in df['Col_BT'].dropna().unique())
+            if all(v in {"YES", "NO", "Y", "N", ""} for v in bt_values):
                 bt_func_idx = bt_idx + 1
                 if bt_func_idx < df_raw.shape[1]:
                     df['Col_BT'] = safe_text(bt_func_idx)
+                    st.info("Detected BT has only flags (YES/NO) — switched to next column with real vendor type names.")
 
-            # ---- BS NORMALIZE ----
+            # ---- BS NORMALIZATION ----
             def normalize_bs(x):
                 x = str(x).strip().upper()
                 if x in ["", "OK", "FREE", "0", "FREE FOR PAYMENT"]:
@@ -89,7 +90,7 @@ if uploaded_file:
             st.warning(f"Couldn't locate BT/BS/BA columns: {e}")
             df['Col_BT'], df['Col_BS'], df['Col_BA'] = "Unknown", "Unknown", "Unknown"
 
-        # === SAFE YES FILTERS ===
+        # === YES FILTERS (SAFE) ===
         for col in ['Col_AF', 'Col_AH', 'Col_AJ', 'Col_AN']:
             df[col] = (
                 df[col]
