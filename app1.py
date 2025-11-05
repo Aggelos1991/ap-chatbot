@@ -106,7 +106,7 @@ You are a multilingual financial data extractor for vendor statements (Spanish /
 Extract for each line:
 - Alternative Document
 - Date
-- Reason (Invoice | Payment | Credit Note)
+- Reason or CONCEPTO (Invoice | Payment | Credit Note)
 - Debit
 - Credit
 - Balance
