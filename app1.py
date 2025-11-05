@@ -21,7 +21,6 @@ except:
     pass
 
 api_key = os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY")
-
 if not api_key:
     st.error("❌ No OpenAI API key found. Add it to .env or Streamlit Secrets.")
     st.stop()
@@ -136,6 +135,10 @@ Text:
             except Exception as e:
                 st.warning(f"GPT error ({model}): {e}")
 
+        if not data:
+            continue
+
+        # === Restored behavior for proper Credit values ===
         for row in data:
             alt_doc = str(row.get("Alternative Document", "")).strip()
             if not alt_doc:
@@ -144,30 +147,35 @@ Text:
             debit_val = normalize_number(row.get("Debit", ""))
             credit_val = normalize_number(row.get("Credit", ""))
             balance_val = normalize_number(row.get("Balance", ""))
-            reason = str(row.get("Reason", "")).strip()
+            reason = str(row.get("Reason", "")).strip().lower()
 
-            text_row = str(row)
-            if re.search(r"pago|cobro|transferencia|remesa", text_row, re.IGNORECASE):
+            # --- Classification and side assignment ---
+            if re.search(r"pago|cobro|transferencia|remesa|trf|pagado|bank", str(row), re.IGNORECASE):
                 reason = "Payment"
-            elif re.search(r"abono|nota de crédito|crédit", text_row, re.IGNORECASE):
+            elif re.search(r"abono|nota\s*de\s*crédito|crédit|descuento|πίστωση", str(row), re.IGNORECASE):
                 reason = "Credit Note"
-            elif not reason:
+            else:
                 reason = "Invoice"
 
-            # ✅ Correct placement logic
-            if reason.lower() == "payment":
-                # Payments should appear on Credit side
-                credit_val = debit_val or credit_val
-                debit_val = 0
-            elif reason.lower() in ["invoice", "credit note"]:
-                # Invoices and Credit Notes on Debit side
-                debit_val = debit_val or credit_val
-                credit_val = 0
+            # Correct column placement
+            if reason == "Payment":
+                if not credit_val and debit_val:
+                    credit_val, debit_val = debit_val, 0
+                elif debit_val and credit_val == "":
+                    credit_val = debit_val
+                    debit_val = 0
+            elif reason in ["Invoice", "Credit Note"]:
+                if not debit_val and credit_val:
+                    debit_val, credit_val = credit_val, 0
+
+            # Skip blanks
+            if debit_val == "" and credit_val == "":
+                continue
 
             all_records.append({
                 "Alternative Document": alt_doc,
                 "Date": str(row.get("Date", "")).strip(),
-                "Reason": reason,
+                "Reason": reason.title(),
                 "Debit": debit_val,
                 "Credit": credit_val,
                 "Balance": balance_val
@@ -211,15 +219,11 @@ if uploaded_pdf:
                 st.success(f"✅ Extraction complete — {len(df)} valid records found!")
                 st.dataframe(df, use_container_width=True, hide_index=True)
 
-                # === Totals ===
                 total_debit = df["Debit"].apply(pd.to_numeric, errors="coerce").sum()
                 total_credit = df["Credit"].apply(pd.to_numeric, errors="coerce").sum()
-
-                # Prefer last known Balance; fallback to debit-credit
                 valid_balances = df["Balance"].apply(pd.to_numeric, errors="coerce").dropna()
                 final_balance = valid_balances.iloc[-1] if not valid_balances.empty else total_debit - total_credit
 
-                # Summary metrics
                 col1, col2, col3 = st.columns(3)
                 col1.metric("💰 Total Debit", f"{total_debit:,.2f}")
                 col2.metric("💳 Total Credit", f"{total_credit:,.2f}")
