@@ -48,7 +48,7 @@ def normalize_number(value):
         return ""
 
 def extract_raw_lines(uploaded_pdf):
-    """Extract ALL text lines from every page of the PDF."""
+    """Extract ALL text lines from every page of the PDF (excluding Saldo lines)."""
     all_lines = []
     with pdfplumber.open(uploaded_pdf) as pdf:
         for page in pdf.pages:
@@ -57,8 +57,12 @@ def extract_raw_lines(uploaded_pdf):
                 continue
             for line in text.split("\n"):
                 clean_line = " ".join(line.split())
-                if clean_line.strip():
-                    all_lines.append(clean_line)
+                if not clean_line.strip():
+                    continue
+                # Skip any line that mentions "Saldo"
+                if re.search(r"\bsaldo\b", clean_line, re.IGNORECASE):
+                    continue
+                all_lines.append(clean_line)
     return all_lines
 
 def parse_gpt_response(content, batch_num):
@@ -212,7 +216,7 @@ if uploaded_pdf:
     with st.spinner("📄 Extracting text from all pages..."):
         lines = extract_raw_lines(uploaded_pdf)
 
-    st.success(f"✅ Found {len(lines)} lines of text!")
+    st.success(f"✅ Found {len(lines)} lines of text (Saldo lines removed).")
     st.text_area("📄 Preview (first 30 lines):", "\n".join(lines[:30]), height=300)
 
     if st.button("🤖 Run Hybrid Extraction", type="primary"):
