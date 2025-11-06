@@ -4,16 +4,13 @@ import pandas as pd
 import streamlit as st
 from io import BytesIO
 from openai import OpenAI
-from pdf2image import convert_from_bytes
-import pytesseract
 
 # ==========================================================
 # CONFIGURATION
 # ==========================================================
-st.set_page_config(page_title="🦅 DataFalcon Pro — Hybrid GPT+OCR Extractor", layout="wide")
-st.title("🦅 DataFalcon Pro — Hybrid GPT + OCR Extractor")
+st.set_page_config(page_title="🦅 DataFalcon Pro — Hybrid GPT Extractor", layout="wide")
+st.title("🦅 DataFalcon Pro")
 
-# === Load environment ===
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -30,38 +27,10 @@ PRIMARY_MODEL = "gpt-4o-mini"
 BACKUP_MODEL = "gpt-4o"
 
 # ==========================================================
-# OCR EXTRACTION
-# ==========================================================
-def extract_text_with_ocr(uploaded_pdf):
-    all_lines, ocr_pages = [], []
-    pdf_bytes = uploaded_pdf.read()
-    uploaded_pdf.seek(0)
-
-    with pdfplumber.open(BytesIO(pdf_bytes)) as pdf:
-        for i, page in enumerate(pdf.pages, start=1):
-            text = page.extract_text()
-            if text and len(text.strip()) > 10:
-                for line in text.split("\n"):
-                    clean = " ".join(line.split())
-                    if clean:
-                        all_lines.append(clean)
-            else:
-                ocr_pages.append(i)
-                try:
-                    img = convert_from_bytes(pdf_bytes, dpi=250, first_page=i, last_page=i)[0]
-                    ocr_text = pytesseract.image_to_string(img, lang="spa+eng+ell")
-                    for line in ocr_text.split("\n"):
-                        clean = " ".join(line.split())
-                        if clean:
-                            all_lines.append(clean)
-                except Exception as e:
-                    st.warning(f"OCR skipped for page {i}: {e}")
-    return all_lines, ocr_pages
-
-# ==========================================================
-# UTILITIES
+# HELPERS
 # ==========================================================
 def normalize_number(value):
+    """Normalize decimals like 1.234,56 → 1234.56"""
     if not value:
         return ""
     s = str(value).strip().replace(" ", "")
@@ -78,62 +47,91 @@ def normalize_number(value):
     except:
         return ""
 
+def extract_raw_lines(uploaded_pdf):
+    """Extract ALL text lines from every page of the PDF."""
+    all_lines = []
+    with pdfplumber.open(uploaded_pdf) as pdf:
+        for page in pdf.pages:
+            text = page.extract_text()
+            if not text:
+                continue
+            for line in text.split("\n"):
+                clean_line = " ".join(line.split())
+                if clean_line.strip():
+                    all_lines.append(clean_line)
+    return all_lines
+
 def parse_gpt_response(content, batch_num):
+    """Try to extract JSON from GPT output safely."""
     json_match = re.search(r'\[.*\]', content, re.DOTALL)
     if not json_match:
-        st.warning(f"⚠️ Batch {batch_num}: No JSON found.\n{content[:200]}")
+        st.warning(f"⚠️ Batch {batch_num}: No JSON found. First 300 chars:\n{content[:300]}")
         return []
     try:
-        return json.loads(json_match.group(0))
+        data = json.loads(json_match.group(0))
+        return data
     except json.JSONDecodeError as e:
         st.warning(f"⚠️ Batch {batch_num}: JSON decode error → {e}")
         return []
 
 # ==========================================================
-# GPT EXTRACTION (bulletproofed)
+# GPT EXTRACTOR — Enhanced + Auto-Retry + Código ICN exclusion
 # ==========================================================
 def extract_with_gpt(lines):
+    """Use GPT to detect Debit (DEBE) and Credit (HABER) or fallback TOTAL lines."""
     BATCH_SIZE = 60
     all_records = []
 
     for i in range(0, len(lines), BATCH_SIZE):
-        text_block = "\n".join(lines[i:i + BATCH_SIZE])
+        batch = lines[i:i + BATCH_SIZE]
+        text_block = "\n".join(batch)
+
         prompt = f"""
-You are a multilingual financial data extractor for vendor statements (Spanish / Greek / English).
+You are a financial data extractor specialized in Spanish and Greek vendor statements.
 
-Extract for each line ONLY real transaction rows — invoices, payments, or credit notes.
-IGNORE accounting rows such as "Asiento", "Diario", "Regularización", "Saldo anterior", "Cuenta 43...".
-If you are unsure, skip the line.
+Each line may contain:
+- Fecha (Date)
+- Documento / N° DOC / Αρ. Παραστατικού / Αρ. Τιμολογίου (Document number)
+- Concepto / Περιγραφή / Comentario (description)
+- DEBE / Χρέωση (Invoice amount)
+- HABER / Πίστωση (Payments or credit notes)
+- SALDO (ignore)
+- TOTAL / TOTALES / ΤΕΛΙΚΟ / ΣΥΝΟΛΟ / IMPORTE TOTAL / TOTAL FACTURA — treat as invoice total if no DEBE/HABER available
 
-For each valid line, return:
-- "Alternative Document": real document/invoice number (from Num., Documento, Factura, or Concepto). 
-  It often looks like A741387, AB0718, FV12345, FAC2345, CO1234, or any code with ≥5 digits.
-  NEVER use account codes like 43xxxxxx or text like "Asiento".
-- "Date": the date on that line (dd/mm/yyyy or yyyy-mm-dd)
-- "Reason": one of ["Invoice", "Payment", "Credit Note"]
-- "Debit"
-- "Credit"
-- "Balance"
+⚠️ RULES
+1. Ignore lines with 'Asiento', 'Saldo', 'IVA', or 'Total Saldo'.
+2. Exclude codes like "Código IC N" or similar from document detection.
+3. If "N° DOC" or "Documento" missing, detect invoice-like code (FAC123, F23, INV-2024, FRA-005, ΤΙΜ 123, etc).
+4. Detect reason:
+   - "Cobro", "Pago", "Transferencia", "Remesa", "Bank", "Trf", "Pagado" → Payment
+   - "Abono", "Nota de crédito", "Crédito", "Descuento", "Πίστωση" → Credit Note
+   - "Fra.", "Factura", "Τιμολόγιο", "Παραστατικό" → Invoice
+5. DEBE / Χρέωση → Invoice
+6. HABER / Πίστωση → Payment or Credit Note
+7. If neither DEBE nor HABER exists but TOTAL/TOTALES/ΤΕΛΙΚΟ/ΣΥΝΟΛΟ appear, use that value as Debit (Invoice total).
+8. Output strictly JSON array only, no explanations.
 
-Rules:
-- Skip lines containing "Asiento", "Diario", "Apertura", "Regularización", or "Saldo anterior".
-- "Pago", "Cobro", "Transferencia", "Remesa", "Orden de cobro", "BNKI", "Banco" → Payment
-- "Abono", "Reversión", "Nota de crédito", "Crédit", "Πίστωση" → Credit Note
-- Otherwise → Invoice
-- "Saldo" or "Balance" always means the balance column (not Credit).
-- Document numbers appear after words like Num., Número, Documento, Factura, Fact., Doc., or in "Concepto" / "Comentarios".
-- Return only valid JSON array, no explanations or text.
+OUTPUT FORMAT:
+[
+  {{
+    "Alternative Document": "string (invoice or payment ref)",
+    "Date": "dd/mm/yy or yyyy-mm-dd",
+    "Reason": "Invoice | Payment | Credit Note",
+    "Debit": "DEBE or TOTAL amount",
+    "Credit": "HABER amount"
+  }}
+]
 
-Text:
+Text to analyze:
 {text_block}
 """
-        data = []
+
         for model in [PRIMARY_MODEL, BACKUP_MODEL]:
             try:
                 response = client.chat.completions.create(
                     model=model,
                     messages=[{"role": "user", "content": prompt}],
-                    temperature=0
+                    temperature=0.0
                 )
                 content = response.choices[0].message.content.strip()
                 if i == 0:
@@ -142,58 +140,61 @@ Text:
                 if data:
                     break
             except Exception as e:
-                st.warning(f"GPT error ({model}): {e}")
+                st.warning(f"❌ GPT error with {model}: {e}")
+                data = []
 
         if not data:
             continue
 
+        # === Post-process records ===
         for row in data:
             alt_doc = str(row.get("Alternative Document", "")).strip()
-            if not alt_doc or re.match(r"^(43\d{6,}|asiento|diario|regularizaci)", alt_doc, re.IGNORECASE):
+            # exclude "Código IC N" and variants
+            if re.search(r"codigo\s*ic\s*n", alt_doc, re.IGNORECASE):
                 continue
-
-            # force revalidate doc number
-            match = re.search(r"((A|AB|AC|FV|FAC|FA|CO)\d{3,}|\d{5,})", alt_doc)
-            if match:
-                alt_doc = match.group(1)
-            else:
+            if not alt_doc or re.search(r"(asiento|saldo|iva|total\s+saldo)", alt_doc, re.IGNORECASE):
                 continue
 
             debit_val = normalize_number(row.get("Debit", ""))
             credit_val = normalize_number(row.get("Credit", ""))
-            balance_val = normalize_number(row.get("Balance", ""))
-            reason = str(row.get("Reason", "")).strip().lower()
+            reason = row.get("Reason", "").strip()
 
-            if re.search(r"pago|cobro|transferencia|remesa|bnki|banco|trf|pagado|bank|orden\s+de\s+cobro", str(row), re.IGNORECASE):
-                reason = "Payment"
-            elif re.search(r"abono|nota\s*de\s*cr[eé]dito|cr[eé]dit|reversi[oó]n|πίστωση", str(row), re.IGNORECASE):
-                reason = "Credit Note"
-            else:
+            # SALDO or dual values cleanup
+            if debit_val and credit_val:
+                if reason.lower() in ["payment", "credit note"]:
+                    debit_val = ""
+                elif reason.lower() == "invoice":
+                    credit_val = ""
+                else:
+                    if abs(debit_val - credit_val) < 0.01 or min(debit_val, credit_val) / max(debit_val, credit_val) < 0.3:
+                        if debit_val < credit_val:
+                            debit_val = ""
+                        else:
+                            credit_val = ""
+
+            # Classification fix
+            if debit_val and not credit_val:
                 reason = "Invoice"
-
-            if reason == "Payment":
-                if debit_val and not credit_val:
-                    credit_val, debit_val = debit_val, 0
-            elif reason in ["Invoice", "Credit Note"]:
-                if credit_val and not debit_val:
-                    debit_val, credit_val = credit_val, 0
-
-            if debit_val == "" and credit_val == "":
+            elif credit_val and not debit_val:
+                if re.search(r"abono|nota|crédit|descuento|πίστωση", str(row), re.IGNORECASE):
+                    reason = "Credit Note"
+                else:
+                    reason = "Payment"
+            elif debit_val == "" and credit_val == "":
                 continue
 
             all_records.append({
                 "Alternative Document": alt_doc,
                 "Date": str(row.get("Date", "")).strip(),
-                "Reason": reason.title(),
+                "Reason": reason,
                 "Debit": debit_val,
-                "Credit": credit_val,
-                "Balance": balance_val
+                "Credit": credit_val
             })
 
     return all_records
 
 # ==========================================================
-# EXPORT TO EXCEL
+# EXPORT
 # ==========================================================
 def to_excel_bytes(records):
     df = pd.DataFrame(records)
@@ -203,48 +204,45 @@ def to_excel_bytes(records):
     return buf
 
 # ==========================================================
-# STREAMLIT INTERFACE
+# STREAMLIT UI
 # ==========================================================
 uploaded_pdf = st.file_uploader("📂 Upload Vendor Statement (PDF)", type=["pdf"])
 
 if uploaded_pdf:
-    with st.spinner("📄 Extracting text + running OCR fallback..."):
-        lines, ocr_pages = extract_text_with_ocr(uploaded_pdf)
+    with st.spinner("📄 Extracting text from all pages..."):
+        lines = extract_raw_lines(uploaded_pdf)
 
-    if not lines:
-        st.error("❌ No text detected. Check that Tesseract OCR is installed and language packs (spa, ell, eng) are available.")
-    else:
-        st.success(f"✅ Found {len(lines)} lines of text!")
-        if ocr_pages:
-            st.info(f"OCR applied on pages: {', '.join(map(str, ocr_pages))}")
-        st.text_area("📄 Preview (first 30 lines):", "\n".join(lines[:30]), height=300)
+    st.success(f"✅ Found {len(lines)} lines of text!")
+    st.text_area("📄 Preview (first 30 lines):", "\n".join(lines[:30]), height=300)
 
-        if st.button("🤖 Run Hybrid Extraction", type="primary"):
-            with st.spinner("Analyzing with GPT..."):
-                data = extract_with_gpt(lines)
+    if st.button("🤖 Run Hybrid Extraction", type="primary"):
+        with st.spinner("Analyzing with GPT models..."):
+            data = extract_with_gpt(lines)
 
-            if data:
-                df = pd.DataFrame(data)
-                st.success(f"✅ Extraction complete — {len(df)} valid records found!")
-                st.dataframe(df, use_container_width=True, hide_index=True)
+        if data:
+            df = pd.DataFrame(data)
+            st.success(f"✅ Extraction complete — {len(df)} valid records found!")
+            st.dataframe(df, use_container_width=True, hide_index=True)
 
+            try:
                 total_debit = df["Debit"].apply(pd.to_numeric, errors="coerce").sum()
                 total_credit = df["Credit"].apply(pd.to_numeric, errors="coerce").sum()
-                valid_balances = df["Balance"].apply(pd.to_numeric, errors="coerce").dropna()
-                final_balance = valid_balances.iloc[-1] if not valid_balances.empty else total_debit - total_credit
+                net = round(total_debit - total_credit, 2)
 
                 col1, col2, col3 = st.columns(3)
                 col1.metric("💰 Total Debit", f"{total_debit:,.2f}")
                 col2.metric("💳 Total Credit", f"{total_credit:,.2f}")
-                col3.metric("📊 Final Balance", f"{final_balance:,.2f}")
+                col3.metric("⚖️ Net", f"{net:,.2f}")
+            except Exception as e:
+                st.error(f"Totals error: {e}")
 
-                st.download_button(
-                    "⬇️ Download Excel",
-                    data=to_excel_bytes(data),
-                    file_name=f"vendor_statement_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                )
-            else:
-                st.warning("⚠️ No structured data found in GPT output.")
+            st.download_button(
+                "⬇️ Download Excel",
+                data=to_excel_bytes(data),
+                file_name=f"vendor_statement_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+        else:
+            st.warning("⚠️ No structured data detected. Check GPT response above.")
 else:
-    st.info("Upload a PDF to begin.")
+    st.info("Please upload a vendor statement PDF to begin.")
