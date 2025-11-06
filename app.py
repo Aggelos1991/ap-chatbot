@@ -21,7 +21,7 @@ st.markdown("""
   div.stButton > button:first-child:hover{background-color:#0069d9}
 </style>
 """, unsafe_allow_html=True)
-st.title("The Remitator — Hasta la vista, payment remittance.")
+st.title("💀The Remitator — Hasta la vista, payment remittance.")
 
 # ========== ENV ==========
 load_dotenv()
