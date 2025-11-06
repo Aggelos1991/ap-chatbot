@@ -4,7 +4,7 @@ import plotly.express as px
 import numpy as np
 
 st.set_page_config(page_title="Overdue Invoices", layout="wide")
-st.title("The Lord of the Debits - One invoice to rule them all, one invoice to find them,
+st.title("The Lord of the Debits,One invoice to rule them all, one invoice to find them,
 One invoice to bring them all, and in the ledger bind them.")
 
 
