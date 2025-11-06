@@ -4,6 +4,8 @@ import pandas as pd
 import streamlit as st
 from io import BytesIO
 from openai import OpenAI
+from pdf2image import convert_from_bytes
+import pytesseract
 
 # ==========================================================
 # CONFIGURATION
@@ -47,22 +49,45 @@ def normalize_number(value):
     except:
         return ""
 
+# ==========================================================
+# PDF + OCR EXTRACTION (added)
+# ==========================================================
 def extract_raw_lines(uploaded_pdf):
-    """Extract ALL text lines from every page of the PDF (excluding Saldo lines)."""
+    """Extract ALL text lines from every page of the PDF (excluding Saldo lines), using OCR fallback."""
     all_lines = []
-    with pdfplumber.open(uploaded_pdf) as pdf:
-        for page in pdf.pages:
+    pdf_bytes = uploaded_pdf.read()
+    uploaded_pdf.seek(0)
+    ocr_pages = []
+
+    with pdfplumber.open(BytesIO(pdf_bytes)) as pdf:
+        for i, page in enumerate(pdf.pages, start=1):
             text = page.extract_text()
-            if not text:
-                continue
-            for line in text.split("\n"):
-                clean_line = " ".join(line.split())
-                if not clean_line.strip():
-                    continue
-                # Skip any line that mentions "Saldo"
-                if re.search(r"\bsaldo\b", clean_line, re.IGNORECASE):
-                    continue
-                all_lines.append(clean_line)
+            if text and len(text.strip()) > 10:
+                for line in text.split("\n"):
+                    clean_line = " ".join(line.split())
+                    if not clean_line.strip():
+                        continue
+                    if re.search(r"\bsaldo\b", clean_line, re.IGNORECASE):
+                        continue
+                    all_lines.append(clean_line)
+            else:
+                # OCR fallback for pages without readable text
+                ocr_pages.append(i)
+                try:
+                    images = convert_from_bytes(pdf_bytes, dpi=250, first_page=i, last_page=i)
+                    ocr_text = pytesseract.image_to_string(images[0], lang="spa+eng+ell")
+                    for line in ocr_text.split("\n"):
+                        clean_line = " ".join(line.split())
+                        if not clean_line.strip():
+                            continue
+                        if re.search(r"\bsaldo\b", clean_line, re.IGNORECASE):
+                            continue
+                        all_lines.append(clean_line)
+                except Exception as e:
+                    st.warning(f"OCR skipped for page {i}: {e}")
+
+    if ocr_pages:
+        st.info(f"OCR applied on pages: {', '.join(map(str, ocr_pages))}")
     return all_lines
 
 def parse_gpt_response(content, batch_num):
@@ -213,7 +238,7 @@ def to_excel_bytes(records):
 uploaded_pdf = st.file_uploader("📂 Upload Vendor Statement (PDF)", type=["pdf"])
 
 if uploaded_pdf:
-    with st.spinner("📄 Extracting text from all pages..."):
+    with st.spinner("📄 Extracting text from all pages (with OCR fallback)..."):
         lines = extract_raw_lines(uploaded_pdf)
 
     st.success(f"✅ Found {len(lines)} lines of text (Saldo lines removed).")
