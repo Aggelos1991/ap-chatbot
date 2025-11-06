@@ -211,7 +211,8 @@ if uploaded_file:
         chart_key = f"{vendor_select}_{status_filter}_{country_choice}_{data_hash}"
         st.session_state["chart_key"] = chart_key
 
-        chart = st.plotly_chart(fig, use_container_width=True, on_select="rerun")
+        chart = st.plotly_chart(fig, use_container_width=True, on_select="rerun", key=st.session_state["chart_key"])
+
 
         # === CLICK HANDLING ===
         if chart.selection and chart.selection['points']:
