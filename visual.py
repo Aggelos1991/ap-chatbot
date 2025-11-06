@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import numpy as np
+import hashlib
 
 st.set_page_config(page_title="Overdue Invoices", layout="wide")
 st.markdown("""
@@ -174,12 +175,18 @@ if uploaded_file:
         with c1:
             status_filter = st.selectbox("Show", ["All Open", "Overdue Only", "Not Overdue Only"])
         with c2:
-            vendor_select = st.selectbox("Vendors", ["All Vendors", "Top 20", "Top 30"] + sorted(df['Vendor_Name'].unique()))
+            vendor_select = st.selectbox("Vendors", ["Top 100", "Top 20", "Top 30"] + sorted(df['Vendor_Name'].unique()))
 
-        top_n = 30 if "30" in vendor_select else 20
-        if vendor_select == "All Vendors":
-            base_df = summary
-        elif "Top" in vendor_select:
+        # === TOP N LOGIC ===
+        if "100" in vendor_select:
+            top_n = 100
+        elif "30" in vendor_select:
+            top_n = 30
+        else:
+            top_n = 20
+
+        # === DATA SUBSET ===
+        if "Top" in vendor_select:
             if status_filter == "All Open":
                 base_df = summary.nlargest(top_n, 'Total')
             elif status_filter == "Overdue Only":
@@ -188,6 +195,10 @@ if uploaded_file:
                 base_df = summary.nlargest(top_n, 'Not Overdue').assign(**{'Overdue': 0})
         else:
             base_df = summary[summary['Vendor_Name'] == vendor_select]
+
+        # === FORCE CHART REFRESH ===
+        data_hash = hashlib.md5(pd.util.hash_pandas_object(base_df, index=True).values).hexdigest()[:8]
+        chart_key = f"{vendor_select}_{status_filter}_{country_choice}_{data_hash}"
 
         # === CHART ===
         plot_df = base_df.melt(id_vars='Vendor_Name',
@@ -205,14 +216,7 @@ if uploaded_file:
         fig.update_layout(xaxis_title="Amount (€)", yaxis_title="Vendor", legend_title="Status",
                           barmode='stack', plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
                           margin=dict(l=150, r=50, t=80, b=50))
-                # === FORCE CHART REFRESH ON FILTER CHANGE ===
-        import hashlib
-        data_hash = hashlib.md5(pd.util.hash_pandas_object(base_df, index=True).values).hexdigest()[:8]
-        chart_key = f"{vendor_select}_{status_filter}_{country_choice}_{data_hash}"
-        st.session_state["chart_key"] = chart_key
-
-        chart = st.plotly_chart(fig, use_container_width=True, on_select="rerun", key=st.session_state["chart_key"])
-
+        chart = st.plotly_chart(fig, use_container_width=True, on_select="rerun", key=chart_key)
 
         # === CLICK HANDLING ===
         if chart.selection and chart.selection['points']:
