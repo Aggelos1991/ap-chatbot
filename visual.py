@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import numpy as np
-from streamlit_plotly_events import plotly_events
 
 st.set_page_config(page_title="Overdue Invoices", layout="wide")
 st.markdown("""
@@ -173,13 +172,13 @@ if uploaded_file:
         # === CHART FILTERS ===
         c1, c2 = st.columns(2)
         with c1:
-            status_filter = st.selectbox("Show", ["All Open", "Overdue Only", "Not Overdue Only"], key="status_select")
+            status_filter = st.selectbox("Show", ["All Open", "Overdue Only", "Not Overdue Only"])
         with c2:
-            vendor_select = st.selectbox("Vendors", ["All Vendors", "Top 20", "Top 30"] + sorted(df['Vendor_Name'].unique()), key="vendor_select")
+            vendor_select = st.selectbox("Vendors", ["All Vendors", "Top 20", "Top 30"] + sorted(df['Vendor_Name'].unique()))
 
         top_n = 30 if "30" in vendor_select else 20
         if vendor_select == "All Vendors":
-            base_df = summary.copy()
+            base_df = summary
         elif "Top" in vendor_select:
             if status_filter == "All Open":
                 base_df = summary.nlargest(top_n, 'Total')
@@ -190,9 +189,6 @@ if uploaded_file:
         else:
             base_df = summary[summary['Vendor_Name'] == vendor_select]
 
-        # === FORCE RERENDER ===
-        st.session_state["chart_key"] = f"{vendor_select}_{status_filter}_{country_choice}"
-
         # === CHART ===
         plot_df = base_df.melt(id_vars='Vendor_Name',
                                value_vars=['Overdue', 'Not Overdue'],
@@ -201,7 +197,6 @@ if uploaded_file:
                      orientation='h', color_discrete_map={'Overdue': '#8B0000', 'Not Overdue': '#4682B4'},
                      title=f"{vendor_select} ({status_filter}) — {country_choice}",
                      height=max(500, len(plot_df) * 45))
-
         totals = plot_df.groupby('Vendor_Name')['Amount'].sum().reset_index()
         fig.add_scatter(x=totals['Amount'], y=totals['Vendor_Name'], mode='text',
                         text=totals['Amount'].apply(lambda x: f"€{x:,.0f}"),
@@ -210,22 +205,13 @@ if uploaded_file:
         fig.update_layout(xaxis_title="Amount (€)", yaxis_title="Vendor", legend_title="Status",
                           barmode='stack', plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
                           margin=dict(l=150, r=50, t=80, b=50))
+        chart = st.plotly_chart(fig, use_container_width=True, on_select="rerun")
 
-        # === CLICK HANDLING (UPDATED) ===
-        selected_points = plotly_events(
-            fig,
-            click_event=True,
-            hover_event=False,
-            select_event=False,
-            override_height=max(500, len(plot_df) * 45),
-            key=st.session_state["chart_key"]
-        )
-
-        if selected_points:
-            st.session_state.clicked_vendor = selected_points[0]["y"]
+        # === CLICK HANDLING ===
+        if chart.selection and chart.selection['points']:
+            st.session_state.clicked_vendor = chart.selection['points'][0].get('y')
         else:
             st.session_state.clicked_vendor = None
-
         clicked_vendor = st.session_state.clicked_vendor
 
         # === FILTERED TABLE ===
