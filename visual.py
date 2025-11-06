@@ -189,12 +189,6 @@ if uploaded_file:
         else:
             base_df = summary[summary['Vendor_Name'] == vendor_select]
 
-                # === FORCE CHART REFRESH ON FILTER CHANGE ===
-        import hashlib
-        data_hash = hashlib.md5(pd.util.hash_pandas_object(base_df, index=True).values).hexdigest()[:8]
-        chart_key = f"{vendor_select}_{status_filter}_{country_choice}_{data_hash}"
-
-
         # === CHART ===
         plot_df = base_df.melt(id_vars='Vendor_Name',
                                value_vars=['Overdue', 'Not Overdue'],
@@ -211,25 +205,7 @@ if uploaded_file:
         fig.update_layout(xaxis_title="Amount (€)", yaxis_title="Vendor", legend_title="Status",
                           barmode='stack', plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
                           margin=dict(l=150, r=50, t=80, b=50))
-                # === INTERACTIVE CLICK HANDLING (REPLACES OLD on_select) ===
-        from streamlit_plotly_events import plotly_events
-        
-        selected_points = plotly_events(
-            fig,
-            click_event=True,
-            hover_event=False,
-            select_event=False,
-            override_height=max(500, len(plot_df) * 45),
-            key=chart_key   # ✅ dynamic key with hash ensures refresh on all filters
-        )
-        
-        if selected_points:
-            st.session_state.clicked_vendor = selected_points[0]["y"]
-        else:
-            st.session_state.clicked_vendor = None
-        
-        clicked_vendor = st.session_state.clicked_vendor
-
+        chart = st.plotly_chart(fig, use_container_width=True, on_select="rerun")
 
         # === CLICK HANDLING ===
         if chart.selection and chart.selection['points']:
