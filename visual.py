@@ -175,10 +175,15 @@ if uploaded_file:
         with c1:
             status_filter = st.selectbox("Show", ["All Open", "Overdue Only", "Not Overdue Only"])
         with c2:
-            vendor_select = st.selectbox("Vendors", ["Top 100", "Top 20", "Top 30"] + sorted(df['Vendor_Name'].unique()))
+            vendor_select = st.selectbox(
+                "Vendors",
+                ["Top 200", "Top 100", "Top 30", "Top 20"] + sorted(df['Vendor_Name'].unique())
+            )
 
         # === TOP N LOGIC ===
-        if "100" in vendor_select:
+        if "200" in vendor_select:
+            top_n = 200
+        elif "100" in vendor_select:
             top_n = 100
         elif "30" in vendor_select:
             top_n = 30
