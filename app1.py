@@ -115,7 +115,9 @@ Extract for each line:
 Rules:
 - "Saldo" or "Balance" always = Balance column (not Credit).
 - "Pago", "Cobro", "Transferencia", "Remesa" → Payment.
+- "Asiento" you never pick it 
 - "Abono", "Nota de crédito", "Crédit" → Credit Note.
+- "Alternative Document"---> you find Num. or documento or invoice number or αριθμός παραστατικού or FACTURA
 - Return ONLY JSON array.
 Text:
 {text_block}
