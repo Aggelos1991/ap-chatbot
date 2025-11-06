@@ -61,10 +61,29 @@ def extract_text_with_ocr(uploaded_pdf):
 # ==========================================================
 # UTILITIES
 # ==========================================================
+NUM_TOKEN = re.compile(
+    r"""(?ix)
+    (?:
+        (?:num\.?|n[úu]m\.?|número|numero|documento|doc\.?|factura|fac|fv|co|ab|
+         αριθ|παραστατικ|τιμολόγιο|τιμολογιο|παρ\.)
+        \s*[:\-#]?\s*
+    )?
+    ([A-Z]{0,3}\s?\d{3,}|\d{5,})
+    """
+)
+
+PREFERRED_PATTERN = re.compile(r"(?i)\b((F|FV|CO|AB|FAC|FA)\d{3,}|\d{5,})\b")
+
+SKIP_ROW = re.compile(r"(?i)\b(asiento|diario|apertura|regularizaci|saldo\s+anterior|sumas\s+y\s+saldos)\b")
+SKIP_ALT = re.compile(r"(?i)\b(asiento|diario|apertura|regularizaci)\b")
+GENERIC_REF = re.compile(r"(?i)^(pago|remesa|transfer|trf|bank)$")
+
 def normalize_number(value):
-    if not value:
+    if value is None:
         return ""
     s = str(value).strip().replace(" ", "")
+    if not s:
+        return ""
     if "," in s and "." in s:
         if s.rfind(",") > s.rfind("."):
             s = s.replace(".", "").replace(",", ".")
@@ -72,7 +91,10 @@ def normalize_number(value):
             s = s.replace(",", "")
     elif "," in s:
         s = s.replace(",", ".")
-    s = re.sub(r"[^\d.\-]", "", s)
+    s = re.sub(r"[^\d.\-()]", "", s)
+    # Handle (123,45) negatives
+    if s.startswith("(") and s.endswith(")"):
+        s = "-" + s[1:-1]
     try:
         return round(float(s), 2)
     except:
@@ -89,44 +111,91 @@ def parse_gpt_response(content, batch_num):
         st.warning(f"⚠️ Batch {batch_num}: JSON decode error → {e}")
         return []
 
+# ----------------------------------------------------------
+# Local candidate scan per line (used for repair)
+# ----------------------------------------------------------
+def scan_candidates_per_line(lines):
+    """
+    Returns list of lists: candidates[idx] -> list of doc refs found on that line.
+    """
+    cands = []
+    for ln in lines:
+        hits = []
+        for m in NUM_TOKEN.finditer(ln):
+            token = m.group(1).strip()
+            if token:
+                # prefer compact form, strip spaces like "FV 12345" -> "FV12345"
+                token = re.sub(r"\s+", "", token)
+                hits.append(token)
+        cands.append(hits)
+    return cands
+
+def best_candidate_from_neighbors(candidates, line_idx, radius=2):
+    """
+    Look at line_idx and neighbors ±radius to pick a preferred pattern first,
+    otherwise the first token found.
+    line_idx is 0-based.
+    """
+    n = len(candidates)
+    pool = []
+    for j in range(max(0, line_idx - radius), min(n, line_idx + radius + 1)):
+        pool.extend(candidates[j])
+    # Prefer pattern like FV/FAC/CO/AB/FA999...
+    for tok in pool:
+        if PREFERRED_PATTERN.search(tok):
+            return PREFERRED_PATTERN.search(tok).group(1)
+    # fallback: any ≥5 digits token
+    for tok in pool:
+        if re.search(r"\d{5,}", tok):
+            return tok
+    return ""
+
 # ==========================================================
-# GPT EXTRACTION  (HARDENED VERSION)
+# GPT EXTRACTION  (HARDENED + CONTEXT REPAIR)
 # ==========================================================
-def extract_with_gpt(lines):
+def extract_with_gpt(all_lines):
     BATCH_SIZE = 60
     all_records = []
 
-    for i in range(0, len(lines), BATCH_SIZE):
-        text_block = "\n".join(lines[i:i + BATCH_SIZE])
+    for batch_start in range(0, len(all_lines), BATCH_SIZE):
+        batch_lines = all_lines[batch_start:batch_start + BATCH_SIZE]
+        # pre-scan local candidates for this batch
+        batch_candidates = scan_candidates_per_line(batch_lines)
+
+        # number the lines for GPT and keep exactly same text
+        numbered = "\n".join(f"{idx+1}. {txt}" for idx, txt in enumerate(batch_lines))
+
         prompt = f"""
-You are a multilingual financial data extractor specialized in **vendor statements** (Spanish / Greek / English).
+You are a multilingual financial data extractor specialized in vendor statements (Spanish / Greek / English).
 
-⚙️ TASK:
-Read each line carefully and extract ONLY valid transaction lines (Factura, Abono, Pago, Transferencia, Nota de crédito).
-IGNORE accounting entries like "Asiento", "Diario", "Regularización", or summary lines.
+TASK:
+Read the numbered lines below and extract ONLY real transaction lines:
+- Invoice (Factura), Credit Note (Abono/Nota de crédito), Payment (Pago/Transferencia/Remesa/Cobro).
+IGNORE accounting or ledger lines such as: "Asiento", "Diario", "Apertura", "Regularización", "Saldo anterior", totals, or summaries.
 
-For every valid transaction, return a JSON array of objects with:
-- "Alternative Document" → the true document/invoice number.
-- "Date" → the date appearing on the same or nearby line.
-- "Reason" → one of ["Invoice", "Payment", "Credit Note"].
+OUTPUT:
+Return a pure JSON array. Each object MUST have:
+- "Line" (integer) → the exact line number from the provided text.
+- "Alternative Document" → the true invoice/credit/payment reference (from Num./Documento/Factura or from Concepto/comentarios like "por factura 12345").
+- "Date" → the date on the same or nearby line (string).
+- "Reason" ∈ ["Invoice","Payment","Credit Note"].
 - "Debit"
 - "Credit"
 - "Balance"
 
-📘 RULES:
-- Skip lines that contain only “Asiento”, “Diario”, “Apertura”, “Regularización”, or “Saldo anterior”.
-- The document number can appear after words like "Num", "Núm.", "Documento", "Factura", "FAC", "FV", "CO", "AB", "Doc.", or inside "Concepto" or comments like "por factura 12345".
-- Reject values like "Asiento 204", "Remesa", "Pago", "Transferencia" if they are **not** followed by a real invoice/credit reference.
-- Prefer any code matching patterns: (F|FV|CO|AB|FA|FAC)\d{{3,}} or at least 5 consecutive digits.
-- If text mentions "Pago", "Cobro", "Transferencia", "Remesa" → Reason = "Payment".
-- If text mentions "Abono", "Nota de crédito", "Crédit", "Descuento", "Πίστωση" → Reason = "Credit Note".
-- Otherwise, assume "Invoice".
-- Do NOT invent any fields.
-- Return only a pure JSON array, nothing else.
+RULES:
+- If a line mentions "Pago", "Cobro", "Transferencia", "Remesa" ⇒ Reason = "Payment".
+- If "Abono", "Nota de crédito", "Crédit", "Descuento", "Πίστωση" ⇒ Reason = "Credit Note".
+- Else assume "Invoice".
+- Do NOT output entries that are only "Asiento/Diario/Apertura/Regularización/Saldo anterior" (skip them).
+- The document reference should look like: (F|FV|CO|AB|FA|FAC) + digits OR any code with ≥5 consecutive digits.
+- Do NOT invent fields. If uncertain, skip that line.
+- Return ONLY the JSON.
 
-Text:
-{text_block}
-"""
+TEXT:
+{numbered}
+""".strip()
+
         data = []
         for model in [PRIMARY_MODEL, BACKUP_MODEL]:
             try:
@@ -136,9 +205,9 @@ Text:
                     temperature=0
                 )
                 content = response.choices[0].message.content.strip()
-                if i == 0:
+                if batch_start == 0:
                     st.text_area(f"🧠 GPT Response (Batch 1 – {model})", content, height=250, key=f"debug_{model}")
-                data = parse_gpt_response(content, i // BATCH_SIZE + 1)
+                data = parse_gpt_response(content, batch_start // BATCH_SIZE + 1)
                 if data:
                     break
             except Exception as e:
@@ -147,53 +216,86 @@ Text:
         if not data:
             continue
 
-        # === Data post-processing ===
+        # === Post-processing + Context Repair ===
         for row in data:
+            # 1) Line mapping
+            try:
+                line_num = int(row.get("Line", 0))
+            except:
+                line_num = 0
+            if not (1 <= line_num <= len(batch_lines)):
+                continue
+            line_idx = line_num - 1
+            raw_line = batch_lines[line_idx]
+
+            # 2) Skip obvious ledger lines
+            if SKIP_ROW.search(raw_line):
+                continue
+
+            # 3) Extract fields
             alt_doc = str(row.get("Alternative Document", "")).strip()
-            if not alt_doc:
-                continue
-
-            # Skip invalid refs
-            if re.search(r"asiento|diario|apertura|regularizaci", alt_doc, re.IGNORECASE):
-                continue
-            if re.match(r"^(pago|remesa|transfer|trf|bank)$", alt_doc, re.IGNORECASE):
-                continue
-
-            # Force-detect real doc number
-            match = re.search(r"((F|FV|CO|AB|FAC|FA)\d{3,}|\d{5,})", alt_doc)
-            if match:
-                alt_doc = match.group(1)
-            else:
-                continue
+            reason = str(row.get("Reason", "")).strip().title()
+            date_str = str(row.get("Date", "")).strip()
 
             debit_val = normalize_number(row.get("Debit", ""))
             credit_val = normalize_number(row.get("Credit", ""))
             balance_val = normalize_number(row.get("Balance", ""))
-            reason = str(row.get("Reason", "")).strip().lower()
 
-            # Correct reason detection
-            if re.search(r"pago|cobro|transfer|remesa|trf|bank", str(row), re.IGNORECASE):
+            # 4) Clean/validate Alternative Document
+            if alt_doc:
+                if SKIP_ALT.search(alt_doc) or GENERIC_REF.match(alt_doc):
+                    alt_doc = ""
+                else:
+                    m = PREFERRED_PATTERN.search(alt_doc)
+                    if m:
+                        alt_doc = m.group(1)
+                    else:
+                        # maybe ≥5 digits token
+                        m2 = re.search(r"\d{5,}", alt_doc)
+                        alt_doc = m2.group(0) if m2 else ""
+
+            # 5) Context repair: if still empty/invalid, pull from local candidates (same line ±2)
+            if not alt_doc:
+                alt_doc = best_candidate_from_neighbors(batch_candidates, line_idx, radius=2)
+                if not alt_doc:
+                    # final safety: try scanning the line raw
+                    m3 = NUM_TOKEN.search(raw_line)
+                    if m3:
+                        alt_doc = re.sub(r"\s+", "", m3.group(1))
+
+            if not alt_doc:
+                # cannot trust this row without a real doc reference
+                continue
+
+            # 6) Reason correction from row/line context (robust)
+            all_text = " ".join([str(row), raw_line])
+            if re.search(r"(?i)pago|cobro|transfer|remesa|trf|bank", all_text):
                 reason = "Payment"
-            elif re.search(r"abono|nota\s*de\s*crédito|crédit|descuento|πίστωση", str(row), re.IGNORECASE):
+            elif re.search(r"(?i)abono|nota\s*de\s*cr[eé]dito|cr[eé]dit|descuento|πίστωση", all_text):
                 reason = "Credit Note"
             else:
                 reason = "Invoice"
 
-            # Fix debit/credit placement
+            # 7) Fix Debit/Credit placement
             if reason == "Payment":
+                # Payments should hit Credit
                 if debit_val and not credit_val:
                     credit_val, debit_val = debit_val, 0
             elif reason in ["Invoice", "Credit Note"]:
+                # Invoices/Credit notes should hit Debit
                 if credit_val and not debit_val:
                     debit_val, credit_val = credit_val, 0
 
-            if debit_val == "" and credit_val == "":
+            # 8) Skip blanks/zeros
+            if (debit_val == "" or float(debit_val) == 0.0) and (credit_val == "" or float(credit_val) == 0.0):
+                # if both empty or zero, ignore noisy rows
                 continue
 
+            # 9) Append
             all_records.append({
                 "Alternative Document": alt_doc,
-                "Date": str(row.get("Date", "")).strip(),
-                "Reason": reason.title(),
+                "Date": date_str,
+                "Reason": reason,
                 "Debit": debit_val,
                 "Credit": credit_val,
                 "Balance": balance_val
@@ -229,7 +331,7 @@ if uploaded_pdf:
         st.text_area("📄 Preview (first 30 lines):", "\n".join(lines[:30]), height=300)
 
         if st.button("🤖 Run Hybrid Extraction", type="primary"):
-            with st.spinner("Analyzing with GPT..."):
+            with st.spinner("Analyzing with GPT + context repair..."):
                 data = extract_with_gpt(lines)
 
             if data:
