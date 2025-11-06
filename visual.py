@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import numpy as np
-from streamlit_plotly_events import plotly_events
 
 st.set_page_config(page_title="Overdue Invoices", layout="wide")
 st.markdown("""
@@ -198,7 +197,6 @@ if uploaded_file:
                      orientation='h', color_discrete_map={'Overdue': '#8B0000', 'Not Overdue': '#4682B4'},
                      title=f"{vendor_select} ({status_filter}) — {country_choice}",
                      height=max(500, len(plot_df) * 45))
-
         totals = plot_df.groupby('Vendor_Name')['Amount'].sum().reset_index()
         fig.add_scatter(x=totals['Amount'], y=totals['Vendor_Name'], mode='text',
                         text=totals['Amount'].apply(lambda x: f"€{x:,.0f}"),
@@ -207,22 +205,13 @@ if uploaded_file:
         fig.update_layout(xaxis_title="Amount (€)", yaxis_title="Vendor", legend_title="Status",
                           barmode='stack', plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
                           margin=dict(l=150, r=50, t=80, b=50))
+        chart = st.plotly_chart(fig, use_container_width=True, on_select="rerun")
 
-        # === CLICK HANDLING (UPDATED) ===
-        selected_points = plotly_events(
-            fig,
-            click_event=True,
-            hover_event=False,
-            select_event=False,
-            override_height=max(500, len(plot_df) * 45),
-            key="vendor_chart"
-        )
-
-        if selected_points:
-            st.session_state.clicked_vendor = selected_points[0]["y"]
+        # === CLICK HANDLING ===
+        if chart.selection and chart.selection['points']:
+            st.session_state.clicked_vendor = chart.selection['points'][0].get('y')
         else:
             st.session_state.clicked_vendor = None
-
         clicked_vendor = st.session_state.clicked_vendor
 
         # === FILTERED TABLE ===
