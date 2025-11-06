@@ -5,7 +5,21 @@ import numpy as np
 
 st.set_page_config(page_title="Overdue Invoices", layout="wide")
 st.title("💍 The Lord of the Debits 🧾\nOne invoice to rule them all, one invoice to find them,\nOne invoice to bring them all, and in the ledger bind them. ⚔️")
+st.markdown("""
+<h1 style='text-align:center;
+    font-family: "Cinzel Decorative", serif;
+    font-size: 38px;
+    color: goldenrod;
+    text-shadow: 2px 2px 6px #000000;'>
+💍 One Invoice to rule them all,<br>
+One Invoice to seek and find them,<br>
+One Invoice to bring them all,<br>
+And in the Ledger bind them ⚔️<br>
+<span style='font-size:24px; color:#d4af37;'>In the realm of Overdues, where the balances lie. 📜</span>
+</h1>
 
+<link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@700&display=swap" rel="stylesheet">
+""", unsafe_allow_html=True)
 
 
 # --- SESSION STATE ---
