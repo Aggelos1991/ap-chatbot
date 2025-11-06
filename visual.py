@@ -205,6 +205,12 @@ if uploaded_file:
         fig.update_layout(xaxis_title="Amount (€)", yaxis_title="Vendor", legend_title="Status",
                           barmode='stack', plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
                           margin=dict(l=150, r=50, t=80, b=50))
+                # === FORCE CHART REFRESH ON FILTER CHANGE ===
+        import hashlib
+        data_hash = hashlib.md5(pd.util.hash_pandas_object(base_df, index=True).values).hexdigest()[:8]
+        chart_key = f"{vendor_select}_{status_filter}_{country_choice}_{data_hash}"
+        st.session_state["chart_key"] = chart_key
+
         chart = st.plotly_chart(fig, use_container_width=True, on_select="rerun")
 
         # === CLICK HANDLING ===
