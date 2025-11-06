@@ -12,21 +12,7 @@ import pytesseract
 # ==========================================================
 st.set_page_config(page_title="🦅 DataFalcon Pro — Hybrid GPT+OCR Extractor", layout="wide")
 st.title("🦅 DataFalcon Pro — Hybrid GPT + OCR Extractor")
-st.markdown("""
-<h1 style='text-align:center;
-    font-family: "Cinzel Decorative", serif;
-    font-size: 38px;
-    color: goldenrod;
-    text-shadow: 2px 2px 6px #000000;'>
-💍 One Invoice to rule them all,<br>
-One Invoice to seek and find them,<br>
-One Invoice to bring them all,<br>
-And in the Ledger bind them ⚔️<br>
-<span style='font-size:24px; color:#d4af37;'>In the realm of Overdues, where the balances lie. 📜</span>
-</h1>
 
-<link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@700&display=swap" rel="stylesheet">
-""", unsafe_allow_html=True)
 
 
 # === Load environment ===
