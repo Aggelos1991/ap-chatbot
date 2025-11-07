@@ -9,7 +9,7 @@ from openpyxl.styles import Font, Alignment
 # CONFIG
 # ==========================================================
 st.set_page_config(page_title="Entersoft ERP Translation Audit", page_icon="🧠", layout="wide")
-st.title("🧠 Entersoft ERP Translation Audit — Full Auto Edition")
+st.title("🧠 Entersoft ERP Translation Audit — Fast Auto Edition")
 
 # ==========================================================
 # OPENAI
@@ -62,6 +62,8 @@ if not req_cols.issubset(df.columns):
     st.error(f"❌ Excel must contain columns: {req_cols}")
     st.stop()
 
+BATCH_SIZE = st.number_input("Batch size", min_value=10, max_value=200, value=50, step=10)
+
 # ==========================================================
 # HELPERS
 # ==========================================================
@@ -79,91 +81,94 @@ def quality_icon(score):
     return "🔴 Poor"
 
 # ==========================================================
-# MAIN AUDIT
+# MAIN AUDIT (BATCHED)
 # ==========================================================
-if st.button("🚀 Run Full Auto Audit"):
+if st.button("🚀 Run Fast Full Auto Audit"):
     results = []
     total = len(df)
     progress = st.progress(0)
     info = st.empty()
 
-    for i, r in df.iterrows():
-        rn, rd, fn = str(r["Report_Name"]).strip(), str(r["Report_Description"]).strip(), str(r["Field_Name"]).strip()
-        gr, en = str(r["Greek"]).strip(), str(r["English"]).strip()
-        if not en or en.lower() == "nan":
-            en = ""
+    for start in range(0, total, BATCH_SIZE):
+        end = min(start + BATCH_SIZE, total)
+        batch = df.iloc[start:end]
 
-        # ---------- Step 1: translate blank immediately ----------
-        if not en:
-            try:
-                tr = client.chat.completions.create(
-                    model=MODEL,
-                    messages=[{"role": "user",
-                               "content": f"Translate the following Greek ERP field into proper English ERP/accounting terminology:\n\n{gr}"}],
-                    temperature=0
-                )
-                en = tr.choices[0].message.content.strip()
-            except Exception as e:
-                st.warning(f"Translation failed at row {i}: {e}")
-                en = "(translation missing)"
+        # --- build text for this batch ---
+        batch_lines = []
+        for _, r in batch.iterrows():
+            rn = str(r["Report_Name"]).strip()
+            rd = str(r["Report_Description"]).strip()
+            fn = str(r["Field_Name"]).strip()
+            gr = str(r["Greek"]).strip()
+            en = str(r["English"]).strip()
+            if not en or en.lower() == "nan": en = ""
+            batch_lines.append(f"{rn} | {rd} | {fn} | {gr} | {en}")
 
-        # ---------- Step 2: audit quality ----------
+        joined = "\n".join(batch_lines)
+
+        # --- send one GPT request for the batch ---
         prompt = f"""
-You are an Entersoft ERP translation auditor.
-Compare directly the following pair and score the English quality conceptually.
+You are a senior ERP localization consultant specialized in Entersoft ERP and accounting terminology.
 
-Greek: {gr}
-English: {en}
+For each line below (Report_Name | Report_Description | Field_Name | Greek | English):
+1️⃣ If English is blank, translate Greek to ERP English.
+2️⃣ Judge conceptually (not literally).
+3️⃣ If translation weak (<70), improve it automatically.
+4️⃣ Prefer correct ERP/accounting English: Net Value, Posting Date, Credit Note, Cost Center, Ledger Account, VAT Amount, Warehouse, etc.
+5️⃣ Evaluate quality **based on Corrected_English** only (ignore old English).
 
-Use ERP/accounting context (Debit, Credit, Cost Center, VAT Amount, etc.)
 Statuses:
-1=Translated_Correct, 2=Translated_Not_Accurate, 3=Field_Not_Translated
+1 = Translated_Correct
+2 = Translated_Not_Accurate
+3 = Field_Not_Translated
+4 = Field_Not_Found_On_Report_View
 
-Output exactly:
-Corrected_English | Status | Status_Description | Score
+Output one line per input exactly as:
+Report_Name | Report_Description | Field_Name | Greek | English | Corrected_English | Status | Status_Description | Score
+
+Reference ERP glossary:
+{glossary_text}
+
+Now analyze:
+{joined}
 """
+
         try:
-            r2 = client.chat.completions.create(
+            resp = client.chat.completions.create(
                 model=MODEL,
-                messages=[{"role": "user", "content": prompt}],
+                messages=[
+                    {"role": "system", "content": "You are an ERP translation auditor."},
+                    {"role": "user", "content": prompt}
+                ],
                 temperature=0
             )
-            text = r2.choices[0].message.content.strip()
-            parts = [x.strip() for x in text.split("|")]
-            if len(parts) < 4:
-                corrected, status, desc, score = en, "Translated_Correct", "Auto assumed", "100"
-            else:
-                corrected, status, desc, score = parts[:4]
+            text = resp.choices[0].message.content
+            for ln in text.strip().splitlines():
+                p = [x.strip() for x in ln.split("|")]
+                if len(p) >= 9:
+                    results.append({
+                        "Report_Name": p[0],
+                        "Report_Description": p[1],
+                        "Field_Name": p[2],
+                        "Greek": p[3],
+                        "English": p[4],
+                        "Corrected_English": p[5],
+                        "Status": p[6],
+                        "Status_Description": p[7],
+                        "Score": p[8]
+                    })
         except Exception as e:
-            corrected, status, desc, score = en, "Error", str(e), "0"
+            st.warning(f"Batch {start}-{end} failed: {e}")
 
-        # ---------- Step 3: if weak (<70) → auto improve ----------
-        if extract_num(score) < 70:
-            try:
-                fix = client.chat.completions.create(
-                    model=MODEL,
-                    messages=[{"role": "user",
-                               "content": f"Improve this weak ERP translation to a correct, professional ERP/accounting English term:\n\nGreek: {gr}\nCurrent: {corrected}\nReturn only corrected term."}],
-                    temperature=0
-                )
-                corrected = fix.choices[0].message.content.strip()
-                status, desc, score = "Translated_Correct", "Auto-improved", "100"
-            except Exception as e:
-                st.warning(f"Auto-fix failed row {i}: {e}")
+        progress.progress(end / total)
+        info.write(f"Processed {end}/{total} rows...")
 
-        results.append(dict(
-            Report_Name=rn, Report_Description=rd, Field_Name=fn,
-            Greek=gr, English=r["English"], Corrected_English=corrected,
-            Status=status, Status_Description=desc, Score=score
-        ))
-        progress.progress((i + 1) / total)
-        info.write(f"Processed {i+1}/{total}")
-
+    # --- Post-process ---
     out = pd.DataFrame(results)
     out["Score"] = out["Score"].apply(extract_num)
     out["Quality"] = out["Score"].apply(quality_icon)
     st.session_state["audit_results"] = out
-    st.success("✅ Full audit + auto-translation complete.")
+    st.success("✅ Audit and auto-translation complete!")
     st.dataframe(out.head(30))
 
 # ==========================================================
@@ -184,10 +189,17 @@ if "audit_results" in st.session_state:
         ws.column_dimensions[col[0].column_letter].width = min(
             max(len(str(c.value or "")) for c in col) + 2, 60
         )
+
     buf = io.BytesIO(); wb.save(buf); buf.seek(0)
     st.download_button(
-        "📥 Download Final Excel (All Corrected)",
+        "📥 Download Final Excel (Optimized)",
         data=buf,
         file_name="erp_translation_audit_final.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
+
+    num = pd.to_numeric(out["Score"], errors="coerce")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("🟢 Excellent", (num >= 90).sum())
+    c2.metric("🟡 Review", ((num >= 70) & (num < 90)).sum())
+    c3.metric("🔴 Poor", (num < 70).sum())
