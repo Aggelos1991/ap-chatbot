@@ -5,7 +5,7 @@ import io, os, time
 
 # ================= CONFIG =================
 st.set_page_config(page_title="ERP Translation Audit", layout="wide")
-st.title("🧠 ERP Translation Audit Dashboard — With Glossary + Batch Support")
+st.title("🧠 ERP Translation Audit Dashboard")
 
 try:
     from dotenv import load_dotenv
@@ -33,7 +33,6 @@ glossary_text = ""
 glossary_file = st.file_uploader("Upload ERP Glossary (CSV)", type=["csv"], key="glossary")
 
 def load_glossary(df):
-    """Convert ERP glossary CSV to text pairs Greek → English"""
     df.columns = [c.strip().lower() for c in df.columns]
     greek_col = next((c for c in df.columns if "greek" in c or "ελλην" in c), None)
     eng_col = next((c for c in df.columns if "english" in c or "approved" in c), None)
@@ -57,51 +56,11 @@ else:
 st.subheader("📂 Upload Translations File")
 uploaded = st.file_uploader("Upload Excel or CSV containing translations", type=["xlsx", "csv"])
 
-# ================= GPT HELPERS =================
-def translate_with_gpt(text):
-    if not text or pd.isna(text):
-        return ""
-    try:
-        response = client.chat.completions.create(
-            model=MODEL,
-            messages=[
-                {"role": "system", "content": "You are an ERP translation expert specialized in accounting and Entersoft ERP terminology."},
-                {"role": "user", "content": f"Translate this ERP field name from Greek to professional ERP English, using context:\n\nERP Glossary:\n{glossary_text}\n\nText: {text}"}
-            ],
-            temperature=0
-        )
-        return response.choices[0].message.content.strip()
-    except Exception as e:
-        return f"Error: {e}"
-
-def evaluate_translation(greek, english):
-    if not english or english.strip() == "":
-        return 3, "Field_Not_Translated"
-    prompt = f"Does the English '{english}' accurately translate the Greek '{greek}' in ERP/accounting context? Reply only with Yes or No."
-    try:
-        resp = client.chat.completions.create(model=MODEL, messages=[{"role":"user","content":prompt}], temperature=0)
-        ans = resp.choices[0].message.content.strip().lower()
-        return (1, "Translated_Correct") if "yes" in ans else (2, "Translated_Not_Accurate")
-    except:
-        return 2, "Translated_Not_Accurate"
-
-def evaluate_quality(greek, corrected_english):
-    if not corrected_english or corrected_english.strip() == "":
-        return "Poor"
-    prompt = f"Evaluate if '{corrected_english}' correctly translates '{greek}' in ERP/accounting context. Respond only with Excellent, Review, or Poor."
-    try:
-        resp = client.chat.completions.create(model=MODEL, messages=[{"role":"user","content":prompt}], temperature=0)
-        q = resp.choices[0].message.content.strip().title()
-        return "Excellent" if "Excellent" in q else "Review" if "Review" in q else "Poor"
-    except:
-        return "Review"
-
-# ================= PROCESS =================
+# ================= MAIN PROCESS =================
 if uploaded and st.button("🚀 Run ERP Translation Audit"):
     df = pd.read_excel(uploaded) if uploaded.name.endswith(".xlsx") else pd.read_csv(uploaded)
-
-    # Normalize column names
     df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
+
     mapping = {}
     for col in df.columns:
         if "report" in col and "name" in col: mapping["Report_Name"] = col
@@ -119,53 +78,100 @@ if uploaded and st.button("🚀 Run ERP Translation Audit"):
     progress_bar = st.progress(0)
     results = []
 
+    # ============= BATCH LOOP =============
     for start in range(0, total, BATCH_SIZE):
         end = min(start + BATCH_SIZE, total)
         batch = df.iloc[start:end]
         progress_text.text(f"Processing batch {start+1}-{end} of {total}...")
 
+        # ---- Build prompt for whole batch ----
+        batch_text = ""
         for _, row in batch.iterrows():
-            greek = str(row[mapping["Greek"]]).strip()
-            english = str(row[mapping["English"]]).strip()
+            rn = str(row[mapping["Report_Name"]]).strip()
+            rd = str(row[mapping["Report_Description"]]).strip()
+            fn = str(row[mapping["Field_Name"]]).strip()
+            gr = str(row[mapping["Greek"]]).strip()
+            en = str(row[mapping["English"]]).strip()
+            if not en or en.lower() == "nan": en = ""
+            batch_text += f"{rn} | {rd} | {fn} | {gr} | {en}\n"
 
-            corrected = translate_with_gpt(greek)
-            status, status_desc = evaluate_translation(greek, english)
-            quality = evaluate_quality(greek, corrected)
+        prompt = f"""
+You are a professional ERP localization auditor specialized in Entersoft ERP and accounting terminology.
+Analyze each of the following entries (Report_Name | Report_Description | Field_Name | Greek | English).
 
-            results.append({
-                "Report_Name": row[mapping["Report_Name"]],
-                "Report_Description": row[mapping["Report_Description"]],
-                "Field_Name": row[mapping["Field_Name"]],
-                "Greek": greek,
-                "English": english,
-                "Corrected_English": corrected,
-                "Status": status,
-                "Status_Description": status_desc,
-                "Quality": quality
-            })
+Rules:
+1️⃣ If English is blank, translate the Greek into professional ERP/accounting English.
+2️⃣ If English exists, evaluate it against the Greek.
+3️⃣ Always evaluate accuracy based on the *Corrected English* (the new version).
+4️⃣ Return exactly one line per entry with these fields, separated by "|":
+Report_Name | Report_Description | Field_Name | Greek | English | Corrected_English | Status | Status_Description | Quality
+
+Statuses:
+1 = Translated_Correct
+2 = Translated_Not_Accurate
+3 = Field_Not_Translated
+
+Quality levels:
+🟢 Excellent — fully correct ERP term
+🟡 Review — acceptable but could improve
+🔴 Poor — inaccurate or missing
+
+ERP Glossary reference:
+{glossary_text}
+
+Now analyze:
+{batch_text}
+""".strip()
+
+        # ---- GPT call (single batch) ----
+        try:
+            resp = client.chat.completions.create(
+                model=MODEL,
+                messages=[
+                    {"role": "system", "content": "You are an ERP translation auditor."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0
+            )
+
+            text = resp.choices[0].message.content.strip()
+            for line in text.splitlines():
+                parts = [x.strip() for x in line.split("|")]
+                if len(parts) >= 9:
+                    results.append({
+                        "Report_Name": parts[0],
+                        "Report_Description": parts[1],
+                        "Field_Name": parts[2],
+                        "Greek": parts[3],
+                        "English": parts[4],
+                        "Corrected_English": parts[5],
+                        "Status": parts[6],
+                        "Status_Description": parts[7],
+                        "Quality": parts[8]
+                    })
+
+        except Exception as e:
+            st.warning(f"⚠️ Batch {start}-{end} failed: {e}")
 
         progress_bar.progress(end / total)
         time.sleep(0.1)
 
-    progress_bar.empty()
-    progress_text.empty()
-
-    final_df = pd.DataFrame(results)
-    st.success("✅ Audit completed successfully.")
+    # ============= FINAL OUTPUT =============
+    out = pd.DataFrame(results)
+    st.success("✅ Fast Audit completed successfully.")
+    st.dataframe(out.head(30), use_container_width=True)
 
     # Summary
-    weak_rows = final_df[final_df["Quality"].isin(["Review", "Poor"])]
+    weak_rows = out[out["Quality"].str.contains("Review|Poor", na=False)]
     if not weak_rows.empty:
         st.warning(f"⚠️ {len(weak_rows)} weak translations found (<Excellent).")
 
-    st.dataframe(final_df, use_container_width=True)
-
     # Download
     output = io.BytesIO()
-    final_df.to_excel(output, index=False)
+    out.to_excel(output, index=False)
     st.download_button(
-        "💾 Download Final Excel (with Glossary + Batching)",
+        "💾 Download Final Excel (Ultra Fast)",
         data=output.getvalue(),
-        file_name="ERP_Translation_Audit_Final.xlsx",
+        file_name="ERP_Translation_Audit_Fast.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
