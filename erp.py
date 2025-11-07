@@ -7,7 +7,7 @@ import os
 
 # === STREAMLIT CONFIG ===
 st.set_page_config(page_title="Entersoft ERP Translation Audit", page_icon="🧠", layout="wide")
-st.title("🧠 Entersoft AI Translation Audit — Final Version")
+st.title("🧠 Entersoft AI Translation Audit — Scoring + Auto-Improvement")
 
 # === OPENAI SETUP ===
 api_key = st.text_input("🔑 Enter your OpenAI API key:", type="password")
@@ -37,22 +37,18 @@ if not uploaded_file:
 df = pd.read_excel(uploaded_file)
 st.write(f"✅ File loaded successfully — {len(df)} rows detected.")
 
-# Validate required columns
-required_cols = {"Report_Name", "Report_Description", "Field_Name", "Greek", "English"}
-if not required_cols.issubset(df.columns):
-    st.error(f"❌ Excel must contain these columns: {required_cols}")
-    st.stop()
-
 # === PARAMETERS ===
 BATCH_SIZE = st.number_input("Batch size (recommended 50–100)", value=50, step=10)
+AUTO_RETRANSLATE = st.checkbox("♻️ Auto-retranslate rows with score < 70", value=True)
 results = []
 
+# === PARSER ===
 def parse_ai_output(text):
     """Parses GPT output from pipe-separated lines"""
     out = []
     for line in text.strip().splitlines():
         parts = [p.strip() for p in line.split("|")]
-        if len(parts) >= 8:
+        if len(parts) >= 9:
             out.append({
                 "Report_Name": parts[0],
                 "Report_Description": parts[1],
@@ -61,7 +57,8 @@ def parse_ai_output(text):
                 "English": parts[4],
                 "Corrected_English": parts[5],
                 "Status": parts[6],
-                "Status_Description": "|".join(parts[7:])
+                "Status_Description": parts[7],
+                "Score": parts[8]
             })
     return out
 
@@ -82,7 +79,7 @@ if st.button("🚀 Run ERP AI Audit"):
             greek = str(row["Greek"]).strip()
             english = str(row["English"]).strip()
 
-            # 🧠 If English is blank or NaN, keep it blank — but GPT should still translate Greek
+            # 🧠 If English is blank or NaN, keep it blank — GPT translates Greek in Corrected_English
             if not english or english.lower() == "nan":
                 english = ""
 
@@ -106,11 +103,17 @@ Statuses:
 3 = Field_Not_Translated (English missing or incomplete — translate Greek professionally into ERP English)
 4 = Field_Not_Found_On_Report_View (irrelevant)
 
-If the English field is blank or missing, translate the Greek text into correct ERP/Accounting English terminology and place it in the Corrected_English column.
-Do NOT modify the original English column — leave it empty if it was empty.
+Scoring logic (0–100):
+- 90–100 → Excellent (perfect ERP term)
+- 70–89 → Good (minor nuance)
+- 50–69 → Fair (literal or partial)
+- Below 50 → Poor (misleading or wrong)
+
+If English is blank, translate Greek into correct ERP English, put it ONLY in Corrected_English.
+Do NOT change the English column.
 
 Return each row in exactly this format:
-Report_Name | Report_Description | Field_Name | Greek | English | Corrected_English | Status | Status_Description
+Report_Name | Report_Description | Field_Name | Greek | English | Corrected_English | Status | Status_Description | Score
 
 Now analyze:
 {joined}
@@ -118,7 +121,7 @@ Now analyze:
 
         try:
             resp = client.chat.completions.create(
-                model="gpt-4o-mini",  # ✅ cost-efficient
+                model="gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": "You are a strict ERP translation auditor. Respond only in the requested format."},
                     {"role": "user", "content": prompt}
@@ -142,17 +145,52 @@ Now analyze:
                     "English": row["English"],
                     "Corrected_English": "",
                     "Status": 0,
-                    "Status_Description": f"Error: {e}"
+                    "Status_Description": f"Error: {e}",
+                    "Score": 0
                 })
 
     out = pd.DataFrame(results)
+
+    # === AUTO RETRANSLATION FOR LOW SCORES ===
+    if AUTO_RETRANSLATE and "Score" in out.columns:
+        low_rows = out[out["Score"].astype(float) < 70]
+        if not low_rows.empty:
+            st.warning(f"♻️ Retranslating {len(low_rows)} low-score rows (<70)...")
+            for idx, row in low_rows.iterrows():
+                try:
+                    re_prompt = f"Improve the following translation to perfect ERP English:\nGreek: {row['Greek']}\nCurrent: {row['Corrected_English']}"
+                    fix = client.chat.completions.create(
+                        model="gpt-4o-mini",
+                        messages=[{"role": "user", "content": re_prompt}],
+                        temperature=0
+                    )
+                    out.at[idx, "Corrected_English"] = fix.choices[0].message.content.strip()
+                    out.at[idx, "Score"] = 90  # assume corrected version is now excellent
+                    out.at[idx, "Status_Description"] += " | Auto-improved"
+                except Exception as e:
+                    st.warning(f"Could not retranslate row {idx}: {e}")
+
+    # === COLOR HIGHLIGHTING ===
+    def color_rows(row):
+        try:
+            score = float(row["Score"])
+        except:
+            score = 0
+        if score >= 90:
+            color = "#ccffcc"  # green
+        elif score >= 70:
+            color = "#fff5cc"  # yellow
+        else:
+            color = "#ffcccc"  # red
+        return [f"background-color: {color}"] * len(row)
+
+    st.success("✅ ERP Audit completed successfully!")
 
     # === EXPORT TO EXCEL ===
     buffer = io.BytesIO()
     out.to_excel(buffer, index=False, engine="openpyxl")
     buffer.seek(0)
 
-    st.success("✅ ERP Audit completed successfully!")
     st.download_button(
         "📥 Download Results Excel",
         data=buffer,
@@ -160,4 +198,4 @@ Now analyze:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
-    st.dataframe(out)
+    st.dataframe(out.style.apply(color_rows, axis=1))
