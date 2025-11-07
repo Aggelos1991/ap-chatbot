@@ -9,7 +9,7 @@ from openpyxl.styles import Font, Alignment
 # CONFIG
 # ==========================================================
 st.set_page_config(page_title="Entersoft ERP Translation Audit", page_icon="🧠", layout="wide")
-st.title("🧠 Entersoft ERP Translation Audit — Fast Auto Edition")
+st.title("🧠 Entersoft ERP Translation Audit — Optimized Batch Edition")
 
 # ==========================================================
 # OPENAI
@@ -19,28 +19,6 @@ if not api_key:
     st.stop()
 client = OpenAI(api_key=api_key)
 MODEL = "gpt-4o-mini"
-
-# ==========================================================
-# OPTIONAL GLOSSARY
-# ==========================================================
-def load_glossary(df):
-    df.columns = [c.strip().lower() for c in df.columns]
-    g = next((c for c in df.columns if "greek" in c or "ελλην" in c), None)
-    e = next((c for c in df.columns if "approved" in c or "english" in c), None)
-    if g and e:
-        return "\n".join([f"{row[g]} → {row[e]}" for _, row in df.iterrows()])
-    return ""
-
-glossary_text = ""
-upl = st.file_uploader("📘 (Optional) Upload ERP glossary CSV", type=["csv"])
-if upl:
-    glossary_df = pd.read_csv(upl)
-    glossary_text = load_glossary(glossary_df)
-elif os.path.exists("erp_glossary.csv"):
-    glossary_df = pd.read_csv("erp_glossary.csv")
-    glossary_text = load_glossary(glossary_df)
-else:
-    glossary_text = "(no glossary provided)"
 
 # ==========================================================
 # SOURCE EXCEL
@@ -62,30 +40,16 @@ if not req_cols.issubset(df.columns):
     st.error(f"❌ Excel must contain columns: {req_cols}")
     st.stop()
 
-BATCH_SIZE = st.number_input("Batch size", min_value=10, max_value=200, value=50, step=10)
-
-# ==========================================================
-# HELPERS
-# ==========================================================
-def extract_num(s):
-    try:
-        n = "".join(ch for ch in str(s) if ch.isdigit() or ch == ".")
-        return float(n) if n else 0
-    except:
-        return 0.0
-
-def quality_icon(score):
-    s = extract_num(score)
-    if s >= 90: return "🟢 Excellent"
-    if s >= 70: return "🟡 Review"
-    return "🔴 Poor"
-
 # ==========================================================
 # MAIN AUDIT (BATCHED)
 # ==========================================================
-if st.button("🚀 Run Fast Full Auto Audit"):
+if st.button("🚀 Run Full Auto Audit (Optimized)"):
     results = []
     total = len(df)
+
+    # ✅ Added: dynamic batch size input
+    BATCH_SIZE = st.number_input("Batch size (rows per GPT call)", min_value=10, max_value=200, value=50, step=10)
+
     progress = st.progress(0)
     info = st.empty()
 
@@ -93,7 +57,7 @@ if st.button("🚀 Run Fast Full Auto Audit"):
         end = min(start + BATCH_SIZE, total)
         batch = df.iloc[start:end]
 
-        # --- build text for this batch ---
+        # --- build batch text ---
         batch_lines = []
         for _, r in batch.iterrows():
             rn = str(r["Report_Name"]).strip()
@@ -101,35 +65,24 @@ if st.button("🚀 Run Fast Full Auto Audit"):
             fn = str(r["Field_Name"]).strip()
             gr = str(r["Greek"]).strip()
             en = str(r["English"]).strip()
-            if not en or en.lower() == "nan": en = ""
+            if not en or en.lower() == "nan":
+                en = ""
             batch_lines.append(f"{rn} | {rd} | {fn} | {gr} | {en}")
 
         joined = "\n".join(batch_lines)
 
-        # --- send one GPT request for the batch ---
+        # --- one GPT call for the whole batch ---
         prompt = f"""
-You are a senior ERP localization consultant specialized in Entersoft ERP and accounting terminology.
-
+You are an Entersoft ERP translation auditor.
 For each line below (Report_Name | Report_Description | Field_Name | Greek | English):
+
 1️⃣ If English is blank, translate Greek to ERP English.
-2️⃣ Judge conceptually (not literally).
-3️⃣ If translation weak (<70), improve it automatically.
-4️⃣ Prefer correct ERP/accounting English: Net Value, Posting Date, Credit Note, Cost Center, Ledger Account, VAT Amount, Warehouse, etc.
-5️⃣ Evaluate quality **based on Corrected_English** only (ignore old English).
+2️⃣ Assess if translation is correct, not accurate, or missing.
+3️⃣ If weak (<70), improve it automatically.
 
-Statuses:
-1 = Translated_Correct
-2 = Translated_Not_Accurate
-3 = Field_Not_Translated
-4 = Field_Not_Found_On_Report_View
-
-Output one line per input exactly as:
+Output one line per input EXACTLY as:
 Report_Name | Report_Description | Field_Name | Greek | English | Corrected_English | Status | Status_Description | Score
-
-Reference ERP glossary:
-{glossary_text}
-
-Now analyze:
+---
 {joined}
 """
 
@@ -163,12 +116,28 @@ Now analyze:
         progress.progress(end / total)
         info.write(f"Processed {end}/{total} rows...")
 
-    # --- Post-process ---
+    # === Final processing ===
     out = pd.DataFrame(results)
+
+    def extract_num(s):
+        try:
+            return float("".join(ch for ch in str(s) if ch.isdigit() or ch == "."))
+        except:
+            return 0.0
+
     out["Score"] = out["Score"].apply(extract_num)
+
+    def quality_icon(score):
+        if score >= 90:
+            return "🟢 Excellent"
+        if score >= 70:
+            return "🟡 Review"
+        return "🔴 Poor"
+
     out["Quality"] = out["Score"].apply(quality_icon)
+
     st.session_state["audit_results"] = out
-    st.success("✅ Audit and auto-translation complete!")
+    st.success("✅ Optimized audit complete.")
     st.dataframe(out.head(30))
 
 # ==========================================================
@@ -183,14 +152,19 @@ if "audit_results" in st.session_state:
     for c in ws[1]:
         c.font = Font(bold=True)
         c.alignment = Alignment(horizontal="center")
+
     for _, r in out.iterrows():
         ws.append([r[col] for col in out.columns])
+
     for col in ws.columns:
         ws.column_dimensions[col[0].column_letter].width = min(
             max(len(str(c.value or "")) for c in col) + 2, 60
         )
 
-    buf = io.BytesIO(); wb.save(buf); buf.seek(0)
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
     st.download_button(
         "📥 Download Final Excel (Optimized)",
         data=buf,
