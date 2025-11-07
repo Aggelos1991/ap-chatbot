@@ -4,12 +4,13 @@ from openai import OpenAI
 import io, os
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment
+from difflib import SequenceMatcher
 
 # ==========================================================
 # CONFIG
 # ==========================================================
 st.set_page_config(page_title="Entersoft ERP Translation Audit", page_icon="🧠", layout="wide")
-st.title("🧠 Entersoft ERP Translation Audit — Full Auto Edition")
+st.title("🧠 Entersoft ERP Translation Audit — Status From Greek vs English Edition")
 
 # ==========================================================
 # OPENAI
@@ -78,6 +79,23 @@ def quality_icon(score):
     if s >= 70: return "🟡 Review"
     return "🔴 Poor"
 
+def similarity(a, b):
+    return SequenceMatcher(None, str(a).lower().strip(), str(b).lower().strip()).ratio()
+
+def get_status(greek, english):
+    """Compare Greek vs English to classify translation status."""
+    if not greek or str(greek).lower() == "nan":
+        return "Field_Not_Found_On_Report_View"
+    if not english or str(english).lower() == "nan":
+        return "Field_Not_Translated"
+    sim = similarity(greek, english)
+    if sim > 0.75:
+        return "Translated_Correct"
+    elif sim > 0.35:
+        return "Translated_Not_Accurate"
+    else:
+        return "Field_Not_Translated"
+
 # ==========================================================
 # BATCH SIZE SELECTOR
 # ==========================================================
@@ -117,20 +135,15 @@ if st.button("🚀 Run Full Auto Audit"):
                     st.warning(f"Translation failed at row {i}: {e}")
                     en = "(translation missing)"
 
-            # ---------- Step 2: audit quality ----------
+            # ---------- Step 2: determine STATUS only from Greek ↔ English ----------
+            status = get_status(gr, en)
+
+            # ---------- Step 3: audit quality for corrected term ----------
             prompt = f"""
 You are an Entersoft ERP translation auditor.
-Compare directly the following pair and score the English quality conceptually.
-
 Greek: {gr}
 English: {en}
-
-Use ERP/accounting context (Debit, Credit, Cost Center, VAT Amount, etc.)
-Statuses:
-1=Translated_Correct, 2=Translated_Not_Accurate, 3=Field_Not_Translated
-
-Output exactly:
-Corrected_English | Status | Status_Description | Score
+Determine the correct ERP/accounting English term and return only the improved translation.
 """
             try:
                 r2 = client.chat.completions.create(
@@ -138,33 +151,15 @@ Corrected_English | Status | Status_Description | Score
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0
                 )
-                text = r2.choices[0].message.content.strip()
-                parts = [x.strip() for x in text.split("|")]
-                if len(parts) < 4:
-                    corrected, status, desc, score = en, "Translated_Correct", "Auto assumed", "100"
-                else:
-                    corrected, status, desc, score = parts[:4]
-            except Exception as e:
-                corrected, status, desc, score = en, "Error", str(e), "0"
+                corrected = r2.choices[0].message.content.strip()
+            except Exception:
+                corrected = en
 
-            # ---------- Step 3: if weak (<70) → auto improve ----------
-            if extract_num(score) < 70:
-                try:
-                    fix = client.chat.completions.create(
-                        model=MODEL,
-                        messages=[{"role": "user",
-                                   "content": f"Improve this weak ERP translation to a correct, professional ERP/accounting English term:\n\nGreek: {gr}\nCurrent: {corrected}\nReturn only corrected term."}],
-                        temperature=0
-                    )
-                    corrected = fix.choices[0].message.content.strip()
-                    status, desc, score = "Translated_Correct", "Auto-improved", "100"
-                except Exception as e:
-                    st.warning(f"Auto-fix failed row {i}: {e}")
-
+            score = 100 if status == "Translated_Correct" else 85 if status == "Translated_Not_Accurate" else 0
             results.append(dict(
                 Report_Name=rn, Report_Description=rd, Field_Name=fn,
                 Greek=gr, English=r["English"], Corrected_English=corrected,
-                Status=status, Status_Description=desc, Score=score
+                Status=status, Score=score
             ))
             progress.progress(end / total)
             info.write(f"Processed {end}/{total} rows...")
@@ -173,7 +168,7 @@ Corrected_English | Status | Status_Description | Score
     out["Score"] = out["Score"].apply(extract_num)
     out["Quality"] = out["Score"].apply(quality_icon)
     st.session_state["audit_results"] = out
-    st.success("✅ Full audit + auto-translation complete.")
+    st.success("✅ Full audit + status from Greek-English comparison complete.")
     st.dataframe(out.head(30))
 
 # ==========================================================
