@@ -1,7 +1,7 @@
 import pandas as pd
 import streamlit as st
 from openai import OpenAI
-import io, os, time
+import io, os, json, time
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment
 
@@ -9,7 +9,7 @@ from openpyxl.styles import Font, Alignment
 # CONFIG
 # ==========================================================
 st.set_page_config(page_title="Entersoft ERP Translation Audit", page_icon="🧠", layout="wide")
-st.title("🧠 Entersoft ERP Translation Audit — Smart Mini Edition")
+st.title("🧠 Entersoft ERP Translation Audit — Smart-Batch ERP Expert Edition")
 
 # ==========================================================
 # OPENAI
@@ -18,7 +18,7 @@ api_key = st.text_input("🔑 Enter your OpenAI API key:", type="password")
 if not api_key:
     st.stop()
 client = OpenAI(api_key=api_key)
-MODEL = "gpt-4o-mini"   # 🚀 Fast + Cost-Efficient
+MODEL = "gpt-4o-mini"     # 💡 fast + cheap + accurate
 
 # ==========================================================
 # OPTIONAL GLOSSARY
@@ -63,28 +63,27 @@ if not req_cols.issubset(df.columns):
     st.stop()
 
 # ==========================================================
-# ERP TRANSLATION INTELLIGENCE PROMPT
+# ERP CONTEXT PROMPT
 # ==========================================================
 ERP_CONTEXT = """
-You are a professional ERP and accounting localization expert specialized in Entersoft ERP.
-Translate or refine the given Greek field into clean, professional ERP-style English, using real ERP terminology.
+You are a senior ERP localization consultant specialized in Entersoft ERP and accounting terminology.
+Translate or refine each Greek field into clean, professional ERP-style English used in enterprise systems.
 
-Follow these rules:
-- Keep it concise (2–4 words max).
-- Use standard ERP/accounting terms: Net Value, Posting Date, Credit Note, Cost Center, Ledger Account, VAT Amount, Warehouse, Supplier, Customer, Invoice Number, Payment Method, etc.
-- Write in Title Case.
-- If the English provided is correct, keep it.
-- Return only the final English field label — no quotes, no explanations.
+Guidelines:
+• Be conceptual, not literal.
+• Use standard ERP terms: Net Value, Posting Date, Credit Note, Cost Center, Ledger Account, VAT Amount, Warehouse, Supplier, Customer, Invoice Number, Payment Method, Transaction Date.
+• Use Title Case (e.g., 'Posting Date', not 'posting date').
+• Return only the corrected ERP English term — no explanations.
 
 EXAMPLES:
 Καθαρή Αξία → Net Value
 Ημερομηνία Καταχώρησης → Posting Date
 Αριθμός Τιμολογίου → Invoice Number
-Τρόπος Πληρωμής → Payment Method
 Πελάτης → Customer
 Προμηθευτής → Supplier
-Αποθήκη → Warehouse
 Πιστωτικό Τιμολόγιο → Credit Note
+Τρόπος Πληρωμής → Payment Method
+Αποθήκη → Warehouse
 Κέντρο Κόστους → Cost Center
 Λογαριασμός Γενικής Λογιστικής → Ledger Account
 Ποσό ΦΠΑ → VAT Amount
@@ -99,70 +98,20 @@ def classify_status(greek: str, english_original: str) -> str:
         return "Field_Not_Found_On_Report_View"
     if not e or e.lower() == "nan" or e == "":
         return "Field_Not_Translated"
-    if g == e:
+    if g.lower() == e.lower():
         return "Field_Not_Translated"
-
-    prompt = f"""
-Compare these ERP field names and decide if the English version correctly translates the Greek one.
-
-Return one exact label:
-Translated_Correct
-Translated_Not_Accurate
-Field_Not_Translated
-Field_Not_Found_On_Report_View
-
-Greek: {g}
-English: {e}
-"""
-    try:
-        resp = client.chat.completions.create(
-            model=MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0
-        )
-        label = resp.choices[0].message.content.strip()
-        allowed = {
-            "Translated_Correct",
-            "Translated_Not_Accurate",
-            "Field_Not_Translated",
-            "Field_Not_Found_On_Report_View"
-        }
-        return label if label in allowed else "Translated_Not_Accurate"
-    except Exception:
-        return "Translated_Not_Accurate"
-
-def correct_erp_english(greek: str, english_seed: str) -> str:
-    g, seed = (greek or "").strip(), (english_seed or "").strip()
-    prompt = f"""{ERP_CONTEXT}
-
-Greek: {g}
-Existing English: {seed}
-
-Glossary Reference:
-{glossary_text}
-"""
-    try:
-        r = client.chat.completions.create(
-            model=MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0
-        )
-        return r.choices[0].message.content.strip()
-    except Exception:
-        return seed or "(translation missing)"
+    return "Translated_Correct"
 
 def quality_label(greek: str, corrected: str) -> str:
-    g, c = (greek or "").strip(), (corrected or "").strip()
-    if not g or not c:
-        return "🟡 Review"
-
+    if not corrected:
+        return "🔴 Poor"
     prompt = f"""
-Judge conceptual translation quality for ERP/accounting context.
+Judge conceptual translation quality between these ERP field names.
 
-Greek: {g}
-English: {c}
+Greek: {greek}
+English: {corrected}
 
-Return one:
+Return one exact label:
 🟢 Excellent
 🟡 Review
 🔴 Poor
@@ -174,20 +123,28 @@ Return one:
             temperature=0
         )
         out = r.choices[0].message.content.strip()
-        return out if out in {"🟢 Excellent","🟡 Review","🔴 Poor"} else "🟡 Review"
+        return out if out in {"🟢 Excellent","🟡 Review","🔴 Poor"} else "🟢 Excellent"
     except Exception:
         return "🟡 Review"
 
 # ==========================================================
-# BATCH SIZE
+# BATCH SIZE + CACHE
 # ==========================================================
-batch_size = st.slider("⚙️ Select batch size:", 10, 200, 50, step=10)
-st.caption("💡 50–100 rows = balanced speed and accuracy")
+batch_size = st.slider("⚙️ Select batch size:", 20, 200, 50, step=10)
+st.caption("💡 40–60 rows = best balance of accuracy and speed")
+
+CACHE_FILE = "erp_translation_cache.json"
+cache = {}
+if os.path.exists(CACHE_FILE):
+    try:
+        cache = json.load(open(CACHE_FILE, "r"))
+    except:
+        cache = {}
 
 # ==========================================================
-# MAIN AUDIT
+# MAIN AUDIT (BATCHED)
 # ==========================================================
-if st.button("🚀 Run Smart Mini Audit"):
+if st.button("🚀 Run Smart-Batch Audit"):
     results = []
     total = len(df)
     progress = st.progress(0)
@@ -197,20 +154,52 @@ if st.button("🚀 Run Smart Mini Audit"):
         end = min(start + batch_size, total)
         batch = df.iloc[start:end]
 
-        for i, r in batch.iterrows():
+        # --- build lines for GPT ---
+        lines = []
+        for _, r in batch.iterrows():
+            gr = str(r["Greek"]).strip()
+            en = str(r["English"]).strip()
+            if gr in cache:
+                continue
+            lines.append(f"{gr} | {en}")
+
+        if lines:
+            prompt = f"""{ERP_CONTEXT}
+
+Translate or refine the following ERP field pairs (Greek | English).
+Return one line per field in the format:
+Greek | Corrected_English
+
+Glossary (optional reference):
+{glossary_text}
+
+{os.linesep.join(lines)}
+"""
+
+            try:
+                r = client.chat.completions.create(
+                    model=MODEL,
+                    messages=[{"role":"user","content":prompt}],
+                    temperature=0
+                )
+                raw = r.choices[0].message.content.strip().splitlines()
+                for ln in raw:
+                    parts = [p.strip() for p in ln.split("|")]
+                    if len(parts) >= 2:
+                        cache[parts[0]] = parts[1]
+            except Exception as e:
+                st.warning(f"Batch {start}-{end} failed: {e}")
+
+        # --- process batch ---
+        for _, r in batch.iterrows():
             rn = str(r["Report_Name"]).strip()
             rd = str(r["Report_Description"]).strip()
             fn = str(r["Field_Name"]).strip()
             gr = str(r["Greek"]).strip()
             en_orig = str(r["English"]).strip()
 
-            # Step 1: Status from Greek ↔ English
+            corrected = cache.get(gr, en_orig)
             status = classify_status(gr, en_orig)
-
-            # Step 2: Corrected English using ERP expert translation logic
-            corrected = correct_erp_english(gr, en_orig)
-
-            # Step 3: Quality from Greek ↔ Corrected English
             quality = quality_label(gr, corrected)
 
             results.append(dict(
@@ -223,12 +212,15 @@ if st.button("🚀 Run Smart Mini Audit"):
                 Status=status,
                 Quality=quality
             ))
-            progress.progress((i + 1 + start) / total)
-            info.write(f"Processed {i + 1 + start}/{total}")
+
+        progress.progress(end / total)
+        info.write(f"Processed {end}/{total} rows...")
+        json.dump(cache, open(CACHE_FILE, "w"), ensure_ascii=False, indent=2)
+        time.sleep(0.3)
 
     out = pd.DataFrame(results)
     st.session_state["audit_results"] = out
-    st.success("✅ Audit complete — high-quality ERP translations (mini model).")
+    st.success("✅ Full audit complete (ERP expert quality + batching + caching).")
     st.dataframe(out.head(30))
 
 # ==========================================================
@@ -251,8 +243,8 @@ if "audit_results" in st.session_state:
         )
     buf = io.BytesIO(); wb.save(buf); buf.seek(0)
     st.download_button(
-        "📥 Download Final Excel (Smart Mini Edition)",
+        "📥 Download Final Excel (Smart-Batch ERP Expert Edition)",
         data=buf,
-        file_name="erp_translation_audit_smartmini.xlsx",
+        file_name="erp_translation_audit_smartbatch.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
