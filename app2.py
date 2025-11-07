@@ -206,6 +206,8 @@ def match_invoices(erp_df, ven_df):
             if v_idx in used_vendor:
                 continue
             v_inv = str(v.get("invoice_ven", "")).strip()
+            if clean_invoice_code(e_inv) == clean_invoice_code(v_inv):
+                e_inv = v_inv
             v_amt = round(float(v.get("__amt", 0.0)), 2)
             v_typ = v.get("__type", "INV")
             if e_typ != v_typ or e_inv != v_inv:
