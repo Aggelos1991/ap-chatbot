@@ -65,6 +65,11 @@ if not uploaded_file:
 df = pd.read_excel(uploaded_file)
 st.write(f"✅ File loaded successfully — {len(df)} rows detected.")
 
+#remove this for live
+if st.checkbox("Run only first 30 rows (test mode)", value=True):
+    df = df.head(30)
+    st.warning("⚠️ Audit limited to first 30 rows for testing.")
+    #remove this for live
 required_cols = {"Report_Name", "Report_Description", "Field_Name", "Greek", "English"}
 if not required_cols.issubset(df.columns):
     st.error(f"❌ Excel must contain these columns: {required_cols}")
