@@ -4,10 +4,13 @@ from openai import OpenAI
 import time
 import io
 import os
+from openpyxl import Workbook
+from openpyxl.utils.dataframe import dataframe_to_rows
+from openpyxl.styles import Font, Alignment
 
 # === STREAMLIT CONFIG ===
 st.set_page_config(page_title="Entersoft ERP Translation Audit", page_icon="🧠", layout="wide")
-st.title("🧠 Entersoft AI Translation Audit — Scoring + Auto-Improvement")
+st.title("🧠 Entersoft AI Translation Audit — Final Version with Scoring & Icons")
 
 # === OPENAI SETUP ===
 api_key = st.text_input("🔑 Enter your OpenAI API key:", type="password")
@@ -36,6 +39,12 @@ if not uploaded_file:
 
 df = pd.read_excel(uploaded_file)
 st.write(f"✅ File loaded successfully — {len(df)} rows detected.")
+
+# Validate required columns
+required_cols = {"Report_Name", "Report_Description", "Field_Name", "Greek", "English"}
+if not required_cols.issubset(df.columns):
+    st.error(f"❌ Excel must contain these columns: {required_cols}")
+    st.stop()
 
 # === PARAMETERS ===
 BATCH_SIZE = st.number_input("Batch size (recommended 50–100)", value=50, step=10)
@@ -158,44 +167,65 @@ Now analyze:
             st.warning(f"♻️ Retranslating {len(low_rows)} low-score rows (<70)...")
             for idx, row in low_rows.iterrows():
                 try:
-                    re_prompt = f"Improve the following translation to perfect ERP English:\nGreek: {row['Greek']}\nCurrent: {row['Corrected_English']}"
+                    re_prompt = f"Improve this ERP translation:\nGreek: {row['Greek']}\nCurrent: {row['Corrected_English']}\nReturn only the improved English."
                     fix = client.chat.completions.create(
                         model="gpt-4o-mini",
                         messages=[{"role": "user", "content": re_prompt}],
                         temperature=0
                     )
                     out.at[idx, "Corrected_English"] = fix.choices[0].message.content.strip()
-                    out.at[idx, "Score"] = 90  # assume corrected version is now excellent
+                    out.at[idx, "Score"] = 90
                     out.at[idx, "Status_Description"] += " | Auto-improved"
                 except Exception as e:
                     st.warning(f"Could not retranslate row {idx}: {e}")
 
-    # === COLOR HIGHLIGHTING ===
-    def color_rows(row):
+    # === ADD QUALITY ICON COLUMN ===
+    def quality_icon(score):
         try:
-            score = float(row["Score"])
+            s = float(score)
         except:
-            score = 0
-        if score >= 90:
-            color = "#ccffcc"  # green
-        elif score >= 70:
-            color = "#fff5cc"  # yellow
+            return "⚪ Unknown"
+        if s >= 90:
+            return "🟢 Excellent"
+        elif s >= 70:
+            return "🟡 Review"
         else:
-            color = "#ffcccc"  # red
-        return [f"background-color: {color}"] * len(row)
+            return "🔴 Poor"
+
+    out["Quality"] = out["Score"].apply(quality_icon)
+
+    # === EXCEL EXPORT WITH ICONS ===
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "ERP Translation Audit"
+
+    # Write header
+    ws.append(list(out.columns))
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+        cell.alignment = Alignment(horizontal="center")
+
+    # Write rows
+    for _, row in out.iterrows():
+        ws.append(list(row))
+
+    # Adjust column widths
+    for col in ws.columns:
+        max_length = max(len(str(cell.value or "")) for cell in col)
+        ws.column_dimensions[col[0].column_letter].width = max_length + 2
+
+    # Save to memory
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
 
     st.success("✅ ERP Audit completed successfully!")
 
-    # === EXPORT TO EXCEL ===
-    buffer = io.BytesIO()
-    out.to_excel(buffer, index=False, engine="openpyxl")
-    buffer.seek(0)
-
     st.download_button(
-        "📥 Download Results Excel",
+        "📥 Download Excel with Quality Icons",
         data=buffer,
-        file_name="erp_translation_audit_results.xlsx",
+        file_name="erp_translation_audit_final.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
-    st.dataframe(out.style.apply(color_rows, axis=1))
+    st.dataframe(out)
