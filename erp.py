@@ -26,10 +26,7 @@ client = OpenAI(api_key=api_key)
 MODEL = "gpt-4o-mini"
 
 # ============ BATCH SIZE ============
-BATCH_SIZE = st.number_input("⚙️ GPT batch size (recommended 30–100)", value=80, min_value=10, max_value=200, step=10)
-
-# ============ TEST MODE ============
-run_test = st.checkbox("🧪 Run only first 30 rows (test mode)", value=True)
+BATCH_SIZE = st.number_input("⚙️ GPT batch size (recommended 50-100)", value=80, min_value=10, max_value=200, step=10)
 
 # ============ GLOSSARY ============
 st.subheader("📘 Optional ERP Glossary")
@@ -93,10 +90,8 @@ ERP Glossary:
     try:
         resp = client.chat.completions.create(
             model=MODEL,
-            messages=[
-                {"role": "system", "content": "You are an ERP translation auditor."},
-                {"role": "user", "content": prompt}
-            ],
+            messages=[{"role": "system", "content": "You are an ERP translation auditor."},
+                      {"role": "user", "content": prompt}],
             temperature=0
         )
         text = resp.choices[0].message.content.strip()
@@ -135,11 +130,6 @@ if st.button("🚀 Run Hybrid Audit"):
     if len(colmap) < 5:
         st.error("❌ Missing columns: Report_Name, Report_Description, Field_Name, Greek, English")
         st.stop()
-
-    # Limit rows if test mode
-    if run_test and len(df) > 30:
-        df = df.head(30)
-        st.warning("⚠️ Test mode active: only first 30 rows will be processed.")
 
     # FAST PASS translation
     st.info("⚡ Running local fast translation first...")
