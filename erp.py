@@ -9,7 +9,7 @@ from openpyxl.styles import Font, Alignment
 # CONFIG
 # ==========================================================
 st.set_page_config(page_title="Entersoft ERP Translation Audit", page_icon="🧠", layout="wide")
-st.title("🧠 Entersoft ERP Translation Audit — Full Auto Edition")
+st.title("🧠 Entersoft ERP Translation Audit — Full Auto Edition (Batch Mode)")
 
 # ==========================================================
 # OPENAI
@@ -19,6 +19,7 @@ if not api_key:
     st.stop()
 client = OpenAI(api_key=api_key)
 MODEL = "gpt-4o-mini"
+BATCH_SIZE = 50  # 👈 You can increase or decrease this if needed
 
 # ==========================================================
 # OPTIONAL GLOSSARY
@@ -79,7 +80,7 @@ def quality_icon(score):
     return "🔴 Poor"
 
 # ==========================================================
-# MAIN AUDIT
+# MAIN AUDIT (Batch Mode)
 # ==========================================================
 if st.button("🚀 Run Full Auto Audit"):
     results = []
@@ -87,83 +88,71 @@ if st.button("🚀 Run Full Auto Audit"):
     progress = st.progress(0)
     info = st.empty()
 
-    for i, r in df.iterrows():
-        rn, rd, fn = str(r["Report_Name"]).strip(), str(r["Report_Description"]).strip(), str(r["Field_Name"]).strip()
-        gr, en = str(r["Greek"]).strip(), str(r["English"]).strip()
-        if not en or en.lower() == "nan":
-            en = ""
+    for start in range(0, total, BATCH_SIZE):
+        end = min(start + BATCH_SIZE, total)
+        batch = df.iloc[start:end]
 
-        # ---------- Step 1: translate blank immediately ----------
-        if not en:
-            try:
-                tr = client.chat.completions.create(
-                    model=MODEL,
-                    messages=[{"role": "user",
-                               "content": f"Translate the following Greek ERP field into proper English ERP/accounting terminology:\n\n{gr}"}],
-                    temperature=0
-                )
-                en = tr.choices[0].message.content.strip()
-            except Exception as e:
-                st.warning(f"Translation failed at row {i}: {e}")
-                en = "(translation missing)"
+        # Combine rows for a single GPT call
+        lines = []
+        for _, r in batch.iterrows():
+            rn, rd, fn = str(r["Report_Name"]).strip(), str(r["Report_Description"]).strip(), str(r["Field_Name"]).strip()
+            gr, en = str(r["Greek"]).strip(), str(r["English"]).strip()
+            if not en or en.lower() == "nan":
+                en = ""
+            lines.append(f"{rn} | {rd} | {fn} | {gr} | {en}")
+        joined = "\n".join(lines)
 
-        # ---------- Step 2: audit quality ----------
         prompt = f"""
-You are an Entersoft ERP translation auditor.
-Compare directly the following pair and score the English quality conceptually.
+You are an Entersoft ERP translation auditor and translator.
+For each line, if the English part is blank or weak, translate the Greek field into correct ERP/accounting English.
+Then score the translation quality conceptually (Greek ↔ English).
 
-Greek: {gr}
-English: {en}
+Reference ERP glossary:
+{glossary_text}
 
-Use ERP/accounting context (Debit, Credit, Cost Center, VAT Amount, etc.)
 Statuses:
 1=Translated_Correct, 2=Translated_Not_Accurate, 3=Field_Not_Translated
 
-Output exactly:
-Corrected_English | Status | Status_Description | Score
+Scoring:
+90–100 Excellent | 70–89 Good | 50–69 Fair | <50 Poor
+
+Output one line per field, exactly as:
+Report_Name | Report_Description | Field_Name | Greek | English | Corrected_English | Status | Status_Description | Score
+{joined}
 """
         try:
-            r2 = client.chat.completions.create(
+            resp = client.chat.completions.create(
                 model=MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0
             )
-            text = r2.choices[0].message.content.strip()
-            parts = [x.strip() for x in text.split("|")]
-            if len(parts) < 4:
-                corrected, status, desc, score = en, "Translated_Correct", "Auto assumed", "100"
-            else:
-                corrected, status, desc, score = parts[:4]
+            text = resp.choices[0].message.content.strip()
+            for ln in text.splitlines():
+                parts = [p.strip() for p in ln.split("|")]
+                if len(parts) >= 9:
+                    results.append(dict(
+                        Report_Name=parts[0],
+                        Report_Description=parts[1],
+                        Field_Name=parts[2],
+                        Greek=parts[3],
+                        English=parts[4],
+                        Corrected_English=parts[5],
+                        Status=parts[6],
+                        Status_Description=parts[7],
+                        Score=parts[8]
+                    ))
         except Exception as e:
-            corrected, status, desc, score = en, "Error", str(e), "0"
+            st.warning(f"Batch {start}-{end} failed: {e}")
 
-        # ---------- Step 3: if weak (<70) → auto improve ----------
-        if extract_num(score) < 70:
-            try:
-                fix = client.chat.completions.create(
-                    model=MODEL,
-                    messages=[{"role": "user",
-                               "content": f"Improve this weak ERP translation to a correct, professional ERP/accounting English term:\n\nGreek: {gr}\nCurrent: {corrected}\nReturn only corrected term."}],
-                    temperature=0
-                )
-                corrected = fix.choices[0].message.content.strip()
-                status, desc, score = "Translated_Correct", "Auto-improved", "100"
-            except Exception as e:
-                st.warning(f"Auto-fix failed row {i}: {e}")
+        progress.progress(end / total)
+        info.write(f"Processed {end}/{total} rows...")
 
-        results.append(dict(
-            Report_Name=rn, Report_Description=rd, Field_Name=fn,
-            Greek=gr, English=r["English"], Corrected_English=corrected,
-            Status=status, Status_Description=desc, Score=score
-        ))
-        progress.progress((i + 1) / total)
-        info.write(f"Processed {i+1}/{total}")
-
+    # Finish
     out = pd.DataFrame(results)
     out["Score"] = out["Score"].apply(extract_num)
     out["Quality"] = out["Score"].apply(quality_icon)
     st.session_state["audit_results"] = out
-    st.success("✅ Full audit + auto-translation complete.")
+    st.success("✅ Full batch audit complete.")
     st.dataframe(out.head(30))
 
 # ==========================================================
@@ -184,7 +173,9 @@ if "audit_results" in st.session_state:
         ws.column_dimensions[col[0].column_letter].width = min(
             max(len(str(c.value or "")) for c in col) + 2, 60
         )
-    buf = io.BytesIO(); wb.save(buf); buf.seek(0)
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
     st.download_button(
         "📥 Download Final Excel (All Corrected)",
         data=buf,
