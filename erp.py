@@ -9,7 +9,7 @@ from openpyxl.styles import Font, Alignment
 # CONFIG
 # ==============================================================
 st.set_page_config(page_title="Entersoft ERP Translation Audit", page_icon="🧠", layout="wide")
-st.title("🧠 Entersoft AI Translation Audit — ERP Expert Edition")
+st.title("🧠 Entersoft ERP Translation Audit — Final Refined Edition")
 
 # ==============================================================
 # OPENAI
@@ -62,7 +62,7 @@ if not req_cols.issubset(df.columns):
     st.stop()
 
 # ==============================================================
-# BATCH SIZE CONTROL (OUTSIDE THE RUN BUTTON)
+# BATCH SIZE (OUTSIDE BUTTON)
 # ==============================================================
 BATCH_SIZE = st.number_input("⚙️ Batch size (rows per GPT call)", min_value=10, max_value=200, value=50, step=10)
 
@@ -114,8 +114,11 @@ if st.button("🚀 Run ERP AI Audit"):
         batch = df.iloc[start:end]
         lines = []
         for _, r in batch.iterrows():
-            rn, rd, fn = str(r["Report_Name"]).strip(), str(r["Report_Description"]).strip(), str(r["Field_Name"]).strip()
-            gr, en = str(r["Greek"]).strip(), str(r["English"]).strip()
+            rn = str(r["Report_Name"]).strip()
+            rd = str(r["Report_Description"]).strip()
+            fn = str(r["Field_Name"]).strip()
+            gr = str(r["Greek"]).strip()
+            en = str(r["English"]).strip()
             if not en or en.lower() == "nan": en = ""
             lines.append(f"{rn} | {rd} | {fn} | {gr} | {en}")
         joined = "\n".join(lines)
@@ -138,8 +141,8 @@ Scoring (0–100):
 
 Rules:
 • If English is blank, translate Greek immediately → Corrected_English.
-• Always assess translation quality comparing Corrected_English vs Greek (ignore old English).
-• Output one per line exactly as:
+• Always assess translation quality comparing Corrected_English vs Greek only (ignore old English completely).
+• Output one line per input exactly as:
 Report_Name | Report_Description | Field_Name | Greek | English | Corrected_English | Status | Status_Description | Score
 
 Now analyze:
@@ -148,9 +151,12 @@ Now analyze:
         try:
             r = client.chat.completions.create(
                 model=MODEL,
-                messages=[{"role": "system", "content": "You are an ERP translation auditor."},
-                          {"role": "user", "content": prompt}],
-                temperature=0)
+                messages=[
+                    {"role": "system", "content": "You are an ERP translation auditor."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0
+            )
             results.extend(parse_ai_output(r.choices[0].message.content))
         except Exception as e:
             st.warning(f"Batch {start}-{end} failed: {e}")
@@ -158,42 +164,41 @@ Now analyze:
         progress.progress(end / total)
         info.write(f"Processed {end}/{total} rows...")
 
-    # ==============================================================
-    # POST-PROCESSING + AUTO-IMPROVEMENT
-    # ==============================================================
     out = pd.DataFrame(results)
     out["Score"] = out["Score"].apply(extract_num)
     out["Quality"] = out["Score"].apply(quality_icon)
 
-    weak_rows = out[out["Score"] < 70]
-    if not weak_rows.empty:
-        st.warning(f"⚠️ Found {len(weak_rows)} weak translations (<70). Improving automatically...")
-        for idx, r in weak_rows.iterrows():
+    # ==============================================================
+    # AUTO-IMPROVE WEAK TRANSLATIONS (<70)
+    # ==============================================================
+    weak = out[out["Score"] < 70]
+    if len(weak) > 0:
+        st.warning(f"⚠️ {len(weak)} weak translations found (<70). Automatically improving...")
+        for idx, r in weak.iterrows():
             gr = r["Greek"]
             ce = r["Corrected_English"]
             fix_prompt = f"""
-You are an Entersoft ERP expert. Improve this weak translation to a precise ERP/accounting English term.
-
+You are an Entersoft ERP expert. Improve this weak translation into the most accurate ERP/accounting English term.
 Greek: {gr}
 Current English: {ce}
-
 Return only the improved ERP term.
 """
             try:
                 fx = client.chat.completions.create(
                     model=MODEL,
                     messages=[{"role": "user", "content": fix_prompt}],
-                    temperature=0)
-                improved = fx.choices[0].message.content.strip()
-                out.at[idx, "Corrected_English"] = improved
-                out.at[idx, "Status_Description"] += " | Auto-Improved"
+                    temperature=0
+                )
+                new_term = fx.choices[0].message.content.strip()
+                out.at[idx, "Corrected_English"] = new_term
+                out.at[idx, "Status_Description"] = "Auto-Improved"
                 out.at[idx, "Score"] = 90
             except Exception as e:
-                st.warning(f"Could not improve row {idx}: {e}")
+                st.warning(f"Failed to improve row {idx}: {e}")
         out["Quality"] = out["Score"].apply(quality_icon)
 
     st.session_state["audit_results"] = out
-    st.success("✅ Audit completed with auto-improvement.")
+    st.success("✅ Audit completed and weak translations auto-corrected.")
     st.dataframe(out.head(30))
 
 # ==============================================================
