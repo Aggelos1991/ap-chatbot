@@ -9,7 +9,7 @@ from openpyxl.styles import Font, Alignment
 # CONFIG
 # ==========================================================
 st.set_page_config(page_title="Entersoft ERP Translation Audit", page_icon="🧠", layout="wide")
-st.title("🧠 Entersoft ERP Translation Audit — Ultra Fast Edition")
+st.title("🧠 Entersoft ERP Translation Audit — Ultra Fast & Accurate Edition")
 
 # ==========================================================
 # OPENAI
@@ -65,6 +65,13 @@ if not req_cols.issubset(df.columns):
 # ==========================================================
 # HELPERS
 # ==========================================================
+status_map = {
+    "1": "Translated_Correct",
+    "2": "Translated_Not_Accurate",
+    "3": "Field_Not_Translated",
+    "4": "Field_Not_Found_On_Report_View"
+}
+
 def extract_num(s):
     try:
         n = "".join(ch for ch in str(s) if ch.isdigit() or ch == ".")
@@ -72,21 +79,28 @@ def extract_num(s):
     except:
         return 0.0
 
-def quality_icon(score):
-    s = extract_num(score)
-    if s >= 90:
-        return "🟢 Excellent"
-    elif s >= 70:
-        return "🟡 Review"
-    else:
-        return "🔴 Poor"
+def get_quality_icon(greek, corrected):
+    """Use GPT once more to classify conceptual translation quality (Greek vs Corrected English)."""
+    try:
+        check_prompt = f"""
+Judge the conceptual translation quality of the following pair in an ERP/accounting context.
+Greek: {greek}
+English: {corrected}
 
-status_map = {
-    "1": "Translated_Correct",
-    "2": "Translated_Not_Accurate",
-    "3": "Field_Not_Translated",
-    "4": "Field_Not_Found_On_Report_View"
-}
+Rate:
+🟢 Excellent (precise ERP/accounting meaning)
+🟡 Review (close but slightly inaccurate or non-standard ERP term)
+🔴 Poor (wrong or irrelevant meaning)
+Return only one of these emojis: 🟢 or 🟡 or 🔴
+"""
+        r = client.chat.completions.create(
+            model=MODEL,
+            messages=[{"role": "user", "content": check_prompt}],
+            temperature=0
+        )
+        return r.choices[0].message.content.strip()[:2]
+    except:
+        return "🟡"
 
 # ==========================================================
 # BATCH SIZE SELECTOR
@@ -95,7 +109,7 @@ batch_size = st.slider("⚙️ Select batch size (rows per GPT call):", 10, 200,
 st.caption("Larger batches = faster, smaller = safer. Recommended: 80–100 rows per call.")
 
 # ==========================================================
-# MAIN AUDIT (ULTRA FAST)
+# MAIN AUDIT
 # ==========================================================
 if st.button("🚀 Run Full Auto Audit"):
     results = []
@@ -107,7 +121,7 @@ if st.button("🚀 Run Full Auto Audit"):
         end = min(start + batch_size, total)
         batch = df.iloc[start:end]
 
-        # combine lines for GPT
+        # ---------- combine rows for a single GPT call ----------
         lines = []
         for _, r in batch.iterrows():
             rn, rd, fn = str(r["Report_Name"]).strip(), str(r["Report_Description"]).strip(), str(r["Field_Name"]).strip()
@@ -117,11 +131,14 @@ if st.button("🚀 Run Full Auto Audit"):
             lines.append(f"{rn} | {rd} | {fn} | {gr} | {en}")
         joined = "\n".join(lines)
 
+        # ---------- GPT prompt ----------
         prompt = f"""
 You are an Entersoft ERP localization auditor and translator.
-Compare each Greek field to its English equivalent and classify it conceptually.
+Compare each Greek field to its existing English translation and determine:
 
-If English is missing or wrong, translate Greek into proper ERP/accounting English (e.g. Net Value, VAT Amount, Posting Date).
+1. Whether the existing English translation is correct or not (Status).
+2. If English is blank or wrong, provide the correct ERP/accounting translation as Corrected_English.
+3. Score accuracy conceptually (0–100).
 
 Statuses:
 1=Translated_Correct
@@ -129,16 +146,13 @@ Statuses:
 3=Field_Not_Translated
 4=Field_Not_Found_On_Report_View
 
-Scoring:
-90–100 Excellent | 70–89 Good | 50–69 Fair | <50 Poor
+Output one line per record exactly as:
+Report_Name | Report_Description | Field_Name | Greek | English | Corrected_English | Status | Score
 
 Reference ERP glossary:
 {glossary_text}
 
-Output one line exactly as:
-Report_Name | Report_Description | Field_Name | Greek | English | Corrected_English | Status | Score
-
-Analyze now:
+Now analyze:
 {joined}
 """
         try:
@@ -167,15 +181,17 @@ Analyze now:
         progress.progress(end / total)
         info.write(f"Processed {end}/{total} rows...")
 
-    # build dataframe
+    # ---------- create DataFrame ----------
     out = pd.DataFrame(results)
-    out["Score"] = out["Score"].apply(extract_num)
-    out["Quality"] = out["Score"].apply(quality_icon)
 
-    # drop unneeded columns from display
+    # ---------- generate Quality separately (Greek vs Corrected_English) ----------
+    st.info("🔍 Assessing translation quality (Greek ↔ Corrected English)...")
+    out["Quality"] = [get_quality_icon(row["Greek"], row["Corrected_English"]) for _, row in out.iterrows()]
+
+    # ---------- display clean table ----------
     display_cols = ["Report_Name", "Report_Description", "Field_Name", "Greek", "English", "Corrected_English", "Status", "Quality"]
     st.session_state["audit_results"] = out
-    st.success("✅ Ultra-fast audit complete.")
+    st.success("✅ Audit completed successfully.")
     st.dataframe(out[display_cols].head(30))
 
 # ==========================================================
