@@ -5,17 +5,24 @@ import io, os, time
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment
 
-# ========== CONFIG ==========
+# ==============================================================
+# CONFIG
+# ==============================================================
 st.set_page_config(page_title="Entersoft ERP Translation Audit", page_icon="🧠", layout="wide")
 st.title("🧠 Entersoft AI Translation Audit — ERP Expert Edition")
 
-# ========== OPENAI ==========
+# ==============================================================
+# OPENAI
+# ==============================================================
 api_key = st.text_input("🔑 Enter your OpenAI API key:", type="password")
-if not api_key: st.stop()
+if not api_key:
+    st.stop()
 client = OpenAI(api_key=api_key)
 MODEL = "gpt-4o-mini"
 
-# ========== OPTIONAL ERP GLOSSARY ==========
+# ==============================================================
+# OPTIONAL GLOSSARY
+# ==============================================================
 glossary_text = ""
 def load_glossary(df):
     df.columns = [c.strip().lower() for c in df.columns]
@@ -34,11 +41,14 @@ elif os.path.exists("erp_glossary.csv"):
 else:
     glossary_text = "(no glossary provided)"
 
-# ========== SOURCE EXCEL ==========
+# ==============================================================
+# SOURCE EXCEL
+# ==============================================================
 upl_file = st.file_uploader("📂 Upload Excel (Report_Name | Report_Description | Field_Name | Greek | English)", type=["xlsx"])
 if not upl_file:
     st.info("Please upload your exported Excel file from SQL.")
     st.stop()
+
 df = pd.read_excel(upl_file)
 st.write(f"✅ File loaded successfully — {len(df)} rows detected.")
 
@@ -51,16 +61,29 @@ if not req_cols.issubset(df.columns):
     st.error(f"❌ Excel must contain columns: {req_cols}")
     st.stop()
 
-# ========== HELPERS ==========
+# ==============================================================
+# BATCH SIZE CONTROL (OUTSIDE THE RUN BUTTON)
+# ==============================================================
+BATCH_SIZE = st.number_input("⚙️ Batch size (rows per GPT call)", min_value=10, max_value=200, value=50, step=10)
+
+# ==============================================================
+# HELPERS
+# ==============================================================
 def parse_ai_output(text):
     rows = []
     for ln in text.strip().splitlines():
         p = [x.strip() for x in ln.split("|")]
         if len(p) >= 9:
             rows.append(dict(
-                Report_Name=p[0], Report_Description=p[1], Field_Name=p[2],
-                Greek=p[3], English=p[4], Corrected_English=p[5],
-                Status=p[6], Status_Description=p[7], Score=p[8]
+                Report_Name=p[0],
+                Report_Description=p[1],
+                Field_Name=p[2],
+                Greek=p[3],
+                English=p[4],
+                Corrected_English=p[5],
+                Status=p[6],
+                Status_Description=p[7],
+                Score=p[8]
             ))
     return rows
 
@@ -68,7 +91,8 @@ def extract_num(s):
     try:
         n = "".join(ch for ch in str(s) if ch.isdigit() or ch == ".")
         return float(n) if n else 0
-    except: return 0.0
+    except:
+        return 0.0
 
 def quality_icon(score):
     s = extract_num(score)
@@ -76,15 +100,14 @@ def quality_icon(score):
     if s >= 70: return "🟡 Review"
     return "🔴 Poor"
 
-# ========== MAIN AUDIT ==========
+# ==============================================================
+# MAIN AUDIT
+# ==============================================================
 if st.button("🚀 Run ERP AI Audit"):
     results = []
     total = len(df)
     progress = st.progress(0)
     info = st.empty()
-
-    # ✅ Added: Batch size input field
-    BATCH_SIZE = st.number_input("Batch size (rows per GPT call)", min_value=10, max_value=200, value=50, step=10)
 
     for start in range(0, total, BATCH_SIZE):
         end = min(start + BATCH_SIZE, total)
@@ -115,7 +138,7 @@ Scoring (0–100):
 
 Rules:
 • If English is blank, translate Greek immediately → Corrected_English.
-• Always assess translation quality based on Corrected_English (ignore old English).
+• Always assess translation quality comparing Corrected_English vs Greek (ignore old English).
 • Output one per line exactly as:
 Report_Name | Report_Description | Field_Name | Greek | English | Corrected_English | Status | Status_Description | Score
 
@@ -125,55 +148,57 @@ Now analyze:
         try:
             r = client.chat.completions.create(
                 model=MODEL,
-                messages=[{"role":"system","content":"You are an ERP translation auditor."},
-                          {"role":"user","content":prompt}],
+                messages=[{"role": "system", "content": "You are an ERP translation auditor."},
+                          {"role": "user", "content": prompt}],
                 temperature=0)
             results.extend(parse_ai_output(r.choices[0].message.content))
         except Exception as e:
             st.warning(f"Batch {start}-{end} failed: {e}")
-        progress.progress(end/total)
+
+        progress.progress(end / total)
         info.write(f"Processed {end}/{total} rows...")
 
+    # ==============================================================
+    # POST-PROCESSING + AUTO-IMPROVEMENT
+    # ==============================================================
     out = pd.DataFrame(results)
     out["Score"] = out["Score"].apply(extract_num)
     out["Quality"] = out["Score"].apply(quality_icon)
-    weak = out[out["Score"] < 70]
 
-    st.session_state["audit_results"] = out
-    st.success("✅ Audit completed.")
-    st.dataframe(out.head(30))
-
-    if len(weak) > 0:
-        st.warning(f"⚠️ {len(weak)} weak translations found (<70). Click below to improve them.")
-        if st.button("🔁 Improve Weak Translations"):
-            for idx, r in weak.iterrows():
-                gr = r["Greek"]
-                ce = r["Corrected_English"]
-                fix_prompt = f"""
-You are an Entersoft ERP expert. Improve this weak translation to a precise ERP/accounting term.
+    weak_rows = out[out["Score"] < 70]
+    if not weak_rows.empty:
+        st.warning(f"⚠️ Found {len(weak_rows)} weak translations (<70). Improving automatically...")
+        for idx, r in weak_rows.iterrows():
+            gr = r["Greek"]
+            ce = r["Corrected_English"]
+            fix_prompt = f"""
+You are an Entersoft ERP expert. Improve this weak translation to a precise ERP/accounting English term.
 
 Greek: {gr}
 Current English: {ce}
 
 Return only the improved ERP term.
 """
-                try:
-                    fx = client.chat.completions.create(
-                        model=MODEL,
-                        messages=[{"role":"user","content":fix_prompt}],
-                        temperature=0)
-                    new_term = fx.choices[0].message.content.strip()
-                    out.at[idx,"Corrected_English"] = new_term
-                    out.at[idx,"Score"] = 90
-                    out.at[idx,"Status_Description"] += " | Auto-Improved"
-                except Exception as e:
-                    st.warning(f"Could not improve row {idx}: {e}")
-            out["Quality"] = out["Score"].apply(quality_icon)
-            st.session_state["audit_results"] = out
-            st.success("✅ Weak translations improved.")
-            st.dataframe(out.head(30))
+            try:
+                fx = client.chat.completions.create(
+                    model=MODEL,
+                    messages=[{"role": "user", "content": fix_prompt}],
+                    temperature=0)
+                improved = fx.choices[0].message.content.strip()
+                out.at[idx, "Corrected_English"] = improved
+                out.at[idx, "Status_Description"] += " | Auto-Improved"
+                out.at[idx, "Score"] = 90
+            except Exception as e:
+                st.warning(f"Could not improve row {idx}: {e}")
+        out["Quality"] = out["Score"].apply(quality_icon)
 
-# ========== EXPORT ==========
+    st.session_state["audit_results"] = out
+    st.success("✅ Audit completed with auto-improvement.")
+    st.dataframe(out.head(30))
+
+# ==============================================================
+# EXPORT
+# ==============================================================
 if "audit_results" in st.session_state:
     out = st.session_state["audit_results"]
     wb = Workbook()
@@ -186,9 +211,14 @@ if "audit_results" in st.session_state:
     for _, r in out.iterrows():
         ws.append([r[col] for col in out.columns])
     for col in ws.columns:
-        ws.column_dimensions[col[0].column_letter].width = min(max(len(str(c.value or "")) for c in col)+2, 60)
+        ws.column_dimensions[col[0].column_letter].width = min(max(len(str(c.value or "")) for c in col) + 2, 60)
 
-    buf = io.BytesIO(); wb.save(buf); buf.seek(0)
-    st.download_button("📥 Download Final Excel (Simplified)",
-        data=buf, file_name="erp_translation_audit_final.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    st.download_button(
+        "📥 Download Final Excel (Simplified)",
+        data=buf,
+        file_name="erp_translation_audit_final.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
