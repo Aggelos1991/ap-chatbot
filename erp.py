@@ -1,7 +1,7 @@
 import pandas as pd
 import streamlit as st
 from openai import OpenAI
-import io, os, json, time, difflib
+import io, os, json, time
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment
 
@@ -9,7 +9,7 @@ from openpyxl.styles import Font, Alignment
 # CONFIG
 # ==========================================================
 st.set_page_config(page_title="Entersoft ERP Translation Audit", page_icon="🧠", layout="wide")
-st.title("🧠 Entersoft ERP Translation Audit — Smart-Batch ERP Expert Edition")
+st.title("🧠 Entersoft ERP Translation Audit — Final ERP Expert Edition")
 
 # ==========================================================
 # OPENAI
@@ -17,7 +17,7 @@ st.title("🧠 Entersoft ERP Translation Audit — Smart-Batch ERP Expert Editio
 api_key = st.text_input("🔑 Enter your OpenAI API key:", type="password")
 if not api_key: st.stop()
 client = OpenAI(api_key=api_key)
-MODEL = "gpt-4o-mini"   # 💡 Fast + Cost-efficient
+MODEL = "gpt-4o-mini"   # 💡 Fast + cost-efficient
 
 # ==========================================================
 # OPTIONAL GLOSSARY
@@ -89,24 +89,38 @@ EXAMPLES:
 # ==========================================================
 # HELPER FUNCTIONS
 # ==========================================================
-def string_similarity(a, b):
-    return difflib.SequenceMatcher(None, a.lower().strip(), b.lower().strip()).ratio()
-
-def classify_status(greek: str, english_original: str) -> str:
-    g, e = (greek or "").strip(), (english_original or "").strip()
+def classify_status(greek, english):
+    g, e = (greek or "").strip(), (english or "").strip()
     if not g or g.lower() == "nan":
         return "Field_Not_Found_On_Report_View"
     if not e or e.lower() == "nan" or e == "":
         return "Field_Not_Translated"
-    sim = string_similarity(g, e)
-    if sim >= 0.95:
-        return "Translated_Correct"
-    elif sim >= 0.70:
-        return "Translated_Not_Accurate"
-    else:
-        return "Field_Not_Translated"
 
-def correct_erp_english(greek: str, english_seed: str) -> str:
+    prompt = f"""
+You are an ERP translation auditor.
+Compare the following Greek and English field names conceptually (ignore alphabet or spelling).
+Return one exact label:
+Translated_Correct
+Translated_Not_Accurate
+Field_Not_Translated
+Field_Not_Found_On_Report_View
+
+Greek: {g}
+English: {e}
+"""
+    try:
+        r = client.chat.completions.create(
+            model=MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0
+        )
+        result = r.choices[0].message.content.strip()
+        allowed = {"Translated_Correct","Translated_Not_Accurate","Field_Not_Translated","Field_Not_Found_On_Report_View"}
+        return result if result in allowed else "Translated_Not_Accurate"
+    except Exception:
+        return "Translated_Not_Accurate"
+
+def correct_erp_english(greek, english_seed):
     g, seed = (greek or "").strip(), (english_seed or "").strip()
     prompt = f"""{ERP_CONTEXT}
 
@@ -126,7 +140,7 @@ Glossary Reference:
     except Exception:
         return seed or "(translation missing)"
 
-def quality_label(greek: str, corrected: str) -> str:
+def quality_label(greek, corrected):
     g, c = (greek or "").strip(), (corrected or "").strip()
     if not g or not c:
         return "🟡 Review"
@@ -244,7 +258,7 @@ Glossary (optional reference):
 
     out = pd.DataFrame(results)
     st.session_state["audit_results"] = out
-    st.success("✅ Full audit complete (ERP expert quality + batching + similarity + caching).")
+    st.success("✅ Full audit complete (ERP expert quality + conceptual status + batching + caching).")
     st.dataframe(out.head(30))
 
 # ==========================================================
