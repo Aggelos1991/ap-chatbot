@@ -62,17 +62,26 @@ if not req_cols.issubset(df.columns):
     st.stop()
 
 # ==========================================================
-# ERP CONTEXT PROMPT
+# ERP CONTEXT PROMPT (FINAL EXPERT MINDSET)
 # ==========================================================
 ERP_CONTEXT = """
-You are a senior ERP localization consultant specialized in Entersoft ERP and accounting terminology.
-Translate or refine each Greek field into clean, professional ERP-style English used in enterprise systems.
+You are a senior ERP Localization Director with 20+ years of experience in translating, mapping, 
+and harmonizing enterprise systems such as Entersoft, SAP, and Oracle Financials across multinational deployments.
+
+You fully understand the structure of ERP systems, including accounting, finance, logistics, and inventory modules.
+You do NOT provide literal translations — you provide the correct ERP field names as they would appear in an enterprise English environment.
+
+Your expertise covers:
+• Accounting: Debit, Credit, Journal, General Ledger, Cost Center, Trial Balance, Tax, VAT, Net/Gross Value.
+• Logistics: Warehouse, Stock, Item Code, Supplier, Delivery Note, Invoice, Quantity, Weight.
+• Financials: Payment Method, Posting Date, Document Number, Credit Note, Purchase Order, Invoice Number.
 
 Guidelines:
-• Be conceptual, not literal.
-• Use standard ERP terms: Net Value, Posting Date, Credit Note, Cost Center, Ledger Account, VAT Amount, Warehouse, Supplier, Customer, Invoice Number, Payment Method, Transaction Date.
-• Use Title Case.
-• Return only the corrected ERP English term — no explanations.
+1️⃣ Be conceptual, not literal.
+2️⃣ Use standard ERP English terms (SAP/Oracle style).
+3️⃣ Use Title Case — e.g., "Posting Date", "Ledger Account", "Payment Method".
+4️⃣ Never invent new field names — return the clean, professional English term.
+5️⃣ Return only the corrected ERP English field — no explanation or commentary.
 
 EXAMPLES:
 Καθαρή Αξία → Net Value
@@ -81,9 +90,10 @@ EXAMPLES:
 Κέντρο Κόστους → Cost Center
 Πελάτης → Customer
 Προμηθευτής → Supplier
-Λογαριασμός Γενικής Λογιστικής → Ledger Account
+Αριθμός Παραστατικού → Document Number
 Ποσό ΦΠΑ → VAT Amount
 Αποθήκη → Warehouse
+Ημερομηνία Πληρωμής → Payment Date
 """
 
 # ==========================================================
@@ -258,7 +268,7 @@ Glossary (optional reference):
 
     out = pd.DataFrame(results)
     st.session_state["audit_results"] = out
-    st.success("✅ Full audit complete (ERP expert quality + conceptual status + batching + caching).")
+    st.success("✅ Full audit complete (ERP Localization Director quality + conceptual status + batching + caching).")
     st.dataframe(out.head(30))
 
 # ==========================================================
