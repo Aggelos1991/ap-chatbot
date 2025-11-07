@@ -1,12 +1,11 @@
 import pandas as pd
 import streamlit as st
 from openai import OpenAI
-import time
-import io
+import time, io, os
 
 # === STREAMLIT CONFIG ===
-st.set_page_config(page_title="Entersoft Translation Audit", page_icon="🧠", layout="wide")
-st.title("🧠 Entersoft AI Translation Audit (Greek ↔ English, with Report Context)")
+st.set_page_config(page_title="Entersoft ERP Translation Audit", page_icon="🧠", layout="wide")
+st.title("🧠 Entersoft AI Translation Audit — ERP-Aware Edition")
 
 # === OPENAI SETUP ===
 api_key = st.text_input("🔑 Enter your OpenAI API key:", type="password")
@@ -14,6 +13,15 @@ if not api_key:
     st.stop()
 
 client = OpenAI(api_key=api_key)
+
+# === LOAD OPTIONAL ERP GLOSSARY ===
+glossary_text = ""
+if os.path.exists("erp_glossary.csv"):
+    glossary_df = pd.read_csv("erp_glossary.csv")
+    glossary_text = "\n".join([f"{row['Greek']} → {row['Approved_English']}" for _, row in glossary_df.iterrows()])
+    st.success(f"📘 Loaded ERP glossary with {len(glossary_df)} terms.")
+else:
+    st.info("No 'erp_glossary.csv' found — continuing without custom glossary.")
 
 # === FILE UPLOAD ===
 uploaded_file = st.file_uploader("📂 Upload Excel (Report_Name | Report_Description | Field_Name | Greek | English)", type=["xlsx"])
@@ -24,7 +32,6 @@ if not uploaded_file:
 df = pd.read_excel(uploaded_file)
 st.write(f"✅ File loaded successfully — {len(df)} rows detected.")
 
-# Validate required columns
 required_cols = {"Report_Name", "Report_Description", "Field_Name", "Greek", "English"}
 if not required_cols.issubset(df.columns):
     st.error(f"❌ Excel must contain these columns: {required_cols}")
@@ -52,39 +59,40 @@ def parse_ai_output(text):
     return out
 
 # === PROCESS BUTTON ===
-if st.button("🚀 Run AI Audit"):
+if st.button("🚀 Run ERP-Aware AI Audit"):
     total_batches = len(df) // BATCH_SIZE + (1 if len(df) % BATCH_SIZE else 0)
     progress = st.progress(0)
-    st.write("Processing translations... Please wait.")
+    st.write("Processing translations with ERP context... Please wait.")
 
     for i in range(0, len(df), BATCH_SIZE):
         batch = df.iloc[i:i+BATCH_SIZE]
 
         prompt_rows = []
         for _, row in batch.iterrows():
-            report_name = str(row["Report_Name"]).strip()
-            report_desc = str(row["Report_Description"]).strip()
-            field_name = str(row["Field_Name"]).strip()
-            greek = str(row["Greek"]).strip()
-            english = str(row["English"]).strip()
-            prompt_rows.append(f"{report_name} | {report_desc} | {field_name} | {greek} | {english}")
+            prompt_rows.append(
+                f"{row['Report_Name']} | {row['Report_Description']} | {row['Field_Name']} | "
+                f"{str(row['Greek']).strip()} | {str(row['English']).strip()}"
+            )
 
         joined = "\n".join(prompt_rows)
 
+        # === MAIN PROMPT ===
         prompt = f"""
-You are an ERP translation auditor. For each line below (Report_Name | Report_Description | Field_Name | Greek | English):
+You are a senior ERP localization consultant specialized in Entersoft and accounting systems.
+You understand accounting, finance, logistics, CRM, and reporting terminology (GL, AP/AR, cost centers, VAT, accruals).
+Judge translation correctness conceptually — not literally.
+Prefer proper accounting English (e.g., 'Net Value', 'Posting Date', 'Credit Note', 'Warehouse').
 
-1️⃣ Check if the English translation correctly reflects the Greek meaning.
-2️⃣ If the translation is perfect, return:
-Status = 1 | Status Description = Translated_Correct | Corrected_English = same as English
-3️⃣ If inaccurate or partially wrong, return:
-Status = 2 | Status Description = Translated_Not_Accurate | Corrected_English = your best English fix
-4️⃣ If missing translation (English or Greek empty), return:
-Status = 3 | Status Description = Field_Not_Translated
-5️⃣ If field doesn’t correspond to a report caption (rare), return:
-Status = 4 | Status Description = Field_Not_Found_on_Report_View
+Reference ERP glossary (if present):
+{glossary_text or '(no glossary provided)'}
 
-Return each result in **exactly this format (pipe-separated)**:
+Statuses:
+1 = Translated_Correct (conceptually accurate)
+2 = Translated_Not_Accurate (literal or wrong ERP term)
+3 = Field_Not_Translated (missing Greek or English)
+4 = Field_Not_Found_On_Report_View (irrelevant)
+
+Return each row in exactly this format:
 Report_Name | Report_Description | Field_Name | Greek | English | Corrected_English | Status | Status_Description
 
 Now analyze:
@@ -93,9 +101,9 @@ Now analyze:
 
         try:
             resp = client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-4o-mini",  # cheapest + strong reasoning
                 messages=[
-                    {"role": "system", "content": "You are a strict bilingual Greek–English ERP translation auditor. Output only in the exact pipe-separated format."},
+                    {"role": "system", "content": "You are a strict ERP translation auditor. Respond only with the requested pipe-separated lines."},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0
@@ -127,6 +135,11 @@ Now analyze:
     out.to_excel(buffer, index=False, engine="openpyxl")
     buffer.seek(0)
 
-    st.success("✅ Audit completed successfully!")
-    st.download_button("📥 Download Results Excel", data=buffer, file_name="translation_audit_results.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    st.success("✅ ERP-Aware Audit completed successfully!")
+    st.download_button(
+        "📥 Download Results Excel",
+        data=buffer,
+        file_name="erp_translation_audit_results.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
     st.dataframe(out.head(20))
