@@ -7,7 +7,7 @@ import os
 
 # === STREAMLIT CONFIG ===
 st.set_page_config(page_title="Entersoft ERP Translation Audit", page_icon="🧠", layout="wide")
-st.title("🧠 Entersoft AI Translation Audit — Auto-Translate Edition")
+st.title("🧠 Entersoft AI Translation Audit — Final Version")
 
 # === OPENAI SETUP ===
 api_key = st.text_input("🔑 Enter your OpenAI API key:", type="password")
@@ -82,9 +82,9 @@ if st.button("🚀 Run ERP AI Audit"):
             greek = str(row["Greek"]).strip()
             english = str(row["English"]).strip()
 
-            # 🧠 Auto-translate when English is missing or NaN
+            # 🧠 If English is blank or NaN, keep it blank — but GPT should still translate Greek
             if not english or english.lower() == "nan":
-                english = f"[TRANSLATE] {greek}"
+                english = ""
 
             prompt_rows.append(f"{report_name} | {report_desc} | {field_name} | {greek} | {english}")
 
@@ -106,8 +106,8 @@ Statuses:
 3 = Field_Not_Translated (English missing or incomplete — translate Greek professionally into ERP English)
 4 = Field_Not_Found_On_Report_View (irrelevant)
 
-If an English field contains “[TRANSLATE] …”, translate the Greek text into correct ERP/Accounting English terminology.
-Even when translating, keep the same status logic.
+If the English field is blank or missing, translate the Greek text into correct ERP/Accounting English terminology and place it in the Corrected_English column.
+Do NOT modify the original English column — leave it empty if it was empty.
 
 Return each row in exactly this format:
 Report_Name | Report_Description | Field_Name | Greek | English | Corrected_English | Status | Status_Description
@@ -118,7 +118,7 @@ Now analyze:
 
         try:
             resp = client.chat.completions.create(
-                model="gpt-4o-mini",  # ✅ Cheap, fast, multilingual
+                model="gpt-4o-mini",  # ✅ cost-efficient
                 messages=[
                     {"role": "system", "content": "You are a strict ERP translation auditor. Respond only in the requested format."},
                     {"role": "user", "content": prompt}
@@ -160,4 +160,4 @@ Now analyze:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
-    st.dataframe(out)  # show all rows
+    st.dataframe(out)
