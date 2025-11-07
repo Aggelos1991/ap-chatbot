@@ -142,4 +142,4 @@ Now analyze:
         file_name="erp_translation_audit_results.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
-    st.dataframe(out.head(20))
+    st.dataframe(out.head(out))
