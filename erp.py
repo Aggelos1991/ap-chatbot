@@ -5,34 +5,29 @@ import time
 import io
 import os
 from openpyxl import Workbook
-from openpyxl.utils.dataframe import dataframe_to_rows
 from openpyxl.styles import Font, Alignment
 
 # === STREAMLIT CONFIG ===
 st.set_page_config(page_title="Entersoft ERP Translation Audit", page_icon="🧠", layout="wide")
-st.title("🧠 Entersoft AI Translation Audit — Final ERP Expert Version")
+st.title("🧠 Entersoft AI Translation Audit — Manual Re-Evaluation Edition")
 
 # === OPENAI SETUP ===
 api_key = st.text_input("🔑 Enter your OpenAI API key:", type="password")
 if not api_key:
     st.stop()
-
 client = OpenAI(api_key=api_key)
 
-# === OPTIONAL ERP GLOSSARY ===
+# === OPTIONAL GLOSSARY ===
 glossary_text = ""
 if os.path.exists("erp_glossary.csv"):
     glossary_df = pd.read_csv("erp_glossary.csv")
     glossary_text = "\n".join([f"{row['Greek']} → {row['Approved_English']}" for _, row in glossary_df.iterrows()])
     st.success(f"📘 Loaded ERP glossary with {len(glossary_df)} terms.")
 else:
-    st.info("No 'erp_glossary.csv' found — continuing without custom glossary.")
+    st.info("No 'erp_glossary.csv' found — continuing without glossary.")
 
 # === FILE UPLOAD ===
-uploaded_file = st.file_uploader(
-    "📂 Upload Excel (Report_Name | Report_Description | Field_Name | Greek | English)",
-    type=["xlsx"]
-)
+uploaded_file = st.file_uploader("📂 Upload Excel (Report_Name | Report_Description | Field_Name | Greek | English)", type=["xlsx"])
 if not uploaded_file:
     st.info("Please upload your exported Excel file from SQL.")
     st.stop()
@@ -45,7 +40,6 @@ if not required_cols.issubset(df.columns):
     st.error(f"❌ Excel must contain these columns: {required_cols}")
     st.stop()
 
-# === PARAMETERS ===
 BATCH_SIZE = st.number_input("Batch size (recommended 50–100)", value=50, step=10)
 results = []
 
@@ -69,16 +63,15 @@ def parse_ai_output(text):
             })
     return out
 
-# === PROCESS BUTTON ===
+# === INITIAL AUDIT ===
 if st.button("🚀 Run ERP AI Audit"):
     total_batches = len(df) // BATCH_SIZE + (1 if len(df) % BATCH_SIZE else 0)
     progress = st.progress(0)
-    st.write("Processing translations... Please wait.")
+    st.write("Processing translations...")
 
     for i in range(0, len(df), BATCH_SIZE):
         batch = df.iloc[i:i+BATCH_SIZE]
-        prompt_rows = []
-
+        rows = []
         for _, row in batch.iterrows():
             report_name = str(row["Report_Name"]).strip()
             report_desc = str(row["Report_Description"]).strip()
@@ -87,17 +80,15 @@ if st.button("🚀 Run ERP AI Audit"):
             english = str(row["English"]).strip()
             if not english or english.lower() == "nan":
                 english = ""
-            prompt_rows.append(f"{report_name} | {report_desc} | {field_name} | {greek} | {english}")
+            rows.append(f"{report_name} | {report_desc} | {field_name} | {greek} | {english}")
+        joined = "\n".join(rows)
 
-        joined = "\n".join(prompt_rows)
-
-        # === MAIN PROMPT ===
         prompt = f"""
 You are a senior ERP localization consultant specialized in Entersoft ERP.
-Judge each translation conceptually — not literally.
-Prefer proper accounting English (Net Value, Posting Date, Credit Note, Cost Center, Ledger Account, etc.).
+Judge conceptually — not literally.
+Prefer accounting English like (Net Value, Posting Date, Credit Note, Cost Center, Ledger Account, etc.).
 
-Reference ERP glossary (if provided):
+Reference glossary:
 {glossary_text or '(no glossary provided)'}
 
 Statuses:
@@ -106,20 +97,20 @@ Statuses:
 3 = Field_Not_Translated (English missing → translate Greek)
 4 = Field_Not_Found_On_Report_View
 
-Scoring (0–100):
-- 90–100 = Excellent ERP term
-- 70–89 = Good, minor issue
-- 50–69 = Fair
-- Below 50 = Poor
+Score (0–100):
+90–100 = Excellent
+70–89 = Good
+50–69 = Fair
+<50 = Poor
 
-If English is blank, translate Greek into ERP English — put it ONLY in Corrected_English.
-Do NOT touch English column.
+If English is blank, translate Greek → Corrected_English.
+Do NOT modify English column.
 
-Output exactly:
+Return:
 Report_Name | Report_Description | Field_Name | Greek | English | Corrected_English | Status | Status_Description | Score
+
 {joined}
 """
-
         try:
             resp = client.chat.completions.create(
                 model="gpt-4o-mini",
@@ -138,9 +129,15 @@ Report_Name | Report_Description | Field_Name | Greek | English | Corrected_Engl
             st.warning(f"⚠️ Batch {i} failed: {e}")
 
     out = pd.DataFrame(results)
+    st.session_state["audit_results"] = out
+    st.success("✅ Audit completed successfully. You can now manually re-evaluate low-score rows.")
+    st.dataframe(out.head(30))
 
-    # === RETRANSLATE LOW SCORES BASED ON NEW VERSION ===
-    st.info("Evaluating and improving low-score translations (<70)...")
+# === MANUAL RE-EVALUATION BUTTON ===
+if "audit_results" in st.session_state and st.button("🔁 Re-Evaluate Low-Score Rows (<70)"):
+    out = st.session_state["audit_results"]
+    st.info("Re-evaluating all low-score rows based on Corrected English version...")
+
     for idx, row in out.iterrows():
         try:
             score = float(row["Score"])
@@ -149,13 +146,13 @@ Report_Name | Report_Description | Field_Name | Greek | English | Corrected_Engl
         if score < 70:
             re_prompt = f"""
 You are an Entersoft ERP expert.
-The current English translation below was scored low. 
-Refine it into the most accurate ERP accounting English term possible.
+Re-evaluate the translation accuracy between Greek and Corrected English.
 
 Greek: {row['Greek']}
-Current English version: {row['Corrected_English']}
+Corrected English: {row['Corrected_English']}
 
-Return ONLY the improved English term.
+Assign a score 0–100 based on accuracy and terminology quality.
+Return ONLY a number.
 """
             try:
                 fix = client.chat.completions.create(
@@ -163,14 +160,14 @@ Return ONLY the improved English term.
                     messages=[{"role": "user", "content": re_prompt}],
                     temperature=0
                 )
-                out.at[idx, "Corrected_English"] = fix.choices[0].message.content.strip()
-                out.at[idx, "Retranslated"] = "✅"
-                out.at[idx, "Score"] = 90
-                out.at[idx, "Status_Description"] += " | Auto-Improved"
+                new_score = fix.choices[0].message.content.strip()
+                out.at[idx, "Score"] = new_score
+                out.at[idx, "Retranslated"] = "🔁 Re-evaluated"
+                out.at[idx, "Status_Description"] += " | Re-evaluated based on corrected version"
             except Exception as e:
-                st.warning(f"Could not retranslate row {idx}: {e}")
+                st.warning(f"Could not re-evaluate row {idx}: {e}")
 
-    # === QUALITY ICON COLUMN ===
+    # === QUALITY ICONS BASED ON CORRECTED ENGLISH ===
     def quality_icon(score):
         try:
             s = float(score)
@@ -184,8 +181,14 @@ Return ONLY the improved English term.
             return "🔴 Poor"
 
     out["Quality"] = out["Score"].apply(quality_icon)
+    st.session_state["audit_results"] = out
 
-    # === EXPORT TO EXCEL ===
+    st.success("✅ Manual re-evaluation completed.")
+    st.dataframe(out.head(30))
+
+# === EXPORT BUTTON ===
+if "audit_results" in st.session_state:
+    out = st.session_state["audit_results"]
     wb = Workbook()
     ws = wb.active
     ws.title = "ERP Translation Audit"
@@ -198,19 +201,16 @@ Return ONLY the improved English term.
         ws.append(list(row))
 
     for col in ws.columns:
-        max_length = max(len(str(cell.value or "")) for cell in col)
-        ws.column_dimensions[col[0].column_letter].width = max_length + 2
+        max_len = max(len(str(c.value or "")) for c in col)
+        ws.column_dimensions[col[0].column_letter].width = max_len + 2
 
     buffer = io.BytesIO()
     wb.save(buffer)
     buffer.seek(0)
 
-    st.success("✅ ERP Audit completed successfully!")
     st.download_button(
-        "📥 Download Final Excel with Retranslations & Icons",
+        "📥 Download Final Excel (After Re-Evaluation)",
         data=buffer,
         file_name="erp_translation_audit_final.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
-
-    st.dataframe(out)
