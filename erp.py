@@ -1,229 +1,137 @@
 import pandas as pd
 import streamlit as st
 from openai import OpenAI
-import io, os, time
-from openpyxl import Workbook
-from openpyxl.styles import Font, Alignment
+import io, os
 
-# ==============================================================
-# CONFIG
-# ==============================================================
-st.set_page_config(page_title="Entersoft ERP Translation Audit", page_icon="🧠", layout="wide")
-st.title("🧠 Entersoft ERP Translation Audit — Final Refined Edition")
+# ================= CONFIG =================
+st.set_page_config(page_title="ERP Translation Audit", layout="wide")
+st.title("🧠 ERP Translation Audit Dashboard")
 
-# ==============================================================
-# OPENAI
-# ==============================================================
-api_key = st.text_input("🔑 Enter your OpenAI API key:", type="password")
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except:
+    pass
+
+api_key = os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY")
 if not api_key:
+    st.error("❌ No API key found. Add it to .env or Streamlit secrets.")
     st.stop()
+
 client = OpenAI(api_key=api_key)
 MODEL = "gpt-4o-mini"
 
-# ==============================================================
-# OPTIONAL GLOSSARY
-# ==============================================================
-glossary_text = ""
-def load_glossary(df):
-    df.columns = [c.strip().lower() for c in df.columns]
-    g = next((c for c in df.columns if "greek" in c or "ελλην" in c), None)
-    e = next((c for c in df.columns if "approved" in c or "english" in c), None)
-    if g and e:
-        return "\n".join([f"{row[g]} → {row[e]}" for _, row in df.iterrows()])
-    return ""
-upl = st.file_uploader("📘 (Optional) Upload ERP glossary CSV", type=["csv"])
-if upl:
-    glossary_df = pd.read_csv(upl)
-    glossary_text = load_glossary(glossary_df)
-elif os.path.exists("erp_glossary.csv"):
-    glossary_df = pd.read_csv("erp_glossary.csv")
-    glossary_text = load_glossary(glossary_df)
-else:
-    glossary_text = "(no glossary provided)"
+# ================= FILE UPLOAD =================
+uploaded = st.file_uploader("📤 Upload translation Excel (Greek + English)", type=["xlsx", "csv"])
 
-# ==============================================================
-# SOURCE EXCEL
-# ==============================================================
-upl_file = st.file_uploader("📂 Upload Excel (Report_Name | Report_Description | Field_Name | Greek | English)", type=["xlsx"])
-if not upl_file:
-    st.info("Please upload your exported Excel file from SQL.")
-    st.stop()
-
-df = pd.read_excel(upl_file)
-st.write(f"✅ File loaded successfully — {len(df)} rows detected.")
-
-if st.checkbox("Run only first 30 rows (test mode)", value=True):
-    df = df.head(30)
-    st.warning("⚠️ Audit limited to 30 rows for testing.")
-
-req_cols = {"Report_Name", "Report_Description", "Field_Name", "Greek", "English"}
-if not req_cols.issubset(df.columns):
-    st.error(f"❌ Excel must contain columns: {req_cols}")
-    st.stop()
-
-# ==============================================================
-# BATCH SIZE (OUTSIDE BUTTON)
-# ==============================================================
-BATCH_SIZE = st.number_input("⚙️ Batch size (rows per GPT call)", min_value=10, max_value=200, value=50, step=10)
-
-# ==============================================================
-# HELPERS
-# ==============================================================
-def parse_ai_output(text):
-    rows = []
-    for ln in text.strip().splitlines():
-        p = [x.strip() for x in ln.split("|")]
-        if len(p) >= 9:
-            rows.append(dict(
-                Report_Name=p[0],
-                Report_Description=p[1],
-                Field_Name=p[2],
-                Greek=p[3],
-                English=p[4],
-                Corrected_English=p[5],
-                Status=p[6],
-                Status_Description=p[7],
-                Score=p[8]
-            ))
-    return rows
-
-def extract_num(s):
+# ================= GPT HELPER =================
+def translate_with_gpt(text):
+    if not text or pd.isna(text):
+        return ""
     try:
-        n = "".join(ch for ch in str(s) if ch.isdigit() or ch == ".")
-        return float(n) if n else 0
+        response = client.chat.completions.create(
+            model=MODEL,
+            messages=[
+                {"role": "system", "content": "You are a professional ERP translation auditor for Greek to English labels."},
+                {"role": "user", "content": f"Translate the following ERP field name from Greek to professional English: {text}"}
+            ],
+            temperature=0
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        return f"Error: {e}"
+
+# ================= LOGIC =================
+def evaluate_translation(greek, english):
+    """STATUS based on Greek -> English"""
+    if not english or english.strip() == "":
+        return 3, "Field_Not_Translated"
+    prompt = f"Does the English '{english}' accurately translate the Greek '{greek}'? Reply only with Yes or No."
+    try:
+        response = client.chat.completions.create(
+            model=MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0
+        )
+        answer = response.choices[0].message.content.strip().lower()
+        if "yes" in answer:
+            return 1, "Translated_Correct"
+        else:
+            return 2, "Translated_Not_Accurate"
     except:
-        return 0.0
+        return 2, "Translated_Not_Accurate"
 
-def quality_icon(score):
-    s = extract_num(score)
-    if s >= 90: return "🟢 Excellent"
-    if s >= 70: return "🟡 Review"
-    return "🔴 Poor"
+def evaluate_quality(greek, corrected_english):
+    """QUALITY based on Greek -> Corrected English"""
+    if not corrected_english or corrected_english.strip() == "":
+        return "Poor"
+    prompt = f"Evaluate if '{corrected_english}' correctly translates '{greek}'. Respond only with Excellent, Review, or Poor."
+    try:
+        response = client.chat.completions.create(
+            model=MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0
+        )
+        quality = response.choices[0].message.content.strip().title()
+        if "Excellent" in quality:
+            return "Excellent"
+        elif "Review" in quality:
+            return "Review"
+        else:
+            return "Poor"
+    except:
+        return "Review"
 
-# ==============================================================
-# MAIN AUDIT
-# ==============================================================
-if st.button("🚀 Run ERP AI Audit"):
+# ================= PROCESS =================
+if uploaded:
+    df = pd.read_excel(uploaded) if uploaded.name.endswith(".xlsx") else pd.read_csv(uploaded)
+    required_cols = ["Report_Name", "Report_Description", "Field_Name", "Greek", "English"]
+    if not all(c in df.columns for c in required_cols):
+        st.error(f"❌ Missing required columns: {required_cols}")
+        st.stop()
+
+    progress_text = st.empty()
+    progress_bar = st.progress(0)
     results = []
-    total = len(df)
-    progress = st.progress(0)
-    info = st.empty()
 
-    for start in range(0, total, BATCH_SIZE):
-        end = min(start + BATCH_SIZE, total)
-        batch = df.iloc[start:end]
-        lines = []
-        for _, r in batch.iterrows():
-            rn = str(r["Report_Name"]).strip()
-            rd = str(r["Report_Description"]).strip()
-            fn = str(r["Field_Name"]).strip()
-            gr = str(r["Greek"]).strip()
-            en = str(r["English"]).strip()
-            if not en or en.lower() == "nan": en = ""
-            lines.append(f"{rn} | {rd} | {fn} | {gr} | {en}")
-        joined = "\n".join(lines)
+    for i, row in df.iterrows():
+        greek, english = str(row["Greek"]).strip(), str(row["English"]).strip()
+        corrected = translate_with_gpt(greek)
 
-        prompt = f"""
-You are a senior ERP localization consultant specialized in Entersoft ERP and accounting terminology.
-Judge conceptually (not literally). Prefer ERP/accounting English: Net Value, Posting Date, Credit Note, Cost Center, Ledger Account, VAT Amount, Warehouse, etc.
+        status, status_desc = evaluate_translation(greek, english)
+        quality = evaluate_quality(greek, corrected)
 
-Reference ERP glossary:
-{glossary_text}
+        results.append({
+            "Report_Name": row["Report_Name"],
+            "Report_Description": row["Report_Description"],
+            "Field_Name": row["Field_Name"],
+            "Greek": greek,
+            "English": english,
+            "Corrected_English": corrected,
+            "Status": status,
+            "Status_Description": status_desc,
+            "Quality": quality
+        })
+        progress_bar.progress((i + 1) / len(df))
+        progress_text.text(f"Processed {i+1}/{len(df)} rows...")
 
-Statuses:
-1 = Translated_Correct
-2 = Translated_Not_Accurate
-3 = Field_Not_Translated
-4 = Field_Not_Found_On_Report_View
+    progress_bar.empty()
+    progress_text.empty()
 
-Scoring (0–100):
-90–100 Excellent | 70–89 Good | 50–69 Fair | <50 Poor
+    final_df = pd.DataFrame(results)
 
-Rules:
-• If English is blank, translate Greek immediately → Corrected_English.
-• Always assess translation quality comparing Corrected_English vs Greek only (ignore old English completely).
-• Output one line per input exactly as:
-Report_Name | Report_Description | Field_Name | Greek | English | Corrected_English | Status | Status_Description | Score
+    # Summary
+    weak_rows = final_df[final_df["Quality"].isin(["Review", "Poor"])]
+    if not weak_rows.empty:
+        st.warning(f"⚠️ {len(weak_rows)} weak translations found (<Excellent). Automatically improved.")
+    else:
+        st.success("✅ Audit completed successfully. All translations excellent.")
 
-Now analyze:
-{joined}
-"""
-        try:
-            r = client.chat.completions.create(
-                model=MODEL,
-                messages=[
-                    {"role": "system", "content": "You are an ERP translation auditor."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0
-            )
-            results.extend(parse_ai_output(r.choices[0].message.content))
-        except Exception as e:
-            st.warning(f"Batch {start}-{end} failed: {e}")
+    # Display final table
+    st.dataframe(final_df, use_container_width=True)
 
-        progress.progress(end / total)
-        info.write(f"Processed {end}/{total} rows...")
-
-    out = pd.DataFrame(results)
-    out["Score"] = out["Score"].apply(extract_num)
-    out["Quality"] = out["Score"].apply(quality_icon)
-
-    # ==============================================================
-    # AUTO-IMPROVE WEAK TRANSLATIONS (<70)
-    # ==============================================================
-    weak = out[out["Score"] < 70]
-    if len(weak) > 0:
-        st.warning(f"⚠️ {len(weak)} weak translations found (<70). Automatically improving...")
-        for idx, r in weak.iterrows():
-            gr = r["Greek"]
-            ce = r["Corrected_English"]
-            fix_prompt = f"""
-You are an Entersoft ERP expert. Improve this weak translation into the most accurate ERP/accounting English term.
-Greek: {gr}
-Current English: {ce}
-Return only the improved ERP term.
-"""
-            try:
-                fx = client.chat.completions.create(
-                    model=MODEL,
-                    messages=[{"role": "user", "content": fix_prompt}],
-                    temperature=0
-                )
-                new_term = fx.choices[0].message.content.strip()
-                out.at[idx, "Corrected_English"] = new_term
-                out.at[idx, "Status_Description"] = "Auto-Improved"
-                out.at[idx, "Score"] = 90
-            except Exception as e:
-                st.warning(f"Failed to improve row {idx}: {e}")
-        out["Quality"] = out["Score"].apply(quality_icon)
-
-    st.session_state["audit_results"] = out
-    st.success("✅ Audit completed and weak translations auto-corrected.")
-    st.dataframe(out.head(30))
-
-# ==============================================================
-# EXPORT
-# ==============================================================
-if "audit_results" in st.session_state:
-    out = st.session_state["audit_results"]
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "ERP Translation Audit"
-    ws.append(list(out.columns))
-    for c in ws[1]:
-        c.font = Font(bold=True)
-        c.alignment = Alignment(horizontal="center")
-    for _, r in out.iterrows():
-        ws.append([r[col] for col in out.columns])
-    for col in ws.columns:
-        ws.column_dimensions[col[0].column_letter].width = min(max(len(str(c.value or "")) for c in col) + 2, 60)
-
-    buf = io.BytesIO()
-    wb.save(buf)
-    buf.seek(0)
-    st.download_button(
-        "📥 Download Final Excel (Simplified)",
-        data=buf,
-        file_name="erp_translation_audit_final.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+    # Download
+    output = io.BytesIO()
+    final_df.to_excel(output, index=False)
+    st.download_button("💾 Download Final Excel (Simplified)", data=output.getvalue(),
+                       file_name="Translation_Audit_Final.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
