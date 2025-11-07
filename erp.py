@@ -4,13 +4,12 @@ from openai import OpenAI
 import io, os
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment
-from difflib import SequenceMatcher
 
 # ==========================================================
 # CONFIG
 # ==========================================================
 st.set_page_config(page_title="Entersoft ERP Translation Audit", page_icon="🧠", layout="wide")
-st.title("🧠 Entersoft ERP Translation Audit — Status + Quality Edition")
+st.title("🧠 Entersoft ERP Translation Audit — Status + Quality Edition (Final)")
 
 # ==========================================================
 # OPENAI
@@ -64,52 +63,87 @@ if not req_cols.issubset(df.columns):
     st.stop()
 
 # ==========================================================
-# HELPERS
+# GPT HELPERS
 # ==========================================================
-def similarity(a, b):
-    return SequenceMatcher(None, str(a).lower().strip(), str(b).lower().strip()).ratio()
+def get_status_via_gpt(client, model, greek: str, english_original: str, glossary_text: str) -> str:
+    """Classify only the existing English term against the Greek one."""
+    g = (greek or "").strip()
+    e = (english_original or "").strip()
 
-def get_status(greek, english):
-    """Compare Greek vs English to classify translation status."""
-    if not greek or str(greek).lower() == "nan":
+    if not g or g.lower() == "nan":
         return "Field_Not_Found_On_Report_View"
-    if not english or str(english).lower() == "nan" or english.strip() == "":
-        return "Field_Not_Translated"
-    sim = similarity(greek, english)
-    if sim > 0.75:
-        return "Translated_Correct"
-    elif sim > 0.35:
-        return "Translated_Not_Accurate"
-    else:
+    if not e or e.lower() == "nan":
         return "Field_Not_Translated"
 
-def get_quality_label(greek, corrected):
-    """Ask GPT to rate conceptual translation quality."""
+    prompt = f"""
+You are an Entersoft ERP localization auditor.
+Judge if the EXISTING English term is a correct conceptual translation of the Greek term
+in ERP/accounting context (Net Value, Posting Date, Credit Note, Ledger Account, etc.).
+
+Return ONLY one label:
+Translated_Correct
+Translated_Not_Accurate
+Field_Not_Translated
+Field_Not_Found_On_Report_View
+
+Greek: {g}
+Existing English: {e}
+
+Glossary reference:
+{glossary_text}
+"""
     try:
-        prompt = f"""
-Judge the conceptual translation quality between these two ERP fields:
-Greek: {greek}
-English: {corrected}
+        resp = client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0
+        )
+        label = resp.choices[0].message.content.strip()
+        allowed = {
+            "Translated_Correct",
+            "Translated_Not_Accurate",
+            "Field_Not_Translated",
+            "Field_Not_Found_On_Report_View",
+        }
+        return label if label in allowed else "Translated_Not_Accurate"
+    except Exception:
+        return "Translated_Not_Accurate"
 
-Choose only one option and return exactly it:
+
+def get_quality_label(client, model, greek: str, corrected: str) -> str:
+    """Rate conceptual quality between Greek and Corrected English."""
+    g = (greek or "").strip()
+    c = (corrected or "").strip()
+    if not g or not c:
+        return "🟡 Review"
+
+    prompt = f"""
+Judge conceptual translation quality in ERP/accounting context.
+
+Greek: {g}
+English: {c}
+
+Return EXACTLY one of:
 🟢 Excellent
 🟡 Review
 🔴 Poor
 """
+    try:
         r = client.chat.completions.create(
-            model=MODEL,
+            model=model,
             messages=[{"role": "user", "content": prompt}],
             temperature=0
         )
-        return r.choices[0].message.content.strip()
-    except:
+        out = r.choices[0].message.content.strip()
+        return out if out in {"🟢 Excellent","🟡 Review","🔴 Poor"} else "🟡 Review"
+    except Exception:
         return "🟡 Review"
 
 # ==========================================================
-# BATCH SIZE SELECTOR
+# BATCH SIZE
 # ==========================================================
 batch_size = st.slider("⚙️ Select batch size (rows per GPT call):", 10, 200, 50, step=10)
-st.caption("Smaller batches are slower but safer. Recommended: 50–100 rows per call.")
+st.caption("Larger batches = faster. Recommended: 50–100 rows per call.")
 
 # ==========================================================
 # MAIN AUDIT
@@ -125,13 +159,18 @@ if st.button("🚀 Run Full Auto Audit"):
         batch = df.iloc[start:end]
 
         for i, r in batch.iterrows():
-            rn, rd, fn = str(r["Report_Name"]).strip(), str(r["Report_Description"]).strip(), str(r["Field_Name"]).strip()
-            gr, en = str(r["Greek"]).strip(), str(r["English"]).strip()
-            if not en or en.lower() == "nan":
-                en = ""
+            rn = str(r["Report_Name"]).strip()
+            rd = str(r["Report_Description"]).strip()
+            fn = str(r["Field_Name"]).strip()
+            gr = str(r["Greek"]).strip()
+            en_orig = str(r["English"]).strip()
 
-            # ---------- Step 1: auto-translate blank English ----------
-            if not en:
+            # Step 1: Status based on Greek ↔ original English
+            status = get_status_via_gpt(client, MODEL, gr, en_orig, glossary_text)
+
+            # Step 2: Generate improved Corrected English
+            if not en_orig or en_orig.lower() == "nan" or en_orig.strip() == "":
+                seed_en = ""
                 try:
                     tr = client.chat.completions.create(
                         model=MODEL,
@@ -139,41 +178,41 @@ if st.button("🚀 Run Full Auto Audit"):
                                    "content": f"Translate the following Greek ERP field into proper English ERP/accounting terminology:\n\n{gr}"}],
                         temperature=0
                     )
-                    en = tr.choices[0].message.content.strip()
-                except Exception as e:
-                    st.warning(f"Translation failed at row {i}: {e}")
-                    en = "(translation missing)"
+                    seed_en = tr.choices[0].message.content.strip()
+                except Exception:
+                    seed_en = ""
+            else:
+                seed_en = en_orig
 
-            # ---------- Step 2: STATUS (Greek ↔ English) ----------
-            status = get_status(gr, en)
-
-            # ---------- Step 3: Corrected English ----------
             try:
                 fix = client.chat.completions.create(
                     model=MODEL,
                     messages=[{"role": "user",
-                               "content": f"Improve this ERP translation if needed to a correct professional English ERP/accounting term:\nGreek: {gr}\nEnglish: {en}\nReturn only the corrected English term."}],
+                               "content": f"Improve this ERP term to a correct professional accounting/ERP English label if needed.\nGreek: {gr}\nEnglish: {seed_en}\nReturn only the improved English term."}],
                     temperature=0
                 )
                 corrected = fix.choices[0].message.content.strip()
             except Exception:
-                corrected = en
+                corrected = seed_en
+
+            # Step 3: Quality = Greek ↔ Corrected English
+            quality = get_quality_label(client, MODEL, gr, corrected)
 
             results.append(dict(
-                Report_Name=rn, Report_Description=rd, Field_Name=fn,
-                Greek=gr, English=r["English"], Corrected_English=corrected,
-                Status=status
+                Report_Name=rn,
+                Report_Description=rd,
+                Field_Name=fn,
+                Greek=gr,
+                English=en_orig,
+                Corrected_English=corrected,
+                Status=status,
+                Quality=quality
             ))
 
             progress.progress(end / total)
             info.write(f"Processed {end}/{total} rows...")
 
     out = pd.DataFrame(results)
-
-    # ---------- Step 4: QUALITY (Greek ↔ Corrected English) ----------
-    st.info("🔍 Assessing conceptual quality (Greek ↔ Corrected English)...")
-    out["Quality"] = [get_quality_label(row["Greek"], row["Corrected_English"]) for _, row in out.iterrows()]
-
     st.session_state["audit_results"] = out
     st.success("✅ Full audit complete (Status + Quality).")
     st.dataframe(out.head(30))
@@ -196,7 +235,10 @@ if "audit_results" in st.session_state:
         ws.column_dimensions[col[0].column_letter].width = min(
             max(len(str(c.value or "")) for c in col) + 2, 60
         )
-    buf = io.BytesIO(); wb.save(buf); buf.seek(0)
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
     st.download_button(
         "📥 Download Final Excel (Status + Quality)",
         data=buf,
