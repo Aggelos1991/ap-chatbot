@@ -5,7 +5,7 @@ import io, os
 
 # ================= CONFIG =================
 st.set_page_config(page_title="ERP Translation Audit", layout="wide")
-st.title("🧠 ERP Translation Audit Dashboard")
+st.title("🧠 ERP Translation Audit Dashboard — With Glossary Support")
 
 try:
     from dotenv import load_dotenv
@@ -15,7 +15,6 @@ except:
 
 # ================= API KEY =================
 api_key = os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY")
-
 if not api_key:
     api_key = st.text_input("🔑 Enter your OpenAI API key:", type="password")
 
@@ -26,10 +25,37 @@ if not api_key:
 client = OpenAI(api_key=api_key)
 MODEL = "gpt-4o-mini"
 
-# ================= FILE UPLOAD =================
-uploaded = st.file_uploader("📤 Upload translation Excel (Greek + English)", type=["xlsx", "csv"])
+# ================= OPTIONAL ERP GLOSSARY =================
+st.subheader("📘 Optional ERP Glossary")
+glossary_text = ""
+glossary_file = st.file_uploader("Upload ERP Glossary (CSV)", type=["csv"], key="glossary")
 
-# ================= GPT HELPER =================
+def load_glossary(df):
+    """Convert ERP glossary CSV to text pairs Greek → English"""
+    df.columns = [c.strip().lower() for c in df.columns]
+    greek_col = next((c for c in df.columns if "greek" in c or "ελλην" in c), None)
+    eng_col = next((c for c in df.columns if "english" in c or "approved" in c), None)
+    if greek_col and eng_col:
+        return "\n".join([f"{row[greek_col]} → {row[eng_col]}" for _, row in df.iterrows()])
+    return ""
+
+if glossary_file:
+    glossary_df = pd.read_csv(glossary_file)
+    glossary_text = load_glossary(glossary_df)
+    st.success(f"✅ Loaded uploaded glossary with {len(glossary_df)} ERP terms.")
+elif os.path.exists("erp_glossary.csv"):
+    glossary_df = pd.read_csv("erp_glossary.csv")
+    glossary_text = load_glossary(glossary_df)
+    st.success(f"✅ Loaded local glossary with {len(glossary_df)} ERP terms.")
+else:
+    st.info("No glossary provided — running with AI-only terminology knowledge.")
+    glossary_text = "(no glossary provided)"
+
+# ================= UPLOAD TRANSLATION FILE =================
+st.subheader("📂 Upload Translations File")
+uploaded = st.file_uploader("Upload Excel or CSV containing translations", type=["xlsx", "csv"])
+
+# ================= GPT HELPERS =================
 def translate_with_gpt(text):
     if not text or pd.isna(text):
         return ""
@@ -37,8 +63,8 @@ def translate_with_gpt(text):
         response = client.chat.completions.create(
             model=MODEL,
             messages=[
-                {"role": "system", "content": "You are a professional ERP translation auditor for Greek to English labels."},
-                {"role": "user", "content": f"Translate the following ERP field name from Greek to professional English: {text}"}
+                {"role": "system", "content": "You are an ERP translation expert specialized in accounting and Entersoft ERP terminology."},
+                {"role": "user", "content": f"Translate this ERP field name from Greek to professional ERP English, using context:\n\nERP Glossary:\n{glossary_text}\n\nText: {text}"}
             ],
             temperature=0
         )
@@ -46,53 +72,44 @@ def translate_with_gpt(text):
     except Exception as e:
         return f"Error: {e}"
 
-# ================= LOGIC =================
 def evaluate_translation(greek, english):
-    """STATUS based on Greek -> English"""
     if not english or english.strip() == "":
         return 3, "Field_Not_Translated"
-    prompt = f"Does the English '{english}' accurately translate the Greek '{greek}'? Reply only with Yes or No."
+    prompt = f"Does the English '{english}' accurately translate the Greek '{greek}' in ERP/accounting context? Reply only with Yes or No."
     try:
-        response = client.chat.completions.create(
-            model=MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0
-        )
-        answer = response.choices[0].message.content.strip().lower()
-        if "yes" in answer:
-            return 1, "Translated_Correct"
-        else:
-            return 2, "Translated_Not_Accurate"
+        resp = client.chat.completions.create(model=MODEL, messages=[{"role":"user","content":prompt}], temperature=0)
+        ans = resp.choices[0].message.content.strip().lower()
+        return (1, "Translated_Correct") if "yes" in ans else (2, "Translated_Not_Accurate")
     except:
         return 2, "Translated_Not_Accurate"
 
 def evaluate_quality(greek, corrected_english):
-    """QUALITY based on Greek -> Corrected English"""
     if not corrected_english or corrected_english.strip() == "":
         return "Poor"
-    prompt = f"Evaluate if '{corrected_english}' correctly translates '{greek}'. Respond only with Excellent, Review, or Poor."
+    prompt = f"Evaluate if '{corrected_english}' correctly translates '{greek}' in ERP/accounting context. Respond only with Excellent, Review, or Poor."
     try:
-        response = client.chat.completions.create(
-            model=MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0
-        )
-        quality = response.choices[0].message.content.strip().title()
-        if "Excellent" in quality:
-            return "Excellent"
-        elif "Review" in quality:
-            return "Review"
-        else:
-            return "Poor"
+        resp = client.chat.completions.create(model=MODEL, messages=[{"role":"user","content":prompt}], temperature=0)
+        q = resp.choices[0].message.content.strip().title()
+        return "Excellent" if "Excellent" in q else "Review" if "Review" in q else "Poor"
     except:
         return "Review"
 
 # ================= PROCESS =================
 if uploaded:
     df = pd.read_excel(uploaded) if uploaded.name.endswith(".xlsx") else pd.read_csv(uploaded)
-    required_cols = ["Report_Name", "Report_Description", "Field_Name", "Greek", "English"]
-    if not all(c in df.columns for c in required_cols):
-        st.error(f"❌ Missing required columns: {required_cols}")
+
+    # Normalize column names
+    df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
+    mapping = {}
+    for col in df.columns:
+        if "report" in col and "name" in col: mapping["Report_Name"] = col
+        elif "report" in col and "desc" in col: mapping["Report_Description"] = col
+        elif "field" in col and "name" in col: mapping["Field_Name"] = col
+        elif "greek" in col or "ελλην" in col: mapping["Greek"] = col
+        elif "english" in col: mapping["English"] = col
+
+    if len(mapping) < 5:
+        st.error("❌ Could not detect all required columns (Report_Name, Report_Description, Field_Name, Greek, English).")
         st.stop()
 
     progress_text = st.empty()
@@ -100,16 +117,17 @@ if uploaded:
     results = []
 
     for i, row in df.iterrows():
-        greek, english = str(row["Greek"]).strip(), str(row["English"]).strip()
-        corrected = translate_with_gpt(greek)
+        greek = str(row[mapping["Greek"]]).strip()
+        english = str(row[mapping["English"]]).strip()
 
+        corrected = translate_with_gpt(greek)
         status, status_desc = evaluate_translation(greek, english)
         quality = evaluate_quality(greek, corrected)
 
         results.append({
-            "Report_Name": row["Report_Name"],
-            "Report_Description": row["Report_Description"],
-            "Field_Name": row["Field_Name"],
+            "Report_Name": row[mapping["Report_Name"]],
+            "Report_Description": row[mapping["Report_Description"]],
+            "Field_Name": row[mapping["Field_Name"]],
             "Greek": greek,
             "English": english,
             "Corrected_English": corrected,
@@ -117,6 +135,7 @@ if uploaded:
             "Status_Description": status_desc,
             "Quality": quality
         })
+
         progress_bar.progress((i + 1) / len(df))
         progress_text.text(f"Processed {i+1}/{len(df)} rows...")
 
@@ -128,17 +147,18 @@ if uploaded:
     # Summary
     weak_rows = final_df[final_df["Quality"].isin(["Review", "Poor"])]
     if not weak_rows.empty:
-        st.warning(f"⚠️ {len(weak_rows)} weak translations found (<Excellent). Automatically improved.")
+        st.warning(f"⚠️ {len(weak_rows)} weak translations found (<Excellent).")
     else:
         st.success("✅ Audit completed successfully. All translations excellent.")
 
-    # Display final table
     st.dataframe(final_df, use_container_width=True)
 
     # Download
     output = io.BytesIO()
     final_df.to_excel(output, index=False)
-    st.download_button("💾 Download Final Excel (Simplified)",
-                       data=output.getvalue(),
-                       file_name="Translation_Audit_Final.xlsx",
-                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    st.download_button(
+        "💾 Download Final Excel (with Glossary Context)",
+        data=output.getvalue(),
+        file_name="Translation_Audit_Final.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
