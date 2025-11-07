@@ -153,7 +153,7 @@ def match_invoices(erp_df, ven_df):
             "transferencia", "trf", "remesa", "pago", "deposit",
             "μεταφορά", "έμβασμα", "εξοφληση", "pagado", "paid", "cobro"
         ]
-        if any(k in txt for k in pay_kw):
+        if any(k in txt for k in pay_kw) and not re.search(r"\d{3,}", txt):
             return "IGNORE"
         if any(k in txt for k in ["credit", "nota", "abono", "cn", "πιστωτικό", "πίστωση", "ακυρωτικό"]):
             return "CN"
