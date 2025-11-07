@@ -1,11 +1,12 @@
 import pandas as pd
 import streamlit as st
 from openai import OpenAI
-import io, os, time
+from deep_translator import GoogleTranslator
+import io, os, time, re
 
-# ================= CONFIG =================
-st.set_page_config(page_title="ERP Translation Audit", layout="wide")
-st.title("🧠 ERP Translation Audit Dashboard")
+# ============ CONFIG ============
+st.set_page_config(page_title="ERP Translation Audit — Hybrid Fast Mode", layout="wide")
+st.title("🧠 ERP Translation Audit — Hybrid Ultra-Fast Edition")
 
 try:
     from dotenv import load_dotenv
@@ -13,7 +14,7 @@ try:
 except:
     pass
 
-# ================= API KEY =================
+# ============ API KEY ============
 api_key = os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY")
 if not api_key:
     api_key = st.text_input("🔑 Enter your OpenAI API key:", type="password")
@@ -24,154 +25,160 @@ if not api_key:
 client = OpenAI(api_key=api_key)
 MODEL = "gpt-4o-mini"
 
-# ================= BATCH SIZE =================
-BATCH_SIZE = st.number_input("⚙️ Batch size (recommended 30–100)", value=50, min_value=10, max_value=200, step=10)
+# ============ BATCH SIZE ============
+BATCH_SIZE = st.number_input("⚙️ GPT batch size (recommended 30–100)", value=80, min_value=10, max_value=200, step=10)
 
-# ================= OPTIONAL ERP GLOSSARY =================
+# ============ TEST MODE ============
+run_test = st.checkbox("🧪 Run only first 30 rows (test mode)", value=True)
+
+# ============ GLOSSARY ============
 st.subheader("📘 Optional ERP Glossary")
 glossary_text = ""
-glossary_file = st.file_uploader("Upload ERP Glossary (CSV)", type=["csv"], key="glossary")
+g_file = st.file_uploader("Upload ERP Glossary (CSV)", type=["csv"], key="glossary")
 
 def load_glossary(df):
     df.columns = [c.strip().lower() for c in df.columns]
-    greek_col = next((c for c in df.columns if "greek" in c or "ελλην" in c), None)
-    eng_col = next((c for c in df.columns if "english" in c or "approved" in c), None)
-    if greek_col and eng_col:
-        return "\n".join([f"{row[greek_col]} → {row[eng_col]}" for _, row in df.iterrows()])
+    g = next((c for c in df.columns if "greek" in c or "ελλην" in c), None)
+    e = next((c for c in df.columns if "english" in c or "approved" in c), None)
+    if g and e:
+        return "\n".join([f"{row[g]} → {row[e]}" for _, row in df.iterrows()])
     return ""
 
-if glossary_file:
-    glossary_df = pd.read_csv(glossary_file)
-    glossary_text = load_glossary(glossary_df)
-    st.success(f"✅ Loaded uploaded glossary with {len(glossary_df)} ERP terms.")
+if g_file:
+    df_g = pd.read_csv(g_file)
+    glossary_text = load_glossary(df_g)
+    st.success(f"✅ Loaded uploaded glossary with {len(df_g)} terms.")
 elif os.path.exists("erp_glossary.csv"):
-    glossary_df = pd.read_csv("erp_glossary.csv")
-    glossary_text = load_glossary(glossary_df)
-    st.success(f"✅ Loaded local glossary with {len(glossary_df)} ERP terms.")
+    df_g = pd.read_csv("erp_glossary.csv")
+    glossary_text = load_glossary(df_g)
+    st.success(f"✅ Loaded local glossary with {len(df_g)} terms.")
 else:
-    st.info("No glossary provided — running with AI-only terminology knowledge.")
     glossary_text = "(no glossary provided)"
+    st.info("No glossary provided — AI will rely on ERP/accounting knowledge.")
 
-# ================= UPLOAD TRANSLATION FILE =================
-st.subheader("📂 Upload Translations File")
-uploaded = st.file_uploader("Upload Excel or CSV containing translations", type=["xlsx", "csv"])
+# ============ FILE UPLOAD ============
+st.subheader("📂 Upload ERP Translation Export")
+uploaded = st.file_uploader("Upload Excel/CSV", type=["xlsx", "csv"])
+if not uploaded:
+    st.stop()
 
-# ================= MAIN PROCESS =================
-if uploaded and st.button("🚀 Run ERP Translation Audit"):
+# ============ HELPERS ============
+def fast_translate(text):
+    """Translate Greek quickly using GoogleTranslator; fallback to original if fails"""
+    try:
+        if not text or pd.isna(text): return ""
+        tr = GoogleTranslator(source="auto", target="en").translate(text)
+        return re.sub(r"[\r\n]+", " ", tr).strip()
+    except Exception:
+        return text
+
+def gpt_audit_batch(batch_df):
+    joined = "\n".join([
+        f"{r.Report_Name} | {r.Report_Description} | {r.Field_Name} | {r.Greek} | {r.Corrected_English}"
+        for _, r in batch_df.iterrows()
+    ])
+    prompt = f"""
+You are a senior ERP localization auditor specialized in Entersoft ERP and accounting terminology.
+Compare each Greek ↔ Corrected English pair conceptually.
+Return one line per record exactly as:
+Report_Name | Report_Description | Field_Name | Greek | Corrected_English | Status | Status_Description | Quality
+Statuses: 1=Translated_Correct, 2=Translated_Not_Accurate, 3=Field_Not_Translated
+Quality: 🟢 Excellent | 🟡 Review | 🔴 Poor
+ERP Glossary:
+{glossary_text}
+---
+{joined}
+""".strip()
+
+    try:
+        resp = client.chat.completions.create(
+            model=MODEL,
+            messages=[
+                {"role": "system", "content": "You are an ERP translation auditor."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0
+        )
+        text = resp.choices[0].message.content.strip()
+        rows = []
+        for line in text.splitlines():
+            parts = [p.strip() for p in line.split("|")]
+            if len(parts) >= 8:
+                rows.append({
+                    "Report_Name": parts[0],
+                    "Report_Description": parts[1],
+                    "Field_Name": parts[2],
+                    "Greek": parts[3],
+                    "Corrected_English": parts[4],
+                    "Status": parts[5],
+                    "Status_Description": parts[6],
+                    "Quality": parts[7]
+                })
+        return pd.DataFrame(rows)
+    except Exception as e:
+        st.warning(f"GPT batch failed: {e}")
+        return pd.DataFrame()
+
+# ============ MAIN PROCESS ============
+if st.button("🚀 Run Hybrid Audit"):
     df = pd.read_excel(uploaded) if uploaded.name.endswith(".xlsx") else pd.read_csv(uploaded)
     df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
 
-    mapping = {}
-    for col in df.columns:
-        if "report" in col and "name" in col: mapping["Report_Name"] = col
-        elif "report" in col and "desc" in col: mapping["Report_Description"] = col
-        elif "field" in col and "name" in col: mapping["Field_Name"] = col
-        elif "greek" in col or "ελλην" in col: mapping["Greek"] = col
-        elif "english" in col: mapping["English"] = col
-
-    if len(mapping) < 5:
-        st.error("❌ Could not detect all required columns (Report_Name, Report_Description, Field_Name, Greek, English).")
+    # auto-map columns
+    colmap = {}
+    for c in df.columns:
+        if "report" in c and "name" in c: colmap["Report_Name"] = c
+        elif "report" in c and "desc" in c: colmap["Report_Description"] = c
+        elif "field" in c and "name" in c: colmap["Field_Name"] = c
+        elif "greek" in c or "ελλην" in c: colmap["Greek"] = c
+        elif "english" in c: colmap["English"] = c
+    if len(colmap) < 5:
+        st.error("❌ Missing columns: Report_Name, Report_Description, Field_Name, Greek, English")
         st.stop()
 
-    total = len(df)
-    progress_text = st.empty()
-    progress_bar = st.progress(0)
-    results = []
+    # Limit rows if test mode
+    if run_test and len(df) > 30:
+        df = df.head(30)
+        st.warning("⚠️ Test mode active: only first 30 rows will be processed.")
 
-    # ============= BATCH LOOP =============
+    # FAST PASS translation
+    st.info("⚡ Running local fast translation first...")
+    df["Report_Name"] = df[colmap["Report_Name"]]
+    df["Report_Description"] = df[colmap["Report_Description"]]
+    df["Field_Name"] = df[colmap["Field_Name"]]
+    df["Greek"] = df[colmap["Greek"]]
+    df["English"] = df[colmap["English"]]
+    df["Corrected_English"] = df["Greek"].apply(fast_translate)
+
+    total = len(df)
+    progress = st.progress(0)
+    results = []
     for start in range(0, total, BATCH_SIZE):
         end = min(start + BATCH_SIZE, total)
-        batch = df.iloc[start:end]
-        progress_text.text(f"Processing batch {start+1}-{end} of {total}...")
+        batch = df.iloc[start:end].copy()
+        progress.progress(end / total)
+        audited = gpt_audit_batch(batch)
+        results.append(audited)
+        time.sleep(0.05)
+    progress.empty()
 
-        # ---- Build prompt for whole batch ----
-        batch_text = ""
-        for _, row in batch.iterrows():
-            rn = str(row[mapping["Report_Name"]]).strip()
-            rd = str(row[mapping["Report_Description"]]).strip()
-            fn = str(row[mapping["Field_Name"]]).strip()
-            gr = str(row[mapping["Greek"]]).strip()
-            en = str(row[mapping["English"]]).strip()
-            if not en or en.lower() == "nan": en = ""
-            batch_text += f"{rn} | {rd} | {fn} | {gr} | {en}\n"
+    # combine
+    audited_df = pd.concat(results, ignore_index=True)
+    merged = df.merge(audited_df, on=["Report_Name", "Report_Description", "Field_Name", "Greek", "Corrected_English"], how="left")
 
-        prompt = f"""
-You are a professional ERP localization auditor specialized in Entersoft ERP and accounting terminology.
-Analyze each of the following entries (Report_Name | Report_Description | Field_Name | Greek | English).
+    st.success("✅ Hybrid Audit Completed Successfully")
+    st.dataframe(merged.head(30), use_container_width=True)
 
-Rules:
-1️⃣ If English is blank, translate the Greek into professional ERP/accounting English.
-2️⃣ If English exists, evaluate it against the Greek.
-3️⃣ Always evaluate accuracy based on the *Corrected English* (the new version).
-4️⃣ Return exactly one line per entry with these fields, separated by "|":
-Report_Name | Report_Description | Field_Name | Greek | English | Corrected_English | Status | Status_Description | Quality
+    weak = merged[merged["Quality"].str.contains("Review|Poor", na=False)]
+    if not weak.empty:
+        st.warning(f"⚠️ {len(weak)} weak translations found (<Excellent)")
 
-Statuses:
-1 = Translated_Correct
-2 = Translated_Not_Accurate
-3 = Field_Not_Translated
-
-Quality levels:
-🟢 Excellent — fully correct ERP term
-🟡 Review — acceptable but could improve
-🔴 Poor — inaccurate or missing
-
-ERP Glossary reference:
-{glossary_text}
-
-Now analyze:
-{batch_text}
-""".strip()
-
-        # ---- GPT call (single batch) ----
-        try:
-            resp = client.chat.completions.create(
-                model=MODEL,
-                messages=[
-                    {"role": "system", "content": "You are an ERP translation auditor."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0
-            )
-
-            text = resp.choices[0].message.content.strip()
-            for line in text.splitlines():
-                parts = [x.strip() for x in line.split("|")]
-                if len(parts) >= 9:
-                    results.append({
-                        "Report_Name": parts[0],
-                        "Report_Description": parts[1],
-                        "Field_Name": parts[2],
-                        "Greek": parts[3],
-                        "English": parts[4],
-                        "Corrected_English": parts[5],
-                        "Status": parts[6],
-                        "Status_Description": parts[7],
-                        "Quality": parts[8]
-                    })
-
-        except Exception as e:
-            st.warning(f"⚠️ Batch {start}-{end} failed: {e}")
-
-        progress_bar.progress(end / total)
-        time.sleep(0.1)
-
-    # ============= FINAL OUTPUT =============
-    out = pd.DataFrame(results)
-    st.success("✅ Fast Audit completed successfully.")
-    st.dataframe(out.head(30), use_container_width=True)
-
-    # Summary
-    weak_rows = out[out["Quality"].str.contains("Review|Poor", na=False)]
-    if not weak_rows.empty:
-        st.warning(f"⚠️ {len(weak_rows)} weak translations found (<Excellent).")
-
-    # Download
+    # download
     output = io.BytesIO()
-    out.to_excel(output, index=False)
+    merged.to_excel(output, index=False)
     st.download_button(
-        "💾 Download Final Excel (Ultra Fast)",
+        "💾 Download Final Excel (Hybrid Audit)",
         data=output.getvalue(),
-        file_name="ERP_Translation_Audit_Fast.xlsx",
+        file_name="ERP_Translation_Audit_Hybrid.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
