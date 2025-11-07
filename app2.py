@@ -103,7 +103,7 @@ def clean_invoice_code(v):
     if not v:
         return ""
     s = str(v).strip().lower()
-    parts = re.split(r"[-_]", s)
+    parts = re.split(r"[-_.\s]", s)
     for p in reversed(parts):
         if re.fullmatch(r"\d{1,}", p) and not re.fullmatch(r"20[0-3]\d", p):
             s = p.lstrip("0")
