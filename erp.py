@@ -94,19 +94,18 @@ def merge_ocr_results(files):
 # ==============================
 def build_report(trans_df: pd.DataFrame, gr_df: pd.DataFrame, en_df: pd.DataFrame) -> pd.DataFrame:
     """Compare Greek vs English OCR tokens and produce a clean audit table."""
-    def norm(s):
-        s = str(s).strip()
-        s = re.sub(r"[\u00A0\s]+", " ", s)
-        return s.lower()
-
     rows = []
     for _, tr in trans_df.iterrows():
         greek_expected = str(tr["Greek"]).strip()
         eng_expected = str(tr["English"]).strip()
 
-        # --- Find OCR detections ---
-        gr_hits = gr_df[gr_df["text"].str.contains(greek_expected[:4], case=False, na=False)]
-        en_hits = en_df[en_df["text"].str.contains(eng_expected[:4], case=False, na=False)]
+        # --- Protect regex characters ---
+        greek_pattern = re.escape(greek_expected[:4])
+        english_pattern = re.escape(eng_expected[:4])
+
+        # --- Find OCR detections safely ---
+        gr_hits = gr_df[gr_df["text"].str.contains(greek_pattern, case=False, na=False, regex=True)]
+        en_hits = en_df[en_df["text"].str.contains(english_pattern, case=False, na=False, regex=True)]
 
         if gr_hits.empty:
             rows.append({
