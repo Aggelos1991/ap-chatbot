@@ -226,8 +226,16 @@ def match_invoices(erp_df, ven_df):
             break
 
     matched_df = pd.DataFrame(matched)
-    miss_erp = erp_use[~erp_use["invoice_erp"].isin(matched_df["ERP Invoice"] if not matched_df.empty else [])]
-    miss_ven = ven_use[~ven_use["invoice_ven"].isin(matched_df["Vendor Invoice"] if not matched_df.empty else [])]
+    erp_use["__inv_norm"] = erp_use["invoice_erp"].apply(clean_invoice_code)
+    ven_use["__inv_norm"] = ven_use["invoice_ven"].apply(clean_invoice_code)
+    
+    miss_erp = erp_use[~erp_use["__inv_norm"].isin(
+        matched_df["ERP Invoice"].apply(clean_invoice_code) if not matched_df.empty else []
+    )]
+    miss_ven = ven_use[~ven_use["__inv_norm"].isin(
+        matched_df["Vendor Invoice"].apply(clean_invoice_code) if not matched_df.empty else []
+    )]
+
 
     miss_erp = miss_erp.rename(columns={"invoice_erp": "Invoice", "__amt": "Amount", "date_erp": "Date"})
     miss_ven = miss_ven.rename(columns={"invoice_ven": "Invoice", "__amt": "Amount", "date_ven": "Date"})
