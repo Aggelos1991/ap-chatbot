@@ -1,11 +1,11 @@
 import pandas as pd
 import streamlit as st
 from openai import OpenAI
-import io, os
+import io, os, time
 
 # ================= CONFIG =================
 st.set_page_config(page_title="ERP Translation Audit", layout="wide")
-st.title("🧠 ERP Translation Audit Dashboard — With Glossary Support")
+st.title("🧠 ERP Translation Audit Dashboard — With Glossary + Batch Support")
 
 try:
     from dotenv import load_dotenv
@@ -17,13 +17,15 @@ except:
 api_key = os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY")
 if not api_key:
     api_key = st.text_input("🔑 Enter your OpenAI API key:", type="password")
-
 if not api_key:
     st.warning("Please enter your OpenAI API key to continue.")
     st.stop()
 
 client = OpenAI(api_key=api_key)
 MODEL = "gpt-4o-mini"
+
+# ================= BATCH SIZE =================
+BATCH_SIZE = st.number_input("⚙️ Batch size (recommended 30–100)", value=50, min_value=10, max_value=200, step=10)
 
 # ================= OPTIONAL ERP GLOSSARY =================
 st.subheader("📘 Optional ERP Glossary")
@@ -95,7 +97,7 @@ def evaluate_quality(greek, corrected_english):
         return "Review"
 
 # ================= PROCESS =================
-if uploaded:
+if uploaded and st.button("🚀 Run ERP Translation Audit"):
     df = pd.read_excel(uploaded) if uploaded.name.endswith(".xlsx") else pd.read_csv(uploaded)
 
     # Normalize column names
@@ -112,44 +114,49 @@ if uploaded:
         st.error("❌ Could not detect all required columns (Report_Name, Report_Description, Field_Name, Greek, English).")
         st.stop()
 
+    total = len(df)
     progress_text = st.empty()
     progress_bar = st.progress(0)
     results = []
 
-    for i, row in df.iterrows():
-        greek = str(row[mapping["Greek"]]).strip()
-        english = str(row[mapping["English"]]).strip()
+    for start in range(0, total, BATCH_SIZE):
+        end = min(start + BATCH_SIZE, total)
+        batch = df.iloc[start:end]
+        progress_text.text(f"Processing batch {start+1}-{end} of {total}...")
 
-        corrected = translate_with_gpt(greek)
-        status, status_desc = evaluate_translation(greek, english)
-        quality = evaluate_quality(greek, corrected)
+        for _, row in batch.iterrows():
+            greek = str(row[mapping["Greek"]]).strip()
+            english = str(row[mapping["English"]]).strip()
 
-        results.append({
-            "Report_Name": row[mapping["Report_Name"]],
-            "Report_Description": row[mapping["Report_Description"]],
-            "Field_Name": row[mapping["Field_Name"]],
-            "Greek": greek,
-            "English": english,
-            "Corrected_English": corrected,
-            "Status": status,
-            "Status_Description": status_desc,
-            "Quality": quality
-        })
+            corrected = translate_with_gpt(greek)
+            status, status_desc = evaluate_translation(greek, english)
+            quality = evaluate_quality(greek, corrected)
 
-        progress_bar.progress((i + 1) / len(df))
-        progress_text.text(f"Processed {i+1}/{len(df)} rows...")
+            results.append({
+                "Report_Name": row[mapping["Report_Name"]],
+                "Report_Description": row[mapping["Report_Description"]],
+                "Field_Name": row[mapping["Field_Name"]],
+                "Greek": greek,
+                "English": english,
+                "Corrected_English": corrected,
+                "Status": status,
+                "Status_Description": status_desc,
+                "Quality": quality
+            })
+
+        progress_bar.progress(end / total)
+        time.sleep(0.1)
 
     progress_bar.empty()
     progress_text.empty()
 
     final_df = pd.DataFrame(results)
+    st.success("✅ Audit completed successfully.")
 
     # Summary
     weak_rows = final_df[final_df["Quality"].isin(["Review", "Poor"])]
     if not weak_rows.empty:
         st.warning(f"⚠️ {len(weak_rows)} weak translations found (<Excellent).")
-    else:
-        st.success("✅ Audit completed successfully. All translations excellent.")
 
     st.dataframe(final_df, use_container_width=True)
 
@@ -157,8 +164,8 @@ if uploaded:
     output = io.BytesIO()
     final_df.to_excel(output, index=False)
     st.download_button(
-        "💾 Download Final Excel (with Glossary Context)",
+        "💾 Download Final Excel (with Glossary + Batching)",
         data=output.getvalue(),
-        file_name="Translation_Audit_Final.xlsx",
+        file_name="ERP_Translation_Audit_Final.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
