@@ -83,8 +83,11 @@ if st.button("🚀 Run ERP AI Audit"):
     progress = st.progress(0)
     info = st.empty()
 
-    for start in range(0, total, 50):
-        end = min(start + 50, total)
+    # ✅ Added: Batch size input field
+    BATCH_SIZE = st.number_input("Batch size (rows per GPT call)", min_value=10, max_value=200, value=50, step=10)
+
+    for start in range(0, total, BATCH_SIZE):
+        end = min(start + BATCH_SIZE, total)
         batch = df.iloc[start:end]
         lines = []
         for _, r in batch.iterrows():
