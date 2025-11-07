@@ -72,13 +72,6 @@ status_map = {
     "4": "Field_Not_Found_On_Report_View"
 }
 
-def extract_num(s):
-    try:
-        n = "".join(ch for ch in str(s) if ch.isdigit() or ch == ".")
-        return float(n) if n else 0
-    except:
-        return 0.0
-
 def get_quality_icon(greek, corrected):
     """Use GPT once more to classify conceptual translation quality (Greek vs Corrected English)."""
     try:
@@ -91,16 +84,17 @@ Rate:
 🟢 Excellent (precise ERP/accounting meaning)
 🟡 Review (close but slightly inaccurate or non-standard ERP term)
 🔴 Poor (wrong or irrelevant meaning)
-Return only one of these emojis: 🟢 or 🟡 or 🔴
+Return only one line with emoji and label, like:
+🟢 Excellent
 """
         r = client.chat.completions.create(
             model=MODEL,
             messages=[{"role": "user", "content": check_prompt}],
             temperature=0
         )
-        return r.choices[0].message.content.strip()[:2]
+        return r.choices[0].message.content.strip()
     except:
-        return "🟡"
+        return "🟡 Review"
 
 # ==========================================================
 # BATCH SIZE SELECTOR
