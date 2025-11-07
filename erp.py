@@ -73,7 +73,7 @@ status_map = {
 }
 
 def get_quality_icon(greek, corrected):
-    """Use GPT once more to classify conceptual translation quality (Greek vs Corrected English)."""
+    """Judge conceptual translation quality (Greek vs Corrected English)."""
     try:
         check_prompt = f"""
 Judge the conceptual translation quality of the following pair in an ERP/accounting context.
@@ -115,7 +115,7 @@ if st.button("🚀 Run Full Auto Audit"):
         end = min(start + batch_size, total)
         batch = df.iloc[start:end]
 
-        # ---------- combine rows for a single GPT call ----------
+        # combine rows for a single GPT call
         lines = []
         for _, r in batch.iterrows():
             rn, rd, fn = str(r["Report_Name"]).strip(), str(r["Report_Description"]).strip(), str(r["Field_Name"]).strip()
@@ -125,7 +125,7 @@ if st.button("🚀 Run Full Auto Audit"):
             lines.append(f"{rn} | {rd} | {fn} | {gr} | {en}")
         joined = "\n".join(lines)
 
-        # ---------- GPT prompt ----------
+        # main GPT audit
         prompt = f"""
 You are an Entersoft ERP localization auditor and translator.
 Compare each Greek field to its existing English translation and determine:
@@ -178,15 +178,22 @@ Now analyze:
     # ---------- create DataFrame ----------
     out = pd.DataFrame(results)
 
-    # ---------- generate Quality separately (Greek vs Corrected_English) ----------
+    # ---------- guarantee columns ----------
+    for col in ["Report_Name", "Report_Description", "Field_Name", "Greek", "English", "Corrected_English", "Status", "Score"]:
+        if col not in out.columns:
+            out[col] = ""
+
+    # ---------- generate Quality (Greek vs Corrected_English) ----------
     st.info("🔍 Assessing translation quality (Greek ↔ Corrected English)...")
     out["Quality"] = [get_quality_icon(row["Greek"], row["Corrected_English"]) for _, row in out.iterrows()]
 
     # ---------- display clean table ----------
     display_cols = ["Report_Name", "Report_Description", "Field_Name", "Greek", "English", "Corrected_English", "Status", "Quality"]
+    out_display = out[display_cols].copy()
+
     st.session_state["audit_results"] = out
     st.success("✅ Audit completed successfully.")
-    st.dataframe(out[display_cols].head(30))
+    st.dataframe(out_display.head(30))
 
 # ==========================================================
 # EXPORT
