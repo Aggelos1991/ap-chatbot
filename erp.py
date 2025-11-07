@@ -1,11 +1,13 @@
 import pandas as pd
 import streamlit as st
 from openai import OpenAI
-import time, io, os
+import time
+import io
+import os
 
 # === STREAMLIT CONFIG ===
 st.set_page_config(page_title="Entersoft ERP Translation Audit", page_icon="🧠", layout="wide")
-st.title("🧠 Entersoft AI Translation Audit — ERP-Aware Edition")
+st.title("🧠 Entersoft AI Translation Audit — Auto-Translate Edition")
 
 # === OPENAI SETUP ===
 api_key = st.text_input("🔑 Enter your OpenAI API key:", type="password")
@@ -14,7 +16,7 @@ if not api_key:
 
 client = OpenAI(api_key=api_key)
 
-# === LOAD OPTIONAL ERP GLOSSARY ===
+# === OPTIONAL ERP GLOSSARY ===
 glossary_text = ""
 if os.path.exists("erp_glossary.csv"):
     glossary_df = pd.read_csv("erp_glossary.csv")
@@ -24,7 +26,10 @@ else:
     st.info("No 'erp_glossary.csv' found — continuing without custom glossary.")
 
 # === FILE UPLOAD ===
-uploaded_file = st.file_uploader("📂 Upload Excel (Report_Name | Report_Description | Field_Name | Greek | English)", type=["xlsx"])
+uploaded_file = st.file_uploader(
+    "📂 Upload Excel (Report_Name | Report_Description | Field_Name | Greek | English)",
+    type=["xlsx"]
+)
 if not uploaded_file:
     st.info("Please upload your exported Excel file from SQL.")
     st.stop()
@@ -32,6 +37,7 @@ if not uploaded_file:
 df = pd.read_excel(uploaded_file)
 st.write(f"✅ File loaded successfully — {len(df)} rows detected.")
 
+# Validate required columns
 required_cols = {"Report_Name", "Report_Description", "Field_Name", "Greek", "English"}
 if not required_cols.issubset(df.columns):
     st.error(f"❌ Excel must contain these columns: {required_cols}")
@@ -42,6 +48,7 @@ BATCH_SIZE = st.number_input("Batch size (recommended 50–100)", value=50, step
 results = []
 
 def parse_ai_output(text):
+    """Parses GPT output from pipe-separated lines"""
     out = []
     for line in text.strip().splitlines():
         parts = [p.strip() for p in line.split("|")]
@@ -59,20 +66,27 @@ def parse_ai_output(text):
     return out
 
 # === PROCESS BUTTON ===
-if st.button("🚀 Run ERP-Aware AI Audit"):
+if st.button("🚀 Run ERP AI Audit"):
     total_batches = len(df) // BATCH_SIZE + (1 if len(df) % BATCH_SIZE else 0)
     progress = st.progress(0)
-    st.write("Processing translations with ERP context... Please wait.")
+    st.write("Processing translations... Please wait.")
 
     for i in range(0, len(df), BATCH_SIZE):
         batch = df.iloc[i:i+BATCH_SIZE]
-
         prompt_rows = []
+
         for _, row in batch.iterrows():
-            prompt_rows.append(
-                f"{row['Report_Name']} | {row['Report_Description']} | {row['Field_Name']} | "
-                f"{str(row['Greek']).strip()} | {str(row['English']).strip()}"
-            )
+            report_name = str(row["Report_Name"]).strip()
+            report_desc = str(row["Report_Description"]).strip()
+            field_name = str(row["Field_Name"]).strip()
+            greek = str(row["Greek"]).strip()
+            english = str(row["English"]).strip()
+
+            # 🧠 Auto-translate when English is missing or NaN
+            if not english or english.lower() == "nan":
+                english = f"[TRANSLATE] {greek}"
+
+            prompt_rows.append(f"{report_name} | {report_desc} | {field_name} | {greek} | {english}")
 
         joined = "\n".join(prompt_rows)
 
@@ -89,8 +103,11 @@ Reference ERP glossary (if present):
 Statuses:
 1 = Translated_Correct (conceptually accurate)
 2 = Translated_Not_Accurate (literal or wrong ERP term)
-3 = Field_Not_Translated (missing Greek or English)
+3 = Field_Not_Translated (English missing or incomplete — translate Greek professionally into ERP English)
 4 = Field_Not_Found_On_Report_View (irrelevant)
+
+If an English field contains “[TRANSLATE] …”, translate the Greek text into correct ERP/Accounting English terminology.
+Even when translating, keep the same status logic.
 
 Return each row in exactly this format:
 Report_Name | Report_Description | Field_Name | Greek | English | Corrected_English | Status | Status_Description
@@ -101,9 +118,9 @@ Now analyze:
 
         try:
             resp = client.chat.completions.create(
-                model="gpt-4o-mini",  # cheapest + strong reasoning
+                model="gpt-4o-mini",  # ✅ Cheap, fast, multilingual
                 messages=[
-                    {"role": "system", "content": "You are a strict ERP translation auditor. Respond only with the requested pipe-separated lines."},
+                    {"role": "system", "content": "You are a strict ERP translation auditor. Respond only in the requested format."},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0
@@ -135,11 +152,12 @@ Now analyze:
     out.to_excel(buffer, index=False, engine="openpyxl")
     buffer.seek(0)
 
-    st.success("✅ ERP-Aware Audit completed successfully!")
+    st.success("✅ ERP Audit completed successfully!")
     st.download_button(
         "📥 Download Results Excel",
         data=buffer,
         file_name="erp_translation_audit_results.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
-    st.dataframe(out)
+
+    st.dataframe(out)  # show all rows
