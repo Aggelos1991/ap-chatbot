@@ -1,7 +1,7 @@
 import pandas as pd
 import streamlit as st
 from openai import OpenAI
-import io, os, json, time
+import io, os, json, time, difflib
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment
 
@@ -15,10 +15,9 @@ st.title("🧠 Entersoft ERP Translation Audit — Smart-Batch ERP Expert Editio
 # OPENAI
 # ==========================================================
 api_key = st.text_input("🔑 Enter your OpenAI API key:", type="password")
-if not api_key:
-    st.stop()
+if not api_key: st.stop()
 client = OpenAI(api_key=api_key)
-MODEL = "gpt-4o-mini"     # 💡 fast + cheap + accurate
+MODEL = "gpt-4o-mini"   # 💡 Fast + Cost-efficient
 
 # ==========================================================
 # OPTIONAL GLOSSARY
@@ -72,46 +71,72 @@ Translate or refine each Greek field into clean, professional ERP-style English 
 Guidelines:
 • Be conceptual, not literal.
 • Use standard ERP terms: Net Value, Posting Date, Credit Note, Cost Center, Ledger Account, VAT Amount, Warehouse, Supplier, Customer, Invoice Number, Payment Method, Transaction Date.
-• Use Title Case (e.g., 'Posting Date', not 'posting date').
+• Use Title Case.
 • Return only the corrected ERP English term — no explanations.
 
 EXAMPLES:
 Καθαρή Αξία → Net Value
 Ημερομηνία Καταχώρησης → Posting Date
-Αριθμός Τιμολογίου → Invoice Number
+Πιστωτικό Τιμολόγιο → Credit Note
+Κέντρο Κόστους → Cost Center
 Πελάτης → Customer
 Προμηθευτής → Supplier
-Πιστωτικό Τιμολόγιο → Credit Note
-Τρόπος Πληρωμής → Payment Method
-Αποθήκη → Warehouse
-Κέντρο Κόστους → Cost Center
 Λογαριασμός Γενικής Λογιστικής → Ledger Account
 Ποσό ΦΠΑ → VAT Amount
+Αποθήκη → Warehouse
 """
 
 # ==========================================================
 # HELPER FUNCTIONS
 # ==========================================================
+def string_similarity(a, b):
+    return difflib.SequenceMatcher(None, a.lower().strip(), b.lower().strip()).ratio()
+
 def classify_status(greek: str, english_original: str) -> str:
     g, e = (greek or "").strip(), (english_original or "").strip()
     if not g or g.lower() == "nan":
         return "Field_Not_Found_On_Report_View"
     if not e or e.lower() == "nan" or e == "":
         return "Field_Not_Translated"
-    if g.lower() == e.lower():
+    sim = string_similarity(g, e)
+    if sim >= 0.95:
+        return "Translated_Correct"
+    elif sim >= 0.70:
+        return "Translated_Not_Accurate"
+    else:
         return "Field_Not_Translated"
-    return "Translated_Correct"
+
+def correct_erp_english(greek: str, english_seed: str) -> str:
+    g, seed = (greek or "").strip(), (english_seed or "").strip()
+    prompt = f"""{ERP_CONTEXT}
+
+Greek: {g}
+Existing English: {seed}
+
+Glossary Reference:
+{glossary_text}
+"""
+    try:
+        r = client.chat.completions.create(
+            model=MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0
+        )
+        return r.choices[0].message.content.strip()
+    except Exception:
+        return seed or "(translation missing)"
 
 def quality_label(greek: str, corrected: str) -> str:
-    if not corrected:
-        return "🔴 Poor"
+    g, c = (greek or "").strip(), (corrected or "").strip()
+    if not g or not c:
+        return "🟡 Review"
     prompt = f"""
-Judge conceptual translation quality between these ERP field names.
+Judge conceptual translation quality for ERP/accounting context.
 
-Greek: {greek}
-English: {corrected}
+Greek: {g}
+English: {c}
 
-Return one exact label:
+Return one:
 🟢 Excellent
 🟡 Review
 🔴 Poor
@@ -154,12 +179,12 @@ if st.button("🚀 Run Smart-Batch Audit"):
         end = min(start + batch_size, total)
         batch = df.iloc[start:end]
 
-        # --- build lines for GPT ---
+        # --- build GPT input for untranslated ---
         lines = []
         for _, r in batch.iterrows():
             gr = str(r["Greek"]).strip()
             en = str(r["English"]).strip()
-            if gr in cache:
+            if gr in cache or not gr:
                 continue
             lines.append(f"{gr} | {en}")
 
@@ -175,7 +200,6 @@ Glossary (optional reference):
 
 {os.linesep.join(lines)}
 """
-
             try:
                 r = client.chat.completions.create(
                     model=MODEL,
@@ -220,7 +244,7 @@ Glossary (optional reference):
 
     out = pd.DataFrame(results)
     st.session_state["audit_results"] = out
-    st.success("✅ Full audit complete (ERP expert quality + batching + caching).")
+    st.success("✅ Full audit complete (ERP expert quality + batching + similarity + caching).")
     st.dataframe(out.head(30))
 
 # ==========================================================
@@ -243,8 +267,8 @@ if "audit_results" in st.session_state:
         )
     buf = io.BytesIO(); wb.save(buf); buf.seek(0)
     st.download_button(
-        "📥 Download Final Excel (Smart-Batch ERP Expert Edition)",
+        "📥 Download Final Excel (ERP Expert Smart-Batch)",
         data=buf,
-        file_name="erp_translation_audit_smartbatch.xlsx",
+        file_name="erp_translation_audit_final.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
