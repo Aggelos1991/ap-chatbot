@@ -9,7 +9,7 @@ from openpyxl.styles import Font, Alignment
 # CONFIG
 # ==========================================================
 st.set_page_config(page_title="Entersoft ERP Translation Audit", page_icon="🧠", layout="wide")
-st.title("🧠 Entersoft ERP Translation Audit — Status + Quality Edition (Final)")
+st.title("🧠 Entersoft ERP Translation Audit — Hybrid ERP Intelligence + Speed")
 
 # ==========================================================
 # OPENAI
@@ -66,19 +66,18 @@ if not req_cols.issubset(df.columns):
 # GPT HELPERS
 # ==========================================================
 def get_status_via_gpt(client, model, greek: str, english_original: str, glossary_text: str) -> str:
-    """Classify only the existing English term against the Greek one."""
+    """Judge if the existing English is a correct conceptual translation of the Greek term."""
     g = (greek or "").strip()
     e = (english_original or "").strip()
 
     if not g or g.lower() == "nan":
         return "Field_Not_Found_On_Report_View"
-    if not e or e.lower() == "nan":
+    if not e or e.lower() == "nan" or e.strip() == "":
         return "Field_Not_Translated"
 
     prompt = f"""
 You are an Entersoft ERP localization auditor.
-Judge if the EXISTING English term is a correct conceptual translation of the Greek term
-in ERP/accounting context (Net Value, Posting Date, Credit Note, Ledger Account, etc.).
+Judge if the EXISTING English term correctly translates the Greek term in ERP/accounting context.
 
 Return ONLY one label:
 Translated_Correct
@@ -89,7 +88,7 @@ Field_Not_Found_On_Report_View
 Greek: {g}
 Existing English: {e}
 
-Glossary reference:
+Glossary reference (if any):
 {glossary_text}
 """
     try:
@@ -111,14 +110,14 @@ Glossary reference:
 
 
 def get_quality_label(client, model, greek: str, corrected: str) -> str:
-    """Rate conceptual quality between Greek and Corrected English."""
+    """Assess conceptual translation quality between Greek and Corrected English."""
     g = (greek or "").strip()
     c = (corrected or "").strip()
     if not g or not c:
         return "🟡 Review"
 
     prompt = f"""
-Judge conceptual translation quality in ERP/accounting context.
+Judge conceptual translation quality for the ERP/accounting context.
 
 Greek: {g}
 English: {c}
@@ -165,37 +164,34 @@ if st.button("🚀 Run Full Auto Audit"):
             gr = str(r["Greek"]).strip()
             en_orig = str(r["English"]).strip()
 
-            # Step 1: Status based on Greek ↔ original English
+            # Step 1: Determine STATUS based on Greek ↔ original English
             status = get_status_via_gpt(client, MODEL, gr, en_orig, glossary_text)
 
-            # Step 2: Generate improved Corrected English
-            if not en_orig or en_orig.lower() == "nan" or en_orig.strip() == "":
-                seed_en = ""
-                try:
-                    tr = client.chat.completions.create(
-                        model=MODEL,
-                        messages=[{"role": "user",
-                                   "content": f"Translate the following Greek ERP field into proper English ERP/accounting terminology:\n\n{gr}"}],
-                        temperature=0
-                    )
-                    seed_en = tr.choices[0].message.content.strip()
-                except Exception:
-                    seed_en = ""
-            else:
-                seed_en = en_orig
-
+            # Step 2: Generate improved ERP-corrected English (Hybrid Expert Mode)
+            seed_en = en_orig if en_orig and en_orig.lower() != "nan" else ""
             try:
                 fix = client.chat.completions.create(
                     model=MODEL,
                     messages=[{"role": "user",
-                               "content": f"Improve this ERP term to a correct professional accounting/ERP English label if needed.\nGreek: {gr}\nEnglish: {seed_en}\nReturn only the improved English term."}],
+                               "content": f"""
+You are a senior ERP and accounting localization expert specialized in Entersoft ERP.
+Improve or translate the following field name into precise, concise ERP English used in real systems.
+Prefer standard ERP terminology such as:
+Net Value, Posting Date, Credit Note, Cost Center, Ledger Account, VAT Amount, Warehouse, Supplier, Customer, Invoice Number, Payment Method, Transaction Date, etc.
+
+Maintain capitalization in Title Case.
+Return only the corrected ERP English label.
+
+Greek: {gr}
+Existing English: {seed_en}
+"""}],
                     temperature=0
                 )
                 corrected = fix.choices[0].message.content.strip()
             except Exception:
                 corrected = seed_en
 
-            # Step 3: Quality = Greek ↔ Corrected English
+            # Step 3: Quality between Greek ↔ Corrected English
             quality = get_quality_label(client, MODEL, gr, corrected)
 
             results.append(dict(
@@ -214,7 +210,7 @@ if st.button("🚀 Run Full Auto Audit"):
 
     out = pd.DataFrame(results)
     st.session_state["audit_results"] = out
-    st.success("✅ Full audit complete (Status + Quality).")
+    st.success("✅ Full audit complete (Hybrid ERP Intelligence + Speed).")
     st.dataframe(out.head(30))
 
 # ==========================================================
