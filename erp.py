@@ -21,26 +21,36 @@ client = OpenAI(api_key=api_key)
 
 # =========================
 # OPTIONAL ERP GLOSSARY (UPLOAD OR AUTOLOAD)
-# Expected CSV columns: Greek, Approved_English [, Category]
+# Auto-detects column names, avoids KeyError
 # =========================
 glossary_text = ""
+
+def load_glossary(df):
+    df.columns = [c.strip().lower() for c in df.columns]
+    greek_col = next((c for c in df.columns if "greek" in c or "ελλην" in c), None)
+    eng_col   = next((c for c in df.columns if "approved" in c or "english" in c), None)
+    if greek_col and eng_col:
+        return "\n".join([f"{row[greek_col]} → {row[eng_col]}" for _, row in df.iterrows()])
+    return ""
+
 uploaded_glossary = st.file_uploader("📘 Upload optional ERP glossary (CSV)", type=["csv"], key="gloss_upl")
 
 if uploaded_glossary:
     glossary_df = pd.read_csv(uploaded_glossary)
+    glossary_text = load_glossary(glossary_df)
     st.success(f"✅ Loaded uploaded glossary with {len(glossary_df)} ERP terms.")
-    glossary_text = "\n".join([f"{row['Greek']} → {row['Approved_English']}" for _, row in glossary_df.iterrows()])
 elif os.path.exists("erp_glossary.csv"):
     glossary_df = pd.read_csv("erp_glossary.csv")
+    glossary_text = load_glossary(glossary_df)
     st.success(f"✅ Loaded local glossary with {len(glossary_df)} ERP terms.")
-    glossary_text = "\n".join([f"{row['Greek']} → {row['Approved_English']}" for _, row in glossary_df.iterrows()])
 else:
+    glossary_df = pd.DataFrame()
     st.info("No glossary provided — running with AI-only terminology intelligence.")
 
 with st.expander("👀 Preview glossary (first 25 rows)"):
-    try:
+    if not glossary_df.empty:
         st.dataframe(glossary_df.head(25))
-    except Exception:
+    else:
         st.write("—")
 
 # =========================
@@ -75,10 +85,6 @@ with col_c:
 # HELPERS
 # =========================
 def parse_ai_output(text: str):
-    """
-    Expects lines:
-    Report_Name | Report_Description | Field_Name | Greek | English | Corrected_English | Status | Status_Description | Score
-    """
     rows = []
     for raw in text.strip().splitlines():
         parts = [p.strip() for p in raw.split("|")]
@@ -97,34 +103,30 @@ def parse_ai_output(text: str):
             })
     return rows
 
-def quality_icon(score_value):
-    try:
-        s = float(score_value)
-    except Exception:
-        return "⚪ Unknown"
-    if s >= 90: return "🟢 Excellent"
-    if s >= 70: return "🟡 Review"
-    return "🔴 Poor"
-
 def extract_score_number(s: str) -> float:
-    """Robust numeric extraction (handles '95', '95/100', 'Score: 95')."""
-    if s is None:
-        return 0.0
+    if s is None: return 0.0
     s = str(s)
     num = ""
-    dot_seen = False
+    dot = False
     for ch in s:
         if ch.isdigit():
             num += ch
-        elif ch == "." and not dot_seen:
+        elif ch == "." and not dot:
             num += ch
-            dot_seen = True
-        elif num:  # stop once number started and a non-numeric appears
+            dot = True
+        elif num:
             break
     try:
         return float(num) if num else 0.0
-    except Exception:
+    except:
         return 0.0
+
+def quality_icon(score_value):
+    try: s = float(score_value)
+    except: return "⚪ Unknown"
+    if s >= 90: return "🟢 Excellent"
+    if s >= 70: return "🟡 Review"
+    return "🔴 Poor"
 
 # =========================
 # INITIAL AUDIT
@@ -141,17 +143,15 @@ if st.button("🚀 Run ERP AI Audit"):
         prompt_rows = []
 
         for _, row in batch.iterrows():
-            report_name = str(row["Report_Name"]).strip()
-            report_desc = str(row["Report_Description"]).strip()
-            field_name  = str(row["Field_Name"]).strip()
-            greek       = str(row["Greek"]).strip()
-            english     = str(row["English"]).strip()
-            if not english or english.lower() == "nan":
-                english = ""
-            prompt_rows.append(f"{report_name} | {report_desc} | {field_name} | {greek} | {english}")
+            rn = str(row["Report_Name"]).strip()
+            rd = str(row["Report_Description"]).strip()
+            fn = str(row["Field_Name"]).strip()
+            gr = str(row["Greek"]).strip()
+            en = str(row["English"]).strip()
+            if not en or en.lower() == "nan": en = ""
+            prompt_rows.append(f"{rn} | {rd} | {fn} | {gr} | {en}")
 
         joined = "\n".join(prompt_rows)
-
         main_prompt = f"""
 You are a senior ERP localization consultant specialized in Entersoft ERP and accounting terminology.
 Judge conceptually (not literally). Prefer proper ERP/accounting English: Net Value, Posting Date, Credit Note, Cost Center, Ledger Account, VAT Amount, Warehouse, etc.
@@ -160,21 +160,17 @@ Reference ERP glossary (authoritative pairs):
 {glossary_text or '(no glossary provided)'}
 
 Statuses:
-1 = Translated_Correct (conceptually accurate)
-2 = Translated_Not_Accurate (literal/partial/wrong ERP term)
-3 = Field_Not_Translated (English missing → translate Greek to ERP English)
-4 = Field_Not_Found_On_Report_View (irrelevant to captions)
+1 = Translated_Correct
+2 = Translated_Not_Accurate
+3 = Field_Not_Translated
+4 = Field_Not_Found_On_Report_View
 
 Scoring (0–100):
-90–100 = Excellent ERP term
-70–89  = Good (minor nuance)
-50–69  = Fair (literal/partial)
-< 50   = Poor (misleading or wrong)
+90–100 Excellent | 70–89 Good | 50–69 Fair | <50 Poor
 
 Rules:
-• If English is blank, translate Greek — put translation ONLY in Corrected_English (do NOT change English column).
-• Evaluate accuracy primarily against Corrected_English (the new version).
-• Output one line per input EXACTLY as:
+• If English is blank, translate Greek → put translation ONLY in Corrected_English.
+• Output exactly as:
 Report_Name | Report_Description | Field_Name | Greek | English | Corrected_English | Status | Status_Description | Score
 
 Now analyze:
@@ -192,11 +188,6 @@ Now analyze:
             )
             text = resp.choices[0].message.content
             batch_rows = parse_ai_output(text)
-
-            # Warn if counts mismatch (helps catch model formatting issues)
-            if len(batch_rows) != len(prompt_rows):
-                st.warning(f"Batch {start}-{end}: expected {len(prompt_rows)} lines, got {len(batch_rows)}. Check model output formatting.")
-
             results.extend(batch_rows)
 
             if SHOW_PREVIEW:
@@ -208,59 +199,48 @@ Now analyze:
             st.warning(f"⚠️ Batch {start}-{end} failed: {e}")
 
     out = pd.DataFrame(results)
-    # Normalize Score to numeric strings (0–100)
     out["Score"] = out["Score"].apply(lambda x: f"{extract_score_number(x):.0f}")
     out["Quality"] = out["Score"].apply(quality_icon)
-
     st.session_state["audit_results"] = out
-    st.success("✅ Audit completed. You can now run manual re-evaluation if needed.")
+
+    st.success("✅ Audit completed.")
     st.dataframe(out.head(30))
 
 # =========================
-# MANUAL RE-EVALUATION (BASED ON Corrected_English vs Greek)
+# RE-EVALUATION
 # =========================
 if "audit_results" in st.session_state and st.button("🔁 Re-Evaluate Low-Score Rows (<70)"):
     out = st.session_state["audit_results"].copy()
-    low_idx = []
+    low_idx = [i for i, r in out.iterrows() if extract_score_number(r["Score"]) < 70]
 
-    for idx, row in out.iterrows():
-        score = extract_score_number(row["Score"])
-        if score < 70:
-            low_idx.append(idx)
-
-    st.info(f"Re-evaluating {len(low_idx)} rows based on Greek ↔ Corrected_English…")
-    for idx in low_idx:
-        greek = str(out.at[idx, "Greek"])
-        corr  = str(out.at[idx, "Corrected_English"])
-
+    st.info(f"Re-evaluating {len(low_idx)} rows...")
+    for i in low_idx:
+        greek = str(out.at[i, "Greek"])
+        corr = str(out.at[i, "Corrected_English"])
         re_prompt = f"""
-You are an Entersoft ERP expert. Re-evaluate translation accuracy between Greek and Corrected English
-— prioritize ERP/accounting correctness (e.g., Net Value, Posting Date, Credit Note, Cost Center, Ledger Account, VAT Amount).
-
+Re-evaluate ERP translation quality.
 Greek: {greek}
 Corrected English: {corr}
-
-Return ONLY a number from 0 to 100 representing accuracy/terminology quality.
+Return ONLY a number from 0 to 100.
 """.strip()
-
         try:
             fix = client.chat.completions.create(
                 model=MODEL,
                 messages=[{"role": "user", "content": re_prompt}],
                 temperature=0
             )
-            new_score = extract_score_number(fix.choices[0].message.content.strip())
-            out.at[idx, "Score"] = f"{new_score:.0f}"
-            prev_desc = str(out.at[idx, "Status_Description"])
-            if "Re-evaluated" not in prev_desc:
-                out.at[idx, "Status_Description"] = (prev_desc + " | Re-evaluated").strip(" |")
-            out.at[idx, "Retranslated"] = "🔁 Re-evaluated"
+            new_score = extract_score_number(fix.choices[0].message.content)
+            out.at[i, "Score"] = f"{new_score:.0f}"
+            out.at[i, "Retranslated"] = "🔁 Re-evaluated"
+            desc = str(out.at[i, "Status_Description"])
+            if "Re-evaluated" not in desc:
+                out.at[i, "Status_Description"] = (desc + " | Re-evaluated").strip(" |")
         except Exception as e:
-            st.warning(f"Could not re-evaluate row {idx}: {e}")
+            st.warning(f"Could not re-evaluate row {i}: {e}")
 
     out["Quality"] = out["Score"].apply(quality_icon)
     st.session_state["audit_results"] = out
-    st.success("✅ Manual re-evaluation completed.")
+    st.success("✅ Re-evaluation complete.")
     st.dataframe(out.head(30))
 
 # =========================
@@ -271,26 +251,17 @@ if "audit_results" in st.session_state:
     wb = Workbook()
     ws = wb.active
     ws.title = "ERP Translation Audit"
-
-    # Header
     ws.append(list(out.columns))
-    for cell in ws[1]:
-        cell.font = Font(bold=True)
-        cell.alignment = Alignment(horizontal="center")
-
-    # Rows
-    for _, row in out.iterrows():
-        ws.append([row[col] for col in out.columns])
-
-    # Auto widths
+    for c in ws[1]:
+        c.font = Font(bold=True)
+        c.alignment = Alignment(horizontal="center")
+    for _, r in out.iterrows():
+        ws.append([r[col] for col in out.columns])
     for col in ws.columns:
-        max_len = max(len(str(c.value or "")) for c in col)
-        ws.column_dimensions[col[0].column_letter].width = min(max_len + 2, 60)
-
+        ws.column_dimensions[col[0].column_letter].width = min(max(len(str(c.value or "")) for c in col) + 2, 60)
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
-
     st.download_button(
         "📥 Download Final Excel (with Quality Icons)",
         data=buf,
@@ -298,17 +269,12 @@ if "audit_results" in st.session_state:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
-    # Quick KPIs
     try:
-        numeric_scores = pd.to_numeric(out["Score"], errors="coerce")
-        avg_score = numeric_scores.mean()
-        excellent = (numeric_scores >= 90).sum()
-        review    = ((numeric_scores >= 70) & (numeric_scores < 90)).sum()
-        poor      = (numeric_scores < 70).sum()
+        num = pd.to_numeric(out["Score"], errors="coerce")
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Avg Score", f"{avg_score:.1f}")
-        c2.metric("🟢 Excellent", excellent)
-        c3.metric("🟡 Review", review)
-        c4.metric("🔴 Poor", poor)
-    except Exception:
+        c1.metric("Avg Score", f"{num.mean():.1f}")
+        c2.metric("🟢 Excellent", (num >= 90).sum())
+        c3.metric("🟡 Review", ((num >= 70) & (num < 90)).sum())
+        c4.metric("🔴 Poor", (num < 70).sum())
+    except:
         pass
