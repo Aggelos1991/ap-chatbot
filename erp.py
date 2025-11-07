@@ -13,9 +13,14 @@ try:
 except:
     pass
 
+# ================= API KEY =================
 api_key = os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY")
+
 if not api_key:
-    st.error("❌ No API key found. Add it to .env or Streamlit secrets.")
+    api_key = st.text_input("🔑 Enter your OpenAI API key:", type="password")
+
+if not api_key:
+    st.warning("Please enter your OpenAI API key to continue.")
     st.stop()
 
 client = OpenAI(api_key=api_key)
@@ -133,5 +138,7 @@ if uploaded:
     # Download
     output = io.BytesIO()
     final_df.to_excel(output, index=False)
-    st.download_button("💾 Download Final Excel (Simplified)", data=output.getvalue(),
-                       file_name="Translation_Audit_Final.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    st.download_button("💾 Download Final Excel (Simplified)",
+                       data=output.getvalue(),
+                       file_name="Translation_Audit_Final.xlsx",
+                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
