@@ -501,9 +501,18 @@ if uploaded_erp and uploaded_vendor:
             used_erp_inv = set(tier1["ERP Invoice"].astype(str)) if not tier1.empty else set()
             used_ven_inv = set(tier1["Vendor Invoice"].astype(str)) if not tier1.empty else set()
             if not miss_erp.empty:
-                miss_erp = miss_erp[~miss_erp["Invoice"].astype(str).isin(used_erp_inv)]
+                miss_erp = miss_erp[
+                    ~miss_erp["Invoice"].apply(clean_invoice_code).isin(
+                        [clean_invoice_code(x) for x in used_erp_inv]
+                    )
+                ]
             if not miss_ven.empty:
-                miss_ven = miss_ven[~miss_ven["Invoice"].astype(str).isin(used_ven_inv)]
+                miss_ven = miss_ven[
+                    ~miss_ven["Invoice"].apply(clean_invoice_code).isin(
+                        [clean_invoice_code(x) for x in used_ven_inv]
+                    )
+                ]
+
 
             # Tier-2
             tier2, _, _, miss_erp2, miss_ven2 = tier2_match(miss_erp, miss_ven)
