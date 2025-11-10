@@ -142,6 +142,85 @@ def normalize_columns(df, tag):
 def style(df, css):
     return df.style.apply(lambda _: [css] * len(_), axis=1)
 
+# ==================== DUPLICATE INVOICE AGGREGATION + OFFSET (FINAL STABLE) ==========================
+def aggregate_duplicates(df, tag):
+    """
+    Groups duplicate invoices, offsets Credit Notes (CN), and returns a clean table
+    with one row per invoice and a net Amount column.
+    Works safely even if invoices are blank or text.
+    """
+
+    import re
+    import pandas as pd
+    import streamlit as st
+
+    # --- Early exits ---
+    if df is None or df.empty:
+        st.info(f"ℹ️ Skipping {tag.upper()} aggregation — empty file.")
+        return df
+    inv_col = f"invoice_{tag}"
+    if inv_col not in df.columns:
+        st.warning(f"⚠️ No invoice column found for {tag.upper()}.")
+        return df
+
+    df = df.copy()
+
+    # --- Ensure debit/credit exist ---
+    for c in [f"debit_{tag}", f"credit_{tag}"]:
+        if c not in df.columns:
+            df[c] = 0.0
+
+    # --- Compute net value ---
+    df["__net"] = df.apply(
+        lambda r: normalize_number(r.get(f"debit_{tag}", 0)) -
+                  normalize_number(r.get(f"credit_{tag}", 0)), axis=1
+    )
+
+    # --- Normalize invoice codes ---
+    def norm_code(v):
+        if pd.isna(v) or str(v).strip() == "":
+            return None
+        s = str(v).upper().strip()
+        s = re.sub(r"[^A-Z0-9]", "", s)
+        s = s.replace("INV", "").replace("FACT", "").replace("F", "")
+        s = s.replace("CN", "").replace("AB", "").replace("CR", "")
+        return s.lstrip("0") or None
+
+    df["__code"] = df[inv_col].apply(norm_code)
+
+    # --- Drop blanks safely ---
+    df = df.dropna(subset=["__code"])
+    if df.empty:
+        st.info(f"ℹ️ {tag.upper()} aggregation skipped — no valid invoices found.")
+        return pd.DataFrame(columns=[inv_col, "Amount"])
+
+    # --- Group by invoice code ---
+    agg = df.groupby("__code", as_index=False)["__net"].sum()
+    agg.rename(columns={"__code": inv_col, "__net": "Amount"}, inplace=True)
+
+    # --- Remove net-zero (cancelled) invoices ---
+    agg = agg[agg["Amount"].round(2) != 0].copy()
+
+    # --- Add reference columns if exist ---
+    ref_cols = [inv_col]
+    for opt in [f"reason_{tag}", f"date_{tag}"]:
+        if opt in df.columns:
+            ref_cols.append(opt)
+    ref = df.groupby("__code").first().reset_index()[ref_cols]
+    agg = pd.merge(agg, ref, left_on=inv_col, right_on="__code", how="left").drop(columns=["__code"], errors="ignore")
+
+    # --- Streamlit summary ---
+    st.markdown(
+        f"<div style='background:#E3F2FD;padding:0.8rem;border-radius:8px;margin-bottom:0.5rem;'>"
+        f"🧮 <b>{tag.upper()}</b> aggregation complete — "
+        f"{len(df)} → {len(agg)} unique invoices. "
+        f"{(df.shape[0] - agg.shape[0])} cancelled or duplicate lines removed.</div>",
+        unsafe_allow_html=True
+    )
+
+    return agg.reset_index(drop=True)
+
+
 # ==================== MATCHING CORE ==========================
 def match_invoices(erp_df, ven_df):
     def doc_type(row, tag):
@@ -458,6 +537,10 @@ if uploaded_erp and uploaded_vendor:
         ven_df = normalize_columns(ven_raw, "ven")
         st.write("🧩 ERP columns detected:", list(erp_df.columns))
         st.write("🧩 Vendor columns detected:", list(ven_df.columns))
+        # --- NEW: Aggregate and offset duplicate invoices before matching ---
+        erp_df = aggregate_duplicates(erp_df, "erp")
+        ven_df = aggregate_duplicates(ven_df, "ven")
+
 
 
         with st.spinner("Analyzing invoices..."):
