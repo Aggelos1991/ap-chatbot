@@ -1,5 +1,5 @@
 # --------------------------------------------------------------
-# ReconRaptor — Vendor Reconciliation (FINAL • Cobro fix • Tier de-dup • FIXED)
+# ReconRaptor — Vendor Reconciliation (FINAL • Tier de-dup • FIXED)
 # --------------------------------------------------------------
 import streamlit as st
 import pandas as pd
@@ -10,6 +10,7 @@ from openpyxl.utils.dataframe import dataframe_to_rows
 from openpyxl.utils import get_column_letter
 from openpyxl.styles import PatternFill, Font, Alignment
 from difflib import SequenceMatcher
+import numpy as np
 
 # ==================== PAGE CONFIG & CSS ======================
 st.set_page_config(page_title="ReconRaptor — Vendor Reconciliation", layout="wide")
@@ -170,70 +171,35 @@ def match_invoices(erp_df, ven_df):
     erp_use = erp_df[erp_df["__type"] != "IGNORE"].copy()
     ven_use = ven_df[ven_df["__type"] != "IGNORE"].copy()
 
-    # consolidate duplicate invoice rows (cancellations/corrections)
-    def consolidate_by_invoice(df, inv_col):
-        records = []
-        cancel_kw = ["cancel", "cancellation", "correct", "correction", "storno", "reversal", "void", "αντιλογισ", "ακυρω", "διόρθωση"]
-        for inv, group in df.groupby(inv_col, dropna=False):
-            total = 0.0
-            for _, row in group.iterrows():
-                amt = normalize_number(row.get("__amt", 0))
-                reason = (str(row.get("reason_erp", "")) + " " + str(row.get("reason_ven", ""))).lower()
-                if any(k in reason for k in cancel_kw):
-                    total -= amt
-                elif row.get("__type", "INV") == "CN":
-                    total -= amt
-                else:
-                    total += amt
-            net = round(total, 2)
-            if abs(net) < 0.01:
-                continue
-            base = group.iloc[0].copy()
-            base["__amt"] = abs(net)
-            base["__type"] = "INV" if net > 0 else "CN"
-            records.append(base)
-        return pd.DataFrame(records)
-
-    erp_use = consolidate_by_invoice(erp_use, "invoice_erp")
-    ven_use = consolidate_by_invoice(ven_use, "invoice_ven")
-
     matched, used_vendor = [], set()
     for e_idx, e in erp_use.iterrows():
         e_inv = str(e.get("invoice_erp", "")).strip()
         e_amt = round(float(e.get("__amt", 0.0)), 2)
-        e_typ = e.get("__type", "INV")
         for v_idx, v in ven_use.iterrows():
             if v_idx in used_vendor:
                 continue
             v_inv = str(v.get("invoice_ven", "")).strip()
             v_amt = round(float(v.get("__amt", 0.0)), 2)
-            v_typ = v.get("__type", "INV")
-            if e_typ != v_typ or e_inv != v_inv:
-                continue
-            diff = abs(e_amt - v_amt)
-            status = "Perfect Match" if diff <= 0.01 else "Difference Match"
-            matched.append({
-                "ERP Invoice": e_inv,
-                "Vendor Invoice": v_inv,
-                "ERP Amount": e_amt,
-                "Vendor Amount": v_amt,
-                "Difference": round(diff, 2),
-                "Status": status
-            })
-            used_vendor.add(v_idx)
-            break
+            if e_inv == v_inv:
+                diff = abs(e_amt - v_amt)
+                status = "Perfect Match" if diff <= 0.01 else "Difference Match"
+                matched.append({
+                    "ERP Invoice": e_inv,
+                    "Vendor Invoice": v_inv,
+                    "ERP Amount": e_amt,
+                    "Vendor Amount": v_amt,
+                    "Difference": round(diff, 2),
+                    "Status": status
+                })
+                used_vendor.add(v_idx)
+                break
 
     matched_df = pd.DataFrame(matched)
     erp_use["__inv_norm"] = erp_use["invoice_erp"].apply(clean_invoice_code)
     ven_use["__inv_norm"] = ven_use["invoice_ven"].apply(clean_invoice_code)
-    
-    miss_erp = erp_use[~erp_use["__inv_norm"].isin(
-        matched_df["ERP Invoice"].apply(clean_invoice_code) if not matched_df.empty else []
-    )]
-    miss_ven = ven_use[~ven_use["__inv_norm"].isin(
-        matched_df["Vendor Invoice"].apply(clean_invoice_code) if not matched_df.empty else []
-    )]
 
+    miss_erp = erp_use[~erp_use["__inv_norm"].isin(matched_df["ERP Invoice"].apply(clean_invoice_code) if not matched_df.empty else [])]
+    miss_ven = ven_use[~ven_use["__inv_norm"].isin(matched_df["Vendor Invoice"].apply(clean_invoice_code) if not matched_df.empty else [])]
 
     miss_erp = miss_erp.rename(columns={"invoice_erp": "Invoice", "__amt": "Amount", "date_erp": "Date"})
     miss_ven = miss_ven.rename(columns={"invoice_ven": "Invoice", "__amt": "Amount", "date_ven": "Date"})
@@ -241,6 +207,7 @@ def match_invoices(erp_df, ven_df):
     miss_erp = miss_erp[[c for c in keep_cols if c in miss_erp.columns]].reset_index(drop=True)
     miss_ven = miss_ven[[c for c in keep_cols if c in miss_ven.columns]].reset_index(drop=True)
     return matched_df, miss_erp, miss_ven
+
 
 # ==================== REST OF YOUR APP (TIERS, PAYMENTS, UI, EXPORT) ====================
 # 👇 (Keep everything exactly as in your latest working file — this fix only corrected
