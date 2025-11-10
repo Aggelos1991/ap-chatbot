@@ -492,20 +492,25 @@ if uploaded_erp and uploaded_vendor:
 
 
             # Tier-3
+                       # Tier-3
             tier3, _, _, final_erp_miss, final_ven_miss = tier3_match(miss_erp2, miss_ven2)
-           if not final_erp_miss.empty:
+
+            if not final_erp_miss.empty:
                 final_erp_miss = final_erp_miss[
                     ~final_erp_miss["Invoice"].apply(clean_invoice_code).isin(
                         [clean_invoice_code(x) for x in used_erp_inv]
                     )
                 ]
+
             if not final_ven_miss.empty:
                 final_ven_miss = final_ven_miss[
                     ~final_ven_miss["Invoice"].apply(clean_invoice_code).isin(
                         [clean_invoice_code(x) for x in used_ven_inv]
                     )
                 ]
-            
+
+            # Payments
+            erp_pay, ven_pay, pay_match = extract_payments(erp_df, ven_df)
 
             # Payments
             erp_pay, ven_pay, pay_match = extract_payments(erp_df, ven_df)
