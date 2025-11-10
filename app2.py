@@ -234,13 +234,15 @@ def match_invoices(erp_df, ven_df):
         matched_df["Vendor Invoice"].apply(clean_invoice_code) if not matched_df.empty else []
     )]
 
-
     miss_erp = miss_erp.rename(columns={"invoice_erp": "Invoice", "__amt": "Amount", "date_erp": "Date"})
     miss_ven = miss_ven.rename(columns={"invoice_ven": "Invoice", "__amt": "Amount", "date_ven": "Date"})
     keep_cols = ["Invoice", "Amount", "Date"]
     miss_erp = miss_erp[[c for c in keep_cols if c in miss_erp.columns]].reset_index(drop=True)
     miss_ven = miss_ven[[c for c in keep_cols if c in miss_ven.columns]].reset_index(drop=True)
     return matched_df, miss_erp, miss_ven
+
+# (continues below unchanged...)
+
 
 # ==================== REST OF YOUR APP (TIERS, PAYMENTS, UI, EXPORT) ====================
 # 👇 (Keep everything exactly as in your latest working file — this fix only corrected
