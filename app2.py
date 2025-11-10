@@ -626,7 +626,14 @@ if uploaded_erp and uploaded_vendor:
         diff = tier1[tier1["Status"] == "Difference Match"] if not tier1.empty else pd.DataFrame()
 
         def safe_sum(df, col):
-            return float(df[col].sum()) if not df.empty and col in df.columns else 0.0
+            if df.empty or col not in df.columns:
+                return 0.0
+            try:
+                vals = pd.to_numeric(df[col], errors="coerce")
+                return float(vals.fillna(0).sum())
+            except Exception:
+                return 0.0
+
 
         with c1:
             st.markdown('<div class="metric-container perfect-match">', unsafe_allow_html=True)
