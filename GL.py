@@ -1,101 +1,106 @@
 import streamlit as st
-import pandas as pd
 from openpyxl import load_workbook
 from io import BytesIO
 
-st.set_page_config(page_title="Excel Aggregator & Mapper", layout="wide")
-st.title("📘 Excel Aggregator & Mapper — Sheet2 Διάσταση 2 → Sheet1 Τίτλος")
+st.set_page_config(page_title="Διάσταση 2 Aggregator", layout="wide")
+st.title("📘 Διάσταση 2 → Τίτλος Mapping & Aggregation")
 
 uploaded = st.file_uploader("📁 Upload Excel (.xlsx)", type=["xlsx"])
+
+# Zero accounts start with 50.*
+def is_zero_account(val):
+    try:
+        return str(val).strip().startswith("50")
+    except:
+        return False
+
+# Mapping (Διάσταση 2 → Τίτλος)
+mapping = {
+    "--": "Προμηθευτές Capex πιστωτικά υπόλοιπα τέλους περιόδου",
+    "01 - OpEx Payables": "Προμηθευτές Capex πιστωτικά υπόλοιπα τέλους περιόδου",
+    "03 - Other Payables": "Προμηθευτές Capex πιστωτικά υπόλοιπα τέλους περιόδου",
+    "100 - General B2B Invoices – Payments": "Προμηθευτές Capex πιστωτικά υπόλοιπα τέλους περιόδου",
+    "110 - B2B Aging collections": "Προμηθευτές Capex πιστωτικά υπόλοιπα τέλους περιόδου",
+    "2200 - Development Capex": "Προμηθευτές Capex πιστωτικά υπόλοιπα τέλους περιόδου",
+    "300 - Financing Cashflows": "Προμηθευτές Capex πιστωτικά υπόλοιπα τέλους περιόδου",
+    "02 - CapEx Payables": "Προμηθευτές πιστωτικά υπόλοιπα τέλους περιόδου",
+    "04 - OpEx Advances": "Προμηθευτές χρεωστικά (προκαταβολές) υπόλοιπα τέλους περιόδου - Χρεώστες",
+    "05 - CapEx Advances": "Προμηθευτές χρεωστικά (προκαταβολές) υπόλοιπα τέλους περιόδου - Προκαταβολές για αγορές Παγίων",
+    "06 - Other Advances": "Προμηθευτές χρεωστικά (προκαταβολές) υπόλοιπα τέλους περιόδου - Χρεώστες"
+}
+reverse_mapping = {v: k for k, v in mapping.items()}
 
 if uploaded:
     try:
         wb = load_workbook(uploaded)
-        ws1 = wb.worksheets[0]   # Sheet 1 target
-        ws2 = wb.worksheets[1]   # Sheet 2 source
+        ws1 = wb.worksheets[0]  # Sheet1
+        ws2 = wb.worksheets[1]  # Sheet2
 
-        zero_accounts = [
-            "50.00.00.0000","50.00.00.0001","50.00.00.0002",
-            "50.00.00.0003","50.01.00.0000","50.01.01.0000","50.05.00.0000"
-        ]
-
-        # --- Delete column E (Λογαριασμός λογιστικής) ---
+        # --- Delete column E (Λογαριασμός λογιστικής)
         for col in range(1, ws1.max_column + 1):
             if str(ws1.cell(row=1, column=col).value).strip() == "Λογαριασμός λογιστικής":
                 ws1.delete_cols(col)
                 break
 
-        # --- Find Πιστωτικό Υπόλοιπο column ---
-        target_col = None
-        for col in range(1, ws1.max_column + 1):
-            if str(ws1.cell(row=1, column=col).value).strip() == "Πιστωτικό Υπόλοιπο":
-                target_col = col
-                break
-        if not target_col:
-            st.error("❌ Column 'Πιστωτικό Υπόλοιπο' not found in Sheet 1.")
+        # --- Locate key columns ---
+        def find_col(ws, keyword):
+            for c in range(1, ws.max_column + 1):
+                val = ws.cell(row=1, column=c).value
+                if val and keyword in str(val):
+                    return c
+            return None
+
+        col_d2 = find_col(ws2, "Διάσταση 2")
+        col_K = find_col(ws2, "Χρεωστικό Υπόλοιπο - Σύνολα")
+        col_L = find_col(ws2, "Πιστωτικό Υπόλοιπο - Σύνολα")
+        col_titlos = find_col(ws1, "Τίτλος")
+        col_credit = find_col(ws1, "Πιστωτικό Υπόλοιπο")
+
+        if not all([col_d2, col_K, col_L, col_titlos, col_credit]):
+            st.error("❌ Missing one of required columns (Διάσταση 2, Κ, L, Τίτλος, Πιστωτικό Υπόλοιπο).")
             st.stop()
 
-        insert_pos = target_col + 1
-        ws1.insert_cols(insert_pos)
-        ws1.cell(row=1, column=insert_pos, value="Διάσταση 2 (Source)")
+        # --- Aggregate K+L totals from Sheet2 ---
+        aggregates = {}
+        for r in range(2, ws2.max_row + 1):
+            d2 = str(ws2.cell(r, col_d2).value).strip() if ws2.cell(r, col_d2).value else ""
+            if not d2:
+                continue
+            k_val = float(ws2.cell(r, col_K).value or 0)
+            l_val = float(ws2.cell(r, col_L).value or 0)
+            aggregates[d2] = aggregates.get(d2, 0) + k_val + l_val
 
-        # --- Read Sheet 2 to DataFrame ---
-        df2 = pd.DataFrame(ws2.values)
-        df2.columns = df2.iloc[0]
-        df2 = df2.drop(0)
+        # --- Insert new column after Πιστωτικό Υπόλοιπο ---
+        insert_col = col_credit + 1
+        ws1.insert_cols(insert_col)
+        ws1.cell(1, insert_col, "Διάσταση 2 (Source)")
 
-        col_dim2 = next((c for c in df2.columns if "Διάσταση" in str(c)), None)
-        col_K = df2.columns[10] if len(df2.columns) > 10 else df2.columns[-2]
-        col_L = df2.columns[11] if len(df2.columns) > 11 else df2.columns[-1]
+        # --- Update Sheet1 ---
+        for r in range(2, ws1.max_row + 1):
+            acc = ws1.cell(r, 4).value
+            titlos = str(ws1.cell(r, col_titlos).value or "").strip()
 
-        if not col_dim2:
-            st.error("❌ Could not find 'Διάσταση 2' column in Sheet 2.")
-            st.stop()
+            if is_zero_account(acc):
+                # Zeroed accounts
+                ws1.cell(r, col_K, 0)
+                ws1.cell(r, col_L, 0)
+                ws1.cell(r, insert_col, "")
+                continue
 
-        df2[col_K] = pd.to_numeric(df2[col_K], errors="coerce").fillna(0)
-        df2[col_L] = pd.to_numeric(df2[col_L], errors="coerce").fillna(0)
-
-        # --- Aggregate ---
-        agg = df2.groupby(col_dim2)[[col_K, col_L]].sum().reset_index()
-
-        # --- Read Sheet 1 → DataFrame to access Τίτλος values ---
-        df1 = pd.DataFrame(ws1.values)
-        df1.columns = df1.iloc[0]
-        df1 = df1.drop(0)
-
-        if "Τίτλος" not in df1.columns:
-            st.error("❌ Column 'Τίτλος' not found in Sheet 1.")
-            st.stop()
-
-        # Build mapping dictionary directly from Sheet 2 (Διάσταση 2 → aggregated sum)
-        mapping = dict(zip(agg[col_dim2], agg[col_K] + agg[col_L]))
-
-        # --- Fill Διάσταση 2 (Source) in Sheet 1 ---
-        for row in range(2, ws1.max_row + 1):
-            title = str(ws1.cell(row=row, column=list(df1.columns).index("Τίτλος")+1).value).strip() if "Τίτλος" in df1.columns else ""
-            k_cell = ws1.cell(row=row, column=11)
-            l_cell = ws1.cell(row=row, column=12)
-            acc = str(ws1.cell(row=row, column=4).value).strip() if ws1.cell(row=row, column=4).value else ""
-
-            if acc in zero_accounts:
-                k_cell.value = 0
-                l_cell.value = 0
-                ws1.cell(row=row, column=insert_pos, value="")
+            d2_key = reverse_mapping.get(titlos)
+            if d2_key and d2_key in aggregates:
+                ws1.cell(r, col_K, aggregates[d2_key])
+                ws1.cell(r, col_L, aggregates[d2_key])
+                ws1.cell(r, insert_col, d2_key)
             else:
-                matched_value = mapping.get(title, "")
-                ws1.cell(row=row, column=insert_pos, value=matched_value)
+                ws1.cell(r, insert_col, "")
 
-        # --- Auto-fit columns ---
-        for col in ws1.columns:
-            maxlen = max((len(str(c.value)) for c in col if c.value), default=0)
-            ws1.column_dimensions[col[0].column_letter].width = maxlen + 2
-
-        # --- Save ---
+        # --- Save back ---
         out = BytesIO()
         wb.save(out)
         out.seek(0)
 
-        st.success("✅ Mapping (Διάσταση 2 → Τίτλος) completed successfully!")
+        st.success("✅ Aggregation complete. Διάσταση 2 and K/L updated in Sheet1.")
         st.download_button(
             "⬇️ Download Updated Excel",
             data=out,
