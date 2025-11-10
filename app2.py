@@ -142,104 +142,6 @@ def normalize_columns(df, tag):
 def style(df, css):
     return df.style.apply(lambda _: [css] * len(_), axis=1)
 
-# ==================== AGGREGATE + OFFSET DUPLICATE INVOICES ==========================
-# ==================== AGGREGATE + OFFSET DUPLICATE INVOICES (SAFE FINAL) ==========================
-# ==================== AGGREGATE + OFFSET DUPLICATE INVOICES (FINAL SAFE EDITION) ==========================
-# ==================== AGGREGATE + OFFSET DUPLICATE INVOICES (FINAL • NO KEYERROR) ==========================
-def aggregate_duplicates(df, tag):
-    """
-    Fully safe duplicate & CN aggregation.
-    - Handles missing or empty invoice columns
-    - Returns a valid DataFrame in every case
-    - Never raises '__code' KeyError
-    """
-
-    import re
-    import pandas as pd
-    import streamlit as st
-
-    # If file empty or not loaded
-    if df is None or df.empty:
-        st.info(f"ℹ️ Skipping {tag.upper()} aggregation — empty file.")
-        return pd.DataFrame()
-
-    inv_col = f"invoice_{tag}"
-
-    # If no invoice column → return same df untouched
-    if inv_col not in df.columns:
-        st.warning(f"⚠️ No invoice column found for {tag.upper()} — aggregation skipped.")
-        return df
-
-    df = df.copy()
-
-    # Guarantee debit/credit columns exist
-    for c in [f"debit_{tag}", f"credit_{tag}"]:
-        if c not in df.columns:
-            df[c] = 0.0
-
-    # Compute net = Debit - Credit
-    df["__net"] = df.apply(
-        lambda r: normalize_number(r.get(f"debit_{tag}", 0))
-        - normalize_number(r.get(f"credit_{tag}", 0)),
-        axis=1
-    )
-
-    # Normalize invoice codes
-    def norm_code(v):
-        if pd.isna(v) or str(v).strip() == "":
-            return None
-        s = str(v).upper().strip()
-        s = re.sub(r"[^A-Z0-9]", "", s)
-        s = s.replace("INV", "").replace("FACT", "").replace("F", "")
-        s = s.replace("CN", "").replace("AB", "").replace("CR", "")
-        return s.lstrip("0") or None
-
-    # Build __code column safely
-    df["__code"] = df[inv_col].apply(norm_code)
-
-    # Drop blanks
-    df = df.dropna(subset=["__code"])
-    if df.empty:
-        st.info(f"ℹ️ {tag.upper()} aggregation skipped — all invoice rows blank.")
-        return pd.DataFrame(columns=[inv_col, "Amount"])
-
-    # ---- Aggregate ----
-    agg = df.groupby("__code", as_index=False)["__net"].sum()
-    agg = agg.rename(columns={"__code": inv_col, "__net": "Amount"})
-
-    # Remove cancelled (net = 0)
-    agg = agg[agg["Amount"].round(2) != 0].copy()
-
-    # Merge back reason/date if they exist
-    ref_cols = [inv_col]
-    if f"reason_{tag}" in df.columns:
-        ref_cols.append(f"reason_{tag}")
-    if f"date_{tag}" in df.columns:
-        ref_cols.append(f"date_{tag}")
-
-    if "__code" in df.columns:
-        ref = df.groupby("__code").first().reset_index()[ref_cols]
-        agg = pd.merge(agg, ref, left_on=inv_col, right_on=inv_col, how="left")
-
-    # --- Status message ---
-    try:
-        st.markdown(
-            f"<div style='background:#E3F2FD;padding:0.8rem;border-radius:8px;margin-bottom:0.5rem;'>"
-            f"🧮 <b>{tag.upper()}</b> aggregation complete — "
-            f"{len(df)} → {len(agg)} unique invoices. "
-            f"{(df.shape[0] - agg.shape[0])} cancelled or duplicate lines removed.</div>",
-            unsafe_allow_html=True
-        )
-    except Exception:
-        pass
-
-    # Always return a valid DataFrame
-    return agg.reset_index(drop=True)
-
-
-
-
-
 # ==================== MATCHING CORE ==========================
 def match_invoices(erp_df, ven_df):
     def doc_type(row, tag):
@@ -556,10 +458,6 @@ if uploaded_erp and uploaded_vendor:
         ven_df = normalize_columns(ven_raw, "ven")
         st.write("🧩 ERP columns detected:", list(erp_df.columns))
         st.write("🧩 Vendor columns detected:", list(ven_df.columns))
-        # --- NEW: Aggregate and offset duplicate invoices ---
-        erp_df = aggregate_duplicates(erp_df, "erp")
-        ven_df = aggregate_duplicates(ven_df, "ven")
-
 
 
         with st.spinner("Analyzing invoices..."):
@@ -626,14 +524,7 @@ if uploaded_erp and uploaded_vendor:
         diff = tier1[tier1["Status"] == "Difference Match"] if not tier1.empty else pd.DataFrame()
 
         def safe_sum(df, col):
-            if df.empty or col not in df.columns:
-                return 0.0
-            try:
-                vals = pd.to_numeric(df[col], errors="coerce")
-                return float(vals.fillna(0).sum())
-            except Exception:
-                return 0.0
-
+            return float(df[col].sum()) if not df.empty and col in df.columns else 0.0
 
         with c1:
             st.markdown('<div class="metric-container perfect-match">', unsafe_allow_html=True)
