@@ -145,42 +145,46 @@ def style(df, css):
 # ==================== AGGREGATE + OFFSET DUPLICATE INVOICES ==========================
 # ==================== AGGREGATE + OFFSET DUPLICATE INVOICES (SAFE FINAL) ==========================
 # ==================== AGGREGATE + OFFSET DUPLICATE INVOICES (FINAL SAFE EDITION) ==========================
+# ==================== AGGREGATE + OFFSET DUPLICATE INVOICES (FINAL • NO KEYERROR) ==========================
 def aggregate_duplicates(df, tag):
     """
-    Groups duplicate invoice numbers, sums their net amounts (Debit - Credit),
-    and cancels Credit Notes (CN) or negative lines against their invoices.
-    Fully safe: handles empty invoice columns or missing '__code' gracefully.
+    Fully safe duplicate & CN aggregation.
+    - Handles missing or empty invoice columns
+    - Returns a valid DataFrame in every case
+    - Never raises '__code' KeyError
     """
 
     import re
     import pandas as pd
     import streamlit as st
 
-    # Early exit for empty DataFrame
+    # If file empty or not loaded
     if df is None or df.empty:
         st.info(f"ℹ️ Skipping {tag.upper()} aggregation — empty file.")
-        return df
+        return pd.DataFrame()
 
     inv_col = f"invoice_{tag}"
+
+    # If no invoice column → return same df untouched
     if inv_col not in df.columns:
-        st.warning(f"⚠️ No invoice column found for {tag.upper()}.")
+        st.warning(f"⚠️ No invoice column found for {tag.upper()} — aggregation skipped.")
         return df
 
     df = df.copy()
 
-    # Ensure numeric debit/credit exist
+    # Guarantee debit/credit columns exist
     for c in [f"debit_{tag}", f"credit_{tag}"]:
         if c not in df.columns:
             df[c] = 0.0
 
-    # Compute net amount (Debit - Credit)
+    # Compute net = Debit - Credit
     df["__net"] = df.apply(
         lambda r: normalize_number(r.get(f"debit_{tag}", 0))
         - normalize_number(r.get(f"credit_{tag}", 0)),
         axis=1
     )
 
-    # --- Normalize invoice codes safely ---
+    # Normalize invoice codes
     def norm_code(v):
         if pd.isna(v) or str(v).strip() == "":
             return None
@@ -190,49 +194,48 @@ def aggregate_duplicates(df, tag):
         s = s.replace("CN", "").replace("AB", "").replace("CR", "")
         return s.lstrip("0") or None
 
-    # Create the column explicitly before any filtering
-    df["__code"] = df[inv_col].apply(norm_code) if inv_col in df.columns else None
+    # Build __code column safely
+    df["__code"] = df[inv_col].apply(norm_code)
 
-    # Defensive: if __code column is entirely missing or null
-    if "__code" not in df.columns or df["__code"].isna().all():
-        st.warning(f"⚠️ {tag.upper()} aggregation skipped — no valid invoice codes found.")
-        return df
-
-    # Drop rows where __code is missing
+    # Drop blanks
     df = df.dropna(subset=["__code"])
     if df.empty:
-        st.warning(f"⚠️ {tag.upper()} aggregation skipped — all invoice rows were blank.")
-        return df
+        st.info(f"ℹ️ {tag.upper()} aggregation skipped — all invoice rows blank.")
+        return pd.DataFrame(columns=[inv_col, "Amount"])
 
-    # Group by normalized invoice code and sum net values
-    agg = (
-        df.groupby("__code", as_index=False)["__net"]
-        .sum()
-        .rename(columns={"__code": inv_col, "__net": "Amount"})
-    )
+    # ---- Aggregate ----
+    agg = df.groupby("__code", as_index=False)["__net"].sum()
+    agg = agg.rename(columns={"__code": inv_col, "__net": "Amount"})
 
-    # Remove fully cancelled (net = 0)
+    # Remove cancelled (net = 0)
     agg = agg[agg["Amount"].round(2) != 0].copy()
 
-    # Add reference info (invoice, reason, date)
+    # Merge back reason/date if they exist
     ref_cols = [inv_col]
     if f"reason_{tag}" in df.columns:
         ref_cols.append(f"reason_{tag}")
     if f"date_{tag}" in df.columns:
         ref_cols.append(f"date_{tag}")
-    ref = df.groupby("__code").first().reset_index()[ref_cols]
-    agg = pd.merge(agg, ref, left_on=inv_col, right_on="__code", how="left").drop(columns=["__code"], errors="ignore")
 
-    # --- Streamlit summary ---
-    st.markdown(
-        f"<div style='background:#E3F2FD;padding:0.8rem;border-radius:8px;margin-bottom:0.5rem;'>"
-        f"🧮 <b>{tag.upper()}</b> aggregation complete — "
-        f"{len(df)} → {len(agg)} unique invoices. "
-        f"{(df.shape[0] - agg.shape[0])} cancelled or duplicate lines removed.</div>",
-        unsafe_allow_html=True
-    )
+    if "__code" in df.columns:
+        ref = df.groupby("__code").first().reset_index()[ref_cols]
+        agg = pd.merge(agg, ref, left_on=inv_col, right_on=inv_col, how="left")
 
-    return agg
+    # --- Status message ---
+    try:
+        st.markdown(
+            f"<div style='background:#E3F2FD;padding:0.8rem;border-radius:8px;margin-bottom:0.5rem;'>"
+            f"🧮 <b>{tag.upper()}</b> aggregation complete — "
+            f"{len(df)} → {len(agg)} unique invoices. "
+            f"{(df.shape[0] - agg.shape[0])} cancelled or duplicate lines removed.</div>",
+            unsafe_allow_html=True
+        )
+    except Exception:
+        pass
+
+    # Always return a valid DataFrame
+    return agg.reset_index(drop=True)
+
 
 
 
