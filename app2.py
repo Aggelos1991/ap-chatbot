@@ -12,6 +12,10 @@ from openpyxl.styles import PatternFill, Font, Alignment
 from difflib import SequenceMatcher
 import numpy as np
 
+erp_raw = pd.read_excel(uploaded_erp, dtype=str)
+test_aggregate(erp_raw)
+
+
 # ==================== PAGE CONFIG & CSS ======================
 st.set_page_config(page_title="ReconRaptor — Vendor Reconciliation", layout="wide")
 st.markdown(
