@@ -292,6 +292,17 @@ def tier2_match(erp_miss, ven_miss):
     rem_v = v[~v.index.isin(used_v)].copy()
     return mdf, used_e, used_v, rem_e, rem_v
 
+# After Tier-2
+tier2, _, _, miss_erp2, miss_ven2 = tier2_match(miss_erp, miss_ven)
+if not tier2.empty:
+    used_erp_inv |= set(tier2["ERP Invoice"].astype(str))
+    used_ven_inv |= set(tier2["Vendor Invoice"].astype(str))
+
+# Remove Tier-2 matched invoices completely
+miss_erp2 = miss_erp2[~miss_erp2["Invoice"].astype(str).isin(used_erp_inv)]
+miss_ven2 = miss_ven2[~miss_ven2["Invoice"].astype(str).isin(used_ven_inv)]
+
+
 # ------- Tier-3: same DATE + strong fuzzy (no amount threshold) -------
 def tier3_match(erp_miss, ven_miss):
     if erp_miss.empty or ven_miss.empty:
@@ -342,6 +353,17 @@ def tier3_match(erp_miss, ven_miss):
     rem_e = e[~e.index.isin(used_e)].copy()
     rem_v = v[~v.index.isin(used_v)].copy()
     return mdf, used_e, used_v, rem_e, rem_v
+
+# After Tier-3
+tier3, _, _, final_erp_miss, final_ven_miss = tier3_match(miss_erp2, miss_ven2)
+if not tier3.empty:
+    used_erp_inv |= set(tier3["ERP Invoice"].astype(str))
+    used_ven_inv |= set(tier3["Vendor Invoice"].astype(str))
+
+# Final cleanup
+final_erp_miss = final_erp_miss[~final_erp_miss["Invoice"].astype(str).isin(used_erp_inv)]
+final_ven_miss = final_ven_miss[~final_ven_miss["Invoice"].astype(str).isin(used_ven_inv)]
+
 
 # ------- Payments detection & matching (reason + invoice text) -------
 # ------- Payments detection & matching (reason + invoice text) -------
