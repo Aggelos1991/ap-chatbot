@@ -532,9 +532,18 @@ if uploaded_erp and uploaded_vendor:
                 used_erp_inv |= set(tier3["ERP Invoice"].astype(str))
                 used_ven_inv |= set(tier3["Vendor Invoice"].astype(str))
                 if not final_erp_miss.empty:
-                    final_erp_miss = final_erp_miss[~final_erp_miss["Invoice"].astype(str).isin(used_erp_inv)]
+                    final_erp_miss = final_erp_miss[
+                        ~final_erp_miss["Invoice"].apply(clean_invoice_code).isin(
+                            [clean_invoice_code(x) for x in used_erp_inv]
+                        )
+                    ]
                 if not final_ven_miss.empty:
-                    final_ven_miss = final_ven_miss[~final_ven_miss["Invoice"].astype(str).isin(used_ven_inv)]
+                    final_ven_miss = final_ven_miss[
+                        ~final_ven_miss["Invoice"].apply(clean_invoice_code).isin(
+                            [clean_invoice_code(x) for x in used_ven_inv]
+                        )
+                    ]
+
 
             # Payments
             erp_pay, ven_pay, pay_match = extract_payments(erp_df, ven_df)
