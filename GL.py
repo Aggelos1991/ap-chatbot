@@ -2,20 +2,19 @@ import streamlit as st
 from openpyxl import load_workbook
 from io import BytesIO
 
-st.set_page_config(page_title="Διάσταση 2 Aggregator", layout="wide")
-st.title("📘 Διάσταση 2 → Τίτλος Mapping & Aggregation")
+st.set_page_config(page_title="Διάσταση2 Aggregator (B,K,L only)", layout="wide")
+st.title("📊 Sheet2→Sheet1: Aggregate by Διάσταση 2 (B) and write K & L")
 
-uploaded = st.file_uploader("📁 Upload Excel (.xlsx)", type=["xlsx"])
+uploaded = st.file_uploader("Upload Excel (.xlsx)", type=["xlsx"])
 
-# Zero accounts start with 50.*
-def is_zero_account(val):
-    try:
-        return str(val).strip().startswith("50")
-    except:
-        return False
+# ----- EXACT zero accounts you provided -----
+ZERO_ACCOUNTS = {
+    "50.00.00.0000","50.00.00.0001","50.00.00.0002","50.00.00.0003",
+    "50.01.00.0000","50.01.01.0000","50.05.00.0000"
+}
 
-# Mapping (Διάσταση 2 → Τίτλος)
-mapping = {
+# Διάσταση 2 → Greek title (for matching Sheet1 rows by Τίτλος)
+D2_TO_TITLE = {
     "--": "Προμηθευτές Capex πιστωτικά υπόλοιπα τέλους περιόδου",
     "01 - OpEx Payables": "Προμηθευτές Capex πιστωτικά υπόλοιπα τέλους περιόδου",
     "03 - Other Payables": "Προμηθευτές Capex πιστωτικά υπόλοιπα τέλους περιόδου",
@@ -28,85 +27,104 @@ mapping = {
     "05 - CapEx Advances": "Προμηθευτές χρεωστικά (προκαταβολές) υπόλοιπα τέλους περιόδου - Προκαταβολές για αγορές Παγίων",
     "06 - Other Advances": "Προμηθευτές χρεωστικά (προκαταβολές) υπόλοιπα τέλους περιόδου - Χρεώστες"
 }
-reverse_mapping = {v: k for k, v in mapping.items()}
+# reverse: Greek title → Διάσταση 2 key
+TITLE_TO_D2 = {v.strip(): k for k, v in D2_TO_TITLE.items()}
+
+def find_col_exact(ws, name):
+    for c in range(1, ws.max_column + 1):
+        v = ws.cell(1, c).value
+        if v and str(v).strip() == name:
+            return c
+    return None
+
+def find_col_contains(ws, needle):
+    needle = needle.lower()
+    for c in range(1, ws.max_column + 1):
+        v = ws.cell(1, c).value
+        if v and needle in str(v).lower():
+            return c
+    return None
 
 if uploaded:
     try:
         wb = load_workbook(uploaded)
-        ws1 = wb.worksheets[0]  # Sheet1
-        ws2 = wb.worksheets[1]  # Sheet2
+        ws1 = wb.worksheets[0]   # Sheet1 (target)
+        ws2 = wb.worksheets[1]   # Sheet2 (source)
 
-        # --- Delete column E (Λογαριασμός λογιστικής)
-        for col in range(1, ws1.max_column + 1):
-            if str(ws1.cell(row=1, column=col).value).strip() == "Λογαριασμός λογιστικής":
-                ws1.delete_cols(col)
-                break
+        # ---- Delete duplicate column E if it's "Λογαριασμός λογιστικής"
+        dupE = find_col_exact(ws1, "Λογαριασμός λογιστικής")
+        if dupE: ws1.delete_cols(dupE)
 
-        # --- Locate key columns ---
-        def find_col(ws, keyword):
-            for c in range(1, ws.max_column + 1):
-                val = ws.cell(row=1, column=c).value
-                if val and keyword in str(val):
-                    return c
-            return None
+        # ---- Sheet2 aggregation by positions: B, K, L
+        B_col = 2   # Διάσταση 2
+        K_col = 11  # column K
+        L_col = 12  # column L
 
-        col_d2 = find_col(ws2, "Διάσταση 2")
-        col_K = find_col(ws2, "Χρεωστικό Υπόλοιπο - Σύνολα")
-        col_L = find_col(ws2, "Πιστωτικό Υπόλοιπο - Σύνολα")
-        col_titlos = find_col(ws1, "Τίτλος")
-        col_credit = find_col(ws1, "Πιστωτικό Υπόλοιπο")
-
-        if not all([col_d2, col_K, col_L, col_titlos, col_credit]):
-            st.error("❌ Missing one of required columns (Διάσταση 2, Κ, L, Τίτλος, Πιστωτικό Υπόλοιπο).")
-            st.stop()
-
-        # --- Aggregate K+L totals from Sheet2 ---
-        aggregates = {}
+        aggK = {}  # d2 -> sum(K)
+        aggL = {}  # d2 -> sum(L)
         for r in range(2, ws2.max_row + 1):
-            d2 = str(ws2.cell(r, col_d2).value).strip() if ws2.cell(r, col_d2).value else ""
-            if not d2:
-                continue
-            k_val = float(ws2.cell(r, col_K).value or 0)
-            l_val = float(ws2.cell(r, col_L).value or 0)
-            aggregates[d2] = aggregates.get(d2, 0) + k_val + l_val
+            d2 = ws2.cell(r, B_col).value
+            if not d2: continue
+            d2 = str(d2).strip()
+            try: k_val = float(ws2.cell(r, K_col).value or 0)
+            except: k_val = 0.0
+            try: l_val = float(ws2.cell(r, L_col).value or 0)
+            except: l_val = 0.0
+            aggK[d2] = aggK.get(d2, 0.0) + k_val
+            aggL[d2] = aggL.get(d2, 0.0) + l_val
 
-        # --- Insert new column after Πιστωτικό Υπόλοιπο ---
-        insert_col = col_credit + 1
-        ws1.insert_cols(insert_col)
-        ws1.cell(1, insert_col, "Διάσταση 2 (Source)")
+        # ---- Sheet1: locate key columns
+        title_col = find_col_exact(ws1, "Τίτλος")
+        credit_col = find_col_exact(ws1, "Πιστωτικό Υπόλοιπο")  # this is K
+        if credit_col is None: raise ValueError("Column 'Πιστωτικό Υπόλοιπο' not found in Sheet1.")
+        debit_col = credit_col - 1                              # J = Χρεωστικό Υπόλοιπο
+        L_pos = credit_col + 1                                  # L
+        # Insert Διάσταση 2 (Source) after L
+        ws1.insert_cols(L_pos + 1)
+        src_col = L_pos + 1
+        ws1.cell(1, src_col, "Διάσταση 2 (Source)")
 
-        # --- Update Sheet1 ---
+        # Account code column (contains values like 50.00.00.0000)
+        acct_col = find_col_contains(ws1, "Λογαριασμός")
+        if acct_col is None:
+            # fallback: try column B (common in your file)
+            acct_col = 2
+
+        # ---- Update rows
         for r in range(2, ws1.max_row + 1):
-            acc = ws1.cell(r, 4).value
-            titlos = str(ws1.cell(r, col_titlos).value or "").strip()
+            acct = str(ws1.cell(r, acct_col).value or "").strip()
 
-            if is_zero_account(acc):
-                # Zeroed accounts
-                ws1.cell(r, col_K, 0)
-                ws1.cell(r, col_L, 0)
-                ws1.cell(r, insert_col, "")
+            # Zero ONLY if in your explicit list
+            if acct in ZERO_ACCOUNTS:
+                ws1.cell(r, debit_col, 0)   # J
+                ws1.cell(r, credit_col, 0)  # K
+                ws1.cell(r, L_pos,     0)   # L
+                ws1.cell(r, src_col,   "")
                 continue
 
-            d2_key = reverse_mapping.get(titlos)
-            if d2_key and d2_key in aggregates:
-                ws1.cell(r, col_K, aggregates[d2_key])
-                ws1.cell(r, col_L, aggregates[d2_key])
-                ws1.cell(r, insert_col, d2_key)
-            else:
-                ws1.cell(r, insert_col, "")
+            # Map by Greek title → Διάσταση 2 key
+            d2_key = ""
+            if title_col:
+                title_val = str(ws1.cell(r, title_col).value or "").strip()
+                d2_key = TITLE_TO_D2.get(title_val, "")
 
-        # --- Save back ---
+            # If we have a Διάσταση 2 key and aggregates, write them; else leave row untouched
+            if d2_key and (d2_key in aggK or d2_key in aggL):
+                if d2_key in aggK: ws1.cell(r, credit_col, aggK[d2_key])  # K
+                if d2_key in aggL: ws1.cell(r, L_pos,     aggL[d2_key])   # L
+                ws1.cell(r, src_col, d2_key)
+            else:
+                ws1.cell(r, src_col, "")
+
+        # ---- Save
         out = BytesIO()
         wb.save(out)
         out.seek(0)
-
-        st.success("✅ Aggregation complete. Διάσταση 2 and K/L updated in Sheet1.")
-        st.download_button(
-            "⬇️ Download Updated Excel",
-            data=out,
-            file_name="Updated_" + uploaded.name,
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+        st.success("✅ Done. K & L updated from Sheet2 (B,K,L) and Διάσταση 2 (Source) filled. Zero-accounts set to 0.")
+        st.download_button("⬇️ Download Updated Excel",
+                           data=out,
+                           file_name="Updated_" + uploaded.name,
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
     except Exception as e:
         st.error(f"❌ Error: {e}")
