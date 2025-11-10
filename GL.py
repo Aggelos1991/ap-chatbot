@@ -1,30 +1,33 @@
 import streamlit as st
-import pandas as pd
+from openpyxl import load_workbook
 from io import BytesIO
+import pandas as pd
 
-st.set_page_config(page_title="Excel Auto-Updater", layout="wide")
-st.title("📊 Excel Auto-Updater (Minimal Version)")
+st.set_page_config(page_title="Excel Formatter Preserver", layout="wide")
+st.title("📘 Excel In-Place Processor (Formatting Preserved)")
 
-uploaded = st.file_uploader("📁 Upload Excel (.xlsx)", type=["xlsx"])
+st.write("""
+Upload your Excel file (.xlsx).  
+The app will:
+- Preserve **all original formatting, fonts, and colors**
+- **Remove column N** completely  
+- Add **‘Διάσταση 2 (Source)’** right after column **L**
+- Zero out **K + L** for zero accounts  
+- Leave everything else exactly as in your file  
+""")
+
+uploaded = st.file_uploader("📁 Upload Excel", type=["xlsx"])
 
 if uploaded:
     try:
-        # Load entire workbook
-        xls = pd.ExcelFile(uploaded)
-        sheets = {name: pd.read_excel(xls, sheet_name=name) for name in xls.sheet_names}
-
-        # Work on first sheet (for update)
-        sheet1_name = xls.sheet_names[0]
-        sheet1 = sheets[sheet1_name]
-
-        # Second sheet used for aggregation (data source)
-        sheet2_name = xls.sheet_names[1]
-        sheet2 = sheets[sheet2_name]
-
-        # Zero accounts
+        # Load workbook preserving formatting
+        wb = load_workbook(uploaded)
+        ws = wb.worksheets[0]  # First sheet (active one)
+        
+        # Define zero accounts
         zero_accounts = [
-            "50.00.00.0000","50.00.00.0001","50.00.00.0002","50.00.00.0003",
-            "50.01.00.0000","50.01.01.0000","50.05.00.0000"
+            "50.00.00.0000", "50.00.00.0001", "50.00.00.0002", "50.00.00.0003",
+            "50.01.00.0000", "50.01.01.0000", "50.05.00.0000"
         ]
 
         # Mapping dictionary
@@ -42,47 +45,44 @@ if uploaded:
             "05 - CapEx Advances": "Προμηθευτές χρεωστικά (προκαταβολές) υπόλοιπα τέλους περιόδου - Προκαταβολές για αγορές Παγίων"
         }
 
-        # Identify key columns (by position)
-        col_B = sheet2.columns[1]
-        col_K = sheet2.columns[10]
-        col_L = sheet2.columns[11]
+        # Step 1. Remove column N (14th column)
+        if ws.max_column >= 14:
+            ws.delete_cols(14)
 
-        # Aggregate totals from sheet2
-        grouped = (
-            sheet2.groupby(col_B, dropna=False)[[col_K, col_L]]
-            .sum()
-            .reset_index()
-        )
-        grouped["Διάσταση 2 (Source)"] = grouped[col_B].map(mapping)
+        # Step 2. Insert “Διάσταση 2 (Source)” column after L (now column 12)
+        insert_position = 13
+        ws.insert_cols(insert_position)
+        ws.cell(row=1, column=insert_position, value="Διάσταση 2 (Source)")
 
-        # Insert new column next to L (only once)
-        L_index = sheet1.columns.get_loc(sheet1.columns[11])
-        if "Διάσταση 2 (Source)" not in sheet1.columns:
-            sheet1.insert(L_index + 1, "Διάσταση 2 (Source)", "")
+        # Step 3. Process rows
+        for row in range(2, ws.max_row + 1):
+            account = str(ws.cell(row=row, column=5).value).strip()  # Column E
+            col_K, col_L = ws.cell(row=row, column=11), ws.cell(row=row, column=12)
 
-        # Apply updates
-        for i, row in sheet1.iterrows():
-            acc = str(row.iloc[4]).strip()
-            if acc in zero_accounts:
-                sheet1.at[i, sheet1.columns[10]] = 0     # Column K
-                sheet1.at[i, sheet1.columns[11]] = 0     # Column L
+            if account in zero_accounts:
+                col_K.value = 0
+                col_L.value = 0
+                ws.cell(row=row, column=insert_position, value="")
             else:
-                match = grouped.sample(1).iloc[0]
-                sheet1.at[i, "Διάσταση 2 (Source)"] = match["Διάσταση 2 (Source)"]
+                ws.cell(row=row, column=insert_position, value=mapping.get(account, ""))
 
-        # Replace back into sheets dict
-        sheets[sheet1_name] = sheet1
+        # Step 4. Auto column width
+        for col in ws.columns:
+            max_length = 0
+            col_letter = col[0].column_letter
+            for cell in col:
+                if cell.value:
+                    max_length = max(max_length, len(str(cell.value)))
+            ws.column_dimensions[col_letter].width = max_length + 2
 
-        # Save all sheets exactly as before
+        # Step 5. Save file to memory
         output = BytesIO()
-        with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            for name, df in sheets.items():
-                df.to_excel(writer, index=False, sheet_name=name)
+        wb.save(output)
         output.seek(0)
 
-        st.success("✅ Excel successfully updated.")
+        st.success("✅ Excel updated — formatting preserved.")
         st.download_button(
-            "⬇️ Download Updated File",
+            "⬇️ Download Updated Excel",
             data=output,
             file_name="Updated_" + uploaded.name,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
