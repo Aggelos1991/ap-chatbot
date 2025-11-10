@@ -527,6 +527,34 @@ if uploaded_erp and uploaded_vendor:
                 if not final_ven_miss.empty:
                     final_ven_miss = final_ven_miss[~final_ven_miss["Invoice"].astype(str).isin(used_ven_inv)]
 
+                        # ✅ FINAL CLEANUP: remove all matched invoices from missing tables
+            all_matched_erp = set()
+            all_matched_vendor = set()
+            
+            if not tier1.empty:
+                if "ERP Invoice" in tier1.columns:
+                    all_matched_erp |= set(tier1["ERP Invoice"].astype(str))
+                if "Vendor Invoice" in tier1.columns:
+                    all_matched_vendor |= set(tier1["Vendor Invoice"].astype(str))
+            
+            if not tier2.empty:
+                if "ERP Invoice" in tier2.columns:
+                    all_matched_erp |= set(tier2["ERP Invoice"].astype(str))
+                if "Vendor Invoice" in tier2.columns:
+                    all_matched_vendor |= set(tier2["Vendor Invoice"].astype(str))
+            
+            if not tier3.empty:
+                if "ERP Invoice" in tier3.columns:
+                    all_matched_erp |= set(tier3["ERP Invoice"].astype(str))
+                if "Vendor Invoice" in tier3.columns:
+                    all_matched_vendor |= set(tier3["Vendor Invoice"].astype(str))
+            
+            if not final_erp_miss.empty:
+                final_erp_miss = final_erp_miss[~final_erp_miss["Invoice"].astype(str).isin(all_matched_erp)]
+            if not final_ven_miss.empty:
+                final_ven_miss = final_ven_miss[~final_ven_miss["Invoice"].astype(str).isin(all_matched_vendor)]
+
+
             # Payments
             erp_pay, ven_pay, pay_match = extract_payments(erp_df, ven_df)
 
