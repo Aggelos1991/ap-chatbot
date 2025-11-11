@@ -225,7 +225,19 @@ def match_invoices(erp_df, ven_df):
     ven_df = consolidate_by_invoice(ven_df, "invoice_ven", "ven")
 
 
-    erp_df["__amt"] = erp_df.apply(lambda r: abs(normalize_number(r.get("debit_erp", 0)) - normalize_number(r.get("credit_erp", 0))), axis=1)
+    # --- Amount calculation: prefer non-zero side (handles CN properly) ---
+    def compute_amt(row, tag):
+        debit  = normalize_number(row.get(f"debit_{tag}", 0))
+        credit = normalize_number(row.get(f"credit_{tag}", 0))
+        amt = abs(debit - credit)
+        if amt == 0:
+            # fallback: pick whichever side is non-zero
+            amt = abs(debit) if abs(debit) > 0 else abs(credit)
+        return round(amt, 2)
+    
+    erp_df["__amt"] = erp_df.apply(lambda r: compute_amt(r, "erp"), axis=1)
+    ven_df["__amt"] = ven_df.apply(lambda r: compute_amt(r, "ven"), axis=1)
+
     ven_df["__amt"] = ven_df.apply(lambda r: abs(normalize_number(r.get("debit_ven", 0)) - normalize_number(r.get("credit_ven", 0))), axis=1)
 
     erp_use = erp_df[erp_df["__type"] != "IGNORE"].copy()
