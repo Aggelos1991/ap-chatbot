@@ -9,15 +9,16 @@ from openpyxl.styles import Font, Alignment
 # CONFIG
 # ==========================================================
 st.set_page_config(page_title="Entersoft ERP Translation Audit", page_icon="🧠", layout="wide")
-st.title("🧠 Entersoft ERP Translation Audit — Final ERP Expert Edition")
+st.title("🧠 Entersoft ERP Translation Audit — Dual Field Edition (Greek & Title)")
 
 # ==========================================================
-# OPENAI
+# OPENAI API
 # ==========================================================
 api_key = st.text_input("🔑 Enter your OpenAI API key:", type="password")
-if not api_key: st.stop()
+if not api_key:
+    st.stop()
 client = OpenAI(api_key=api_key)
-MODEL = "gpt-4o-mini"   # 💡 Fast + cost-efficient
+MODEL = "gpt-4o-mini"
 
 # ==========================================================
 # OPTIONAL GLOSSARY
@@ -44,7 +45,7 @@ else:
 # ==========================================================
 # SOURCE EXCEL
 # ==========================================================
-upl_file = st.file_uploader("📂 Upload Excel (Report_Name | Report_Description | Field_Name | Greek | English)", type=["xlsx"])
+upl_file = st.file_uploader("📂 Upload Excel (must include Greek, English, Title, English Title)", type=["xlsx"])
 if not upl_file:
     st.info("Please upload your exported Excel file from SQL.")
     st.stop()
@@ -56,44 +57,35 @@ if st.checkbox("Run only first 30 rows (test mode)", value=True):
     df = df.head(30)
     st.warning("⚠️ Audit limited to 30 rows for testing.")
 
-req_cols = {"Report_Name", "Report_Description", "Field_Name", "Greek", "English"}
+req_cols = {"Greek", "English", "Title", "English Title"}
 if not req_cols.issubset(df.columns):
     st.error(f"❌ Excel must contain columns: {req_cols}")
     st.stop()
 
 # ==========================================================
-# ERP CONTEXT PROMPT (FINAL EXPERT MINDSET)
+# ERP CONTEXT PROMPT
 # ==========================================================
 ERP_CONTEXT = """
-You are a senior ERP Localization Director with 20+ years of experience in translating, mapping, 
-and harmonizing enterprise systems such as Entersoft, SAP, and Oracle Financials across multinational deployments.
+You are a senior ERP Localization Director with 20+ years of experience in translating, mapping,
+and harmonizing enterprise systems such as Entersoft, SAP, and Oracle Financials.
 
-You fully understand the structure of ERP systems, including accounting, finance, logistics, and inventory modules.
-You do NOT provide literal translations — you provide the correct ERP field names as they would appear in an enterprise English environment.
+You understand ERP structures — accounting, finance, logistics, and inventory.
+You do NOT provide literal translations — use standard ERP English terms (SAP/Oracle style).
 
-Your expertise covers:
-• Accounting: Debit, Credit, Journal, General Ledger, Cost Center, Trial Balance, Tax, VAT, Net/Gross Value.
-• Logistics: Warehouse, Stock, Item Code, Supplier, Delivery Note, Invoice, Quantity, Weight.
-• Financials: Payment Method, Posting Date, Document Number, Credit Note, Purchase Order, Invoice Number.
+Rules:
+1️⃣ Conceptual, not literal.
+2️⃣ Title Case terms (Posting Date, Cost Center, Payment Method).
+3️⃣ Never invent new fields.
+4️⃣ Return only the corrected ERP English term.
 
-Guidelines:
-1️⃣ Be conceptual, not literal.
-2️⃣ Use standard ERP English terms (SAP/Oracle style).
-3️⃣ Use Title Case — e.g., "Posting Date", "Ledger Account", "Payment Method".
-4️⃣ Never invent new field names — return the clean, professional English term.
-5️⃣ Return only the corrected ERP English field — no explanation or commentary.
-
-EXAMPLES:
+Examples:
 Καθαρή Αξία → Net Value
-Ημερομηνία Καταχώρησης → Posting Date
 Πιστωτικό Τιμολόγιο → Credit Note
-Κέντρο Κόστους → Cost Center
-Πελάτης → Customer
-Προμηθευτής → Supplier
-Αριθμός Παραστατικού → Document Number
-Ποσό ΦΠΑ → VAT Amount
+Ημερομηνία Καταχώρησης → Posting Date
 Αποθήκη → Warehouse
-Ημερομηνία Πληρωμής → Payment Date
+Κέντρο Κόστους → Cost Center
+Προμηθευτής → Supplier
+Ποσό ΦΠΑ → VAT Amount
 """
 
 # ==========================================================
@@ -101,15 +93,14 @@ EXAMPLES:
 # ==========================================================
 def classify_status(greek, english):
     g, e = (greek or "").strip(), (english or "").strip()
-    if not g or g.lower() == "nan":
+    if not g:
         return "Field_Not_Found_On_Report_View"
-    if not e or e.lower() == "nan" or e == "":
+    if not e:
         return "Field_Not_Translated"
-
     prompt = f"""
 You are an ERP translation auditor.
-Compare the following Greek and English field names conceptually (ignore alphabet or spelling).
-Return one exact label:
+Compare the following Greek and English field names conceptually.
+Return one label:
 Translated_Correct
 Translated_Not_Accurate
 Field_Not_Translated
@@ -119,36 +110,12 @@ Greek: {g}
 English: {e}
 """
     try:
-        r = client.chat.completions.create(
-            model=MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0
-        )
+        r = client.chat.completions.create(model=MODEL, messages=[{"role": "user", "content": prompt}], temperature=0)
         result = r.choices[0].message.content.strip()
         allowed = {"Translated_Correct","Translated_Not_Accurate","Field_Not_Translated","Field_Not_Found_On_Report_View"}
         return result if result in allowed else "Translated_Not_Accurate"
     except Exception:
         return "Translated_Not_Accurate"
-
-def correct_erp_english(greek, english_seed):
-    g, seed = (greek or "").strip(), (english_seed or "").strip()
-    prompt = f"""{ERP_CONTEXT}
-
-Greek: {g}
-Existing English: {seed}
-
-Glossary Reference:
-{glossary_text}
-"""
-    try:
-        r = client.chat.completions.create(
-            model=MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0
-        )
-        return r.choices[0].message.content.strip()
-    except Exception:
-        return seed or "(translation missing)"
 
 def quality_label(greek, corrected):
     g, c = (greek or "").strip(), (corrected or "").strip()
@@ -166,22 +133,16 @@ Return one:
 🔴 Poor
 """
     try:
-        r = client.chat.completions.create(
-            model=MODEL,
-            messages=[{"role":"user","content":prompt}],
-            temperature=0
-        )
+        r = client.chat.completions.create(model=MODEL, messages=[{"role":"user","content":prompt}], temperature=0)
         out = r.choices[0].message.content.strip()
         return out if out in {"🟢 Excellent","🟡 Review","🔴 Poor"} else "🟢 Excellent"
     except Exception:
         return "🟡 Review"
 
 # ==========================================================
-# BATCH SIZE + CACHE
+# CACHE & BATCH
 # ==========================================================
-batch_size = st.slider("⚙️ Select batch size:", 20, 200, 50, step=10)
-st.caption("💡 40–60 rows = best balance of accuracy and speed")
-
+batch_size = st.slider("⚙️ Batch size", 20, 200, 50, step=10)
 CACHE_FILE = "erp_translation_cache.json"
 cache = {}
 if os.path.exists(CACHE_FILE):
@@ -191,9 +152,9 @@ if os.path.exists(CACHE_FILE):
         cache = {}
 
 # ==========================================================
-# MAIN AUDIT (BATCHED)
+# MAIN AUDIT
 # ==========================================================
-if st.button("🚀 Run Smart-Batch Audit"):
+if st.button("🚀 Run Smart-Batch Dual Audit"):
     results = []
     total = len(df)
     progress = st.progress(0)
@@ -202,21 +163,19 @@ if st.button("🚀 Run Smart-Batch Audit"):
     for start in range(0, total, batch_size):
         end = min(start + batch_size, total)
         batch = df.iloc[start:end]
-
-        # --- build GPT input for untranslated ---
         lines = []
+
         for _, r in batch.iterrows():
-            gr = str(r["Greek"]).strip()
-            en = str(r["English"]).strip()
-            if gr in cache or not gr:
-                continue
-            lines.append(f"{gr} | {en}")
+            for pair in [("Greek", "English"), ("Title", "English Title")]:
+                src, tgt = str(r.get(pair[0], "")).strip(), str(r.get(pair[1], "")).strip()
+                if src and src not in cache:
+                    lines.append(f"{src} | {tgt}")
 
         if lines:
             prompt = f"""{ERP_CONTEXT}
 
-Translate or refine the following ERP field pairs (Greek | English).
-Return one line per field in the format:
+Translate or refine these ERP field pairs (Greek | English or Title | English Title).
+Return in format:
 Greek | Corrected_English
 
 Glossary (optional reference):
@@ -225,41 +184,36 @@ Glossary (optional reference):
 {os.linesep.join(lines)}
 """
             try:
-                r = client.chat.completions.create(
-                    model=MODEL,
-                    messages=[{"role":"user","content":prompt}],
-                    temperature=0
-                )
-                raw = r.choices[0].message.content.strip().splitlines()
-                for ln in raw:
+                r = client.chat.completions.create(model=MODEL, messages=[{"role": "user", "content": prompt}], temperature=0)
+                for ln in r.choices[0].message.content.strip().splitlines():
                     parts = [p.strip() for p in ln.split("|")]
                     if len(parts) >= 2:
                         cache[parts[0]] = parts[1]
             except Exception as e:
                 st.warning(f"Batch {start}-{end} failed: {e}")
 
-        # --- process batch ---
         for _, r in batch.iterrows():
-            rn = str(r["Report_Name"]).strip()
-            rd = str(r["Report_Description"]).strip()
-            fn = str(r["Field_Name"]).strip()
-            gr = str(r["Greek"]).strip()
-            en_orig = str(r["English"]).strip()
+            row = {
+                "Report_Name": str(r.get("Report_Name", "")).strip(),
+                "Report_Description": str(r.get("Report_Description", "")).strip(),
+                "Field_Name": str(r.get("Field_Name", "")).strip(),
+                "Greek": str(r.get("Greek", "")).strip(),
+                "English": str(r.get("English", "")).strip(),
+                "Title": str(r.get("Title", "")).strip(),
+                "English_Title": str(r.get("English Title", "")).strip()
+            }
 
-            corrected = cache.get(gr, en_orig)
-            status = classify_status(gr, en_orig)
-            quality = quality_label(gr, corrected)
+            # Greek-English
+            row["Corrected_English"] = cache.get(row["Greek"], row["English"])
+            row["Status"] = classify_status(row["Greek"], row["English"])
+            row["Quality"] = quality_label(row["Greek"], row["Corrected_English"])
 
-            results.append(dict(
-                Report_Name=rn,
-                Report_Description=rd,
-                Field_Name=fn,
-                Greek=gr,
-                English=en_orig,
-                Corrected_English=corrected,
-                Status=status,
-                Quality=quality
-            ))
+            # Title-English Title
+            row["Corrected_English_Title"] = cache.get(row["Title"], row["English_Title"])
+            row["Status_Title"] = classify_status(row["Title"], row["English_Title"])
+            row["Quality_Title"] = quality_label(row["Title"], row["Corrected_English_Title"])
+
+            results.append(row)
 
         progress.progress(end / total)
         info.write(f"Processed {end}/{total} rows...")
@@ -268,7 +222,7 @@ Glossary (optional reference):
 
     out = pd.DataFrame(results)
     st.session_state["audit_results"] = out
-    st.success("✅ Full audit complete (ERP Localization Director quality + conceptual status + batching + caching).")
+    st.success("✅ Full dual audit complete (Greek ↔ English + Title ↔ English Title).")
     st.dataframe(out.head(30))
 
 # ==========================================================
@@ -291,8 +245,8 @@ if "audit_results" in st.session_state:
         )
     buf = io.BytesIO(); wb.save(buf); buf.seek(0)
     st.download_button(
-        "📥 Download Final Excel (ERP Expert Smart-Batch)",
+        "📥 Download Final Excel (Dual Audit)",
         data=buf,
-        file_name="erp_translation_audit_final.xlsx",
+        file_name="erp_translation_audit_dual.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
