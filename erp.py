@@ -1,246 +1,260 @@
-# ============================================================
-# 🧠 Entersoft ERP Translation Audit — Senior ERP Localization Edition
-# ============================================================
-
-import streamlit as st
 import pandas as pd
+import streamlit as st
 from openai import OpenAI
-from io import BytesIO
-import json, time
+import io, os, json, time
+from openpyxl import Workbook
+from openpyxl.styles import Font, Alignment
 
-# ------------------------------------------------------------
+# ==========================================================
 # CONFIG
-# ------------------------------------------------------------
-st.set_page_config(page_title="Entersoft ERP Dual Translation Audit", page_icon="🧠", layout="wide")
-st.title("🧠 Entersoft ERP Translation Audit — Senior ERP Localization Edition")
+# ==========================================================
+st.set_page_config(page_title="Entersoft ERP Translation Audit", page_icon="🧠", layout="wide")
+st.title("🧠 Entersoft ERP Translation Audit — Dual Field Edition (Greek & Title)")
 
-# ------------------------------------------------------------
+# ==========================================================
 # OPENAI API
-# ------------------------------------------------------------
+# ==========================================================
 api_key = st.text_input("🔑 Enter your OpenAI API key:", type="password")
 if not api_key:
     st.stop()
 client = OpenAI(api_key=api_key)
 MODEL = "gpt-4o-mini"
 
-# ------------------------------------------------------------
-# FILE UPLOAD
-# ------------------------------------------------------------
-uploaded_file = st.file_uploader("📤 Upload your ERP translation Excel file", type=["xlsx", "xls"])
-if not uploaded_file:
-    st.stop()
-
-df = pd.read_excel(uploaded_file)
-df.columns = [c.strip() for c in df.columns]
-
-# Detect required columns
-greek_col = next((c for c in df.columns if "greek" in c.lower()), None)
-english_col = next((c for c in df.columns if "english" in c.lower() and "title" not in c.lower()), None)
-title_col = next((c for c in df.columns if "title" in c.lower() and "english" not in c.lower()), None)
-english_title_col = next((c for c in df.columns if "english title" in c.lower()), None)
-
-if not all([greek_col, english_col, title_col, english_title_col]):
-    st.error("❌ Missing required columns (Greek, English, Title, English Title).")
-    st.stop()
-
-# ------------------------------------------------------------
+# ==========================================================
 # OPTIONAL GLOSSARY
-# ------------------------------------------------------------
-st.markdown("### 📚 Optional: Upload Thesaurus/Glossary CSV (Greek ↔ English)")
-glossary_file = st.file_uploader("Optional Glossary CSV", type=["csv"])
-glossary_dict = {}
+# ==========================================================
+def load_glossary(df):
+    df.columns = [c.strip().lower() for c in df.columns]
+    g = next((c for c in df.columns if "greek" in c or "ελλην" in c), None)
+    e = next((c for c in df.columns if "approved" in c or "english" in c), None)
+    if g and e:
+        return "\n".join([f"{row[g]} → {row[e]}" for _, row in df.iterrows()])
+    return ""
 
-if glossary_file:
-    glossary_df = pd.read_csv(glossary_file)
-    glossary_df.columns = [c.strip().lower() for c in glossary_df.columns]
-    g_col = next((c for c in glossary_df.columns if "greek" in c or "ελλην" in c), None)
-    e_col = next((c for c in glossary_df.columns if "english" in c or "αγγλ" in c), None)
-    if g_col and e_col:
-        glossary_dict = dict(zip(glossary_df[g_col], glossary_df[e_col]))
-        st.success(f"✅ Loaded {len(glossary_dict)} glossary pairs.")
-    else:
-        st.warning("⚠️ CSV must contain Greek and English columns.")
-
-# ------------------------------------------------------------
-# SETTINGS
-# ------------------------------------------------------------
-col1, col2 = st.columns(2)
-BATCH_SIZE = col1.number_input("⚙️ GPT batch size (recommended 50–100)", value=60, min_value=10, max_value=200, step=10)
-TEST_MODE = col2.checkbox("🧪 Test Mode (no API calls, simulate results)", value=False)
-
-# ------------------------------------------------------------
-# HELPER FUNCTIONS
-# ------------------------------------------------------------
-def apply_glossary(text):
-    """Replace Greek terms with preferred English equivalents from glossary."""
-    if not glossary_dict:
-        return text
-    for gr, en in glossary_dict.items():
-        if str(gr).strip() in str(text):
-            text = text.replace(gr, en)
-    return text
-
-def audit_translation_batch(pairs):
-    """Audit translations using ERP-aware localization logic."""
-    joined = "\n".join([f"{i+1}. Greek: {g} | English: {e}" for i, (g, e) in enumerate(pairs)])
-    prompt = f"""
-You are a **Senior ERP Localization Manager** with deep experience in translating and validating ERP systems (e.g., Entersoft, SAP, Oracle, Microsoft Dynamics).
-You understand accounting, logistics, and reporting terminology (Invoices, VAT, Ledgers, Stock Movements, Cost Centers, etc.).
-
-Review the Greek and English ERP field names below for translation quality and localization accuracy.
-For each pair:
-- Evaluate if the English term accurately represents the Greek meaning in ERP context.
-- Mark status as one of:
-  - "Translated_Correct"
-  - "Translated_Not_Accurate"
-  - "Field_Not_Translated"
-- Assess linguistic and contextual quality as one of:
-  - "Excellent" (precise and professional ERP wording)
-  - "Review" (acceptable but may need adjustment)
-  - "Poor" (misleading or inconsistent with ERP terminology)
-Return your result strictly as a JSON list, one object per pair:
-[{{"id":1,"status":"...","quality":"..."}}]
-
-Greek ↔ English pairs:
-{joined}
-"""
-    response = client.chat.completions.create(
-        model=MODEL,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0
-    )
-    try:
-        return json.loads(response.choices[0].message.content)
-    except Exception:
-        return [{"id": i+1, "status": "Translated_Correct", "quality": "Excellent"} for i in range(len(pairs))]
-
-def audit_corrected_batch(english_texts):
-    """Polish ERP English terminology to match enterprise localization standards."""
-    joined = "\n".join([f"{i+1}. {t}" for i, t in enumerate(english_texts)])
-    prompt = f"""
-You are a Senior ERP Localization Expert. 
-Refine and standardize each ERP field name below to follow professional naming used in ERP UIs and reports.
-Keep capitalization and terminology consistent with systems like SAP, Entersoft, and Microsoft Dynamics.
-Return a JSON list of objects with 'id' and 'corrected_english' keys.
-Input:
-{joined}
-"""
-    response = client.chat.completions.create(
-        model=MODEL,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0
-    )
-    try:
-        return json.loads(response.choices[0].message.content)
-    except Exception:
-        return [{"id": i+1, "corrected_english": t} for i, t in enumerate(english_texts)]
-
-# ------------------------------------------------------------
-# PROCESSING
-# ------------------------------------------------------------
-st.markdown("### 🔍 Running Dual Audit...")
-progress = st.progress(0)
-records = len(df)
-results_greek_eng, results_title_eng = [], []
-
-if TEST_MODE:
-    for i, row in df.iterrows():
-        results_greek_eng.append({
-            "Title": row[title_col],
-            "English_Title": row[english_title_col],
-            "Corrected_English": apply_glossary(row[english_col]),
-            "Status": "Translated_Correct",
-            "Quality": "Excellent"
-        })
-        results_title_eng.append({
-            "Title": row[title_col],
-            "English_Title": row[english_title_col],
-            "Corrected_English_Title": apply_glossary(row[english_title_col]),
-            "Status_Title": "Translated_Correct",
-            "Quality_Title": "Review"
-        })
-        progress.progress((i+1)/records)
-        time.sleep(0.01)
+glossary_text = ""
+upl = st.file_uploader("📘 (Optional) Upload ERP glossary CSV", type=["csv"])
+if upl:
+    glossary_df = pd.read_csv(upl)
+    glossary_text = load_glossary(glossary_df)
+elif os.path.exists("erp_glossary.csv"):
+    glossary_df = pd.read_csv("erp_glossary.csv")
+    glossary_text = load_glossary(glossary_df)
 else:
-    for start in range(0, records, BATCH_SIZE):
-        batch = df.iloc[start:start+BATCH_SIZE]
-        pairs_ge = [(apply_glossary(r[greek_col]), r[english_col]) for _, r in batch.iterrows()]
-        pairs_te = [(r[title_col], r[english_title_col]) for _, r in batch.iterrows()]
+    glossary_text = "(no glossary provided)"
 
-        audit_ge = audit_translation_batch(pairs_ge)
-        audit_te = audit_translation_batch(pairs_te)
-        corr_ge = audit_corrected_batch([r[english_col] for _, r in batch.iterrows()])
-        corr_te = audit_corrected_batch([r[english_title_col] for _, r in batch.iterrows()])
+# ==========================================================
+# SOURCE EXCEL
+# ==========================================================
+upl_file = st.file_uploader("📂 Upload Excel (must include Greek, English, Title, English Title)", type=["xlsx"])
+if not upl_file:
+    st.info("Please upload your exported Excel file from SQL.")
+    st.stop()
 
-        for i, row in enumerate(batch.itertuples(index=False)):
-            results_greek_eng.append({
-                "Title": getattr(row, title_col),
-                "English_Title": getattr(row, english_title_col),
-                "Corrected_English": corr_ge[i].get("corrected_english", getattr(row, english_col)),
-                "Status": audit_ge[i].get("status"),
-                "Quality": audit_ge[i].get("quality")
-            })
-            results_title_eng.append({
-                "Title": getattr(row, title_col),
-                "English_Title": getattr(row, english_title_col),
-                "Corrected_English_Title": corr_te[i].get("corrected_english", getattr(row, english_title_col)),
-                "Status_Title": audit_te[i].get("status"),
-                "Quality_Title": audit_te[i].get("quality")
-            })
+df = pd.read_excel(upl_file)
+st.write(f"✅ File loaded successfully — {len(df)} rows detected.")
 
-        progress.progress(min((start + BATCH_SIZE) / records, 1.0))
-        time.sleep(0.1)
+# ==========================================================
+# TEST MODE + BATCH SELECTION
+# ==========================================================
+col1, col2 = st.columns(2)
+with col1:
+    test_mode = st.checkbox("⚙️ Run only first 30 rows (test mode)", value=True)
+with col2:
+    batch_size = st.slider("📦 Batch size", 20, 200, 50, step=10)
 
-# ------------------------------------------------------------
-# FINAL MERGE (Aligned Output)
-# ------------------------------------------------------------
-greek_to_english_df = pd.DataFrame(results_greek_eng)
-title_to_english_df = pd.DataFrame(results_title_eng)
+if test_mode:
+    df = df.head(30)
+    st.warning("⚠️ Test mode active: only first 30 rows will be processed.")
 
-final_df = pd.merge(
-    greek_to_english_df,
-    title_to_english_df,
-    on=["Title", "English_Title"],
-    how="outer"
-)
+req_cols = {"Greek", "English", "Title", "English Title"}
+if not req_cols.issubset(df.columns):
+    st.error(f"❌ Excel must contain columns: {req_cols}")
+    st.stop()
 
-cols_order = [
-    "Title",
-    "English_Title",
-    "Corrected_English",
-    "Status",
-    "Quality",
-    "Corrected_English_Title",
-    "Status_Title",
-    "Quality_Title"
-]
-final_df = final_df.reindex(columns=cols_order)
+# ==========================================================
+# ERP CONTEXT PROMPT
+# ==========================================================
+ERP_CONTEXT = """
+You are a senior ERP Localization Director with 20+ years of experience in translating, mapping,
+and harmonizing enterprise systems such as Entersoft, SAP, and Oracle Financials.
 
-# ------------------------------------------------------------
-# DISPLAY RESULTS
-# ------------------------------------------------------------
-st.success("✅ Full dual audit complete (Greek ↔ English + Title ↔ English Title).")
+You understand ERP structures — accounting, finance, logistics, and inventory.
+You do NOT provide literal translations — use standard ERP English terms (SAP/Oracle style).
 
-st.dataframe(
-    final_df.style.set_properties(
-        **{
-            "text-align": "center",
-            "white-space": "nowrap"
-        }
-    ),
-    use_container_width=True
-)
+Rules:
+1️⃣ Conceptual, not literal.
+2️⃣ Title Case terms (Posting Date, Cost Center, Payment Method).
+3️⃣ Never invent new fields.
+4️⃣ Return only the corrected ERP English term.
 
-# ------------------------------------------------------------
-# EXPORT TO EXCEL
-# ------------------------------------------------------------
-output = BytesIO()
-with pd.ExcelWriter(output, engine="openpyxl") as writer:
-    final_df.to_excel(writer, index=False, sheet_name="Dual Audit")
+Examples:
+Καθαρή Αξία → Net Value
+Πιστωτικό Τιμολόγιο → Credit Note
+Ημερομηνία Καταχώρησης → Posting Date
+Αποθήκη → Warehouse
+Κέντρο Κόστους → Cost Center
+Προμηθευτής → Supplier
+Ποσό ΦΠΑ → VAT Amount
+"""
 
-st.download_button(
-    label="📂 Download Final Excel (Dual Audit)",
-    data=output.getvalue(),
-    file_name="Dual_Audit.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-)
+# ==========================================================
+# HELPER FUNCTIONS
+# ==========================================================
+def classify_status(greek, english):
+    g, e = (greek or "").strip(), (english or "").strip()
+    if not g:
+        return "Field_Not_Found_On_Report_View"
+    if not e:
+        return "Field_Not_Translated"
+    prompt = f"""
+You are an ERP translation auditor.
+Compare the following Greek and English field names conceptually.
+Return one label:
+Translated_Correct
+Translated_Not_Accurate
+Field_Not_Translated
+Field_Not_Found_On_Report_View
+
+Greek: {g}
+English: {e}
+"""
+    try:
+        r = client.chat.completions.create(model=MODEL, messages=[{"role": "user", "content": prompt}], temperature=0)
+        result = r.choices[0].message.content.strip()
+        allowed = {"Translated_Correct","Translated_Not_Accurate","Field_Not_Translated","Field_Not_Found_On_Report_View"}
+        return result if result in allowed else "Translated_Not_Accurate"
+    except Exception:
+        return "Translated_Not_Accurate"
+
+def quality_label(greek, corrected):
+    g, c = (greek or "").strip(), (corrected or "").strip()
+    if not g or not c:
+        return "🟡 Review"
+    prompt = f"""
+Judge conceptual translation quality for ERP/accounting context.
+
+Greek: {g}
+English: {c}
+
+Return one:
+🟢 Excellent
+🟡 Review
+🔴 Poor
+"""
+    try:
+        r = client.chat.completions.create(model=MODEL, messages=[{"role":"user","content":prompt}], temperature=0)
+        out = r.choices[0].message.content.strip()
+        return out if out in {"🟢 Excellent","🟡 Review","🔴 Poor"} else "🟢 Excellent"
+    except Exception:
+        return "🟡 Review"
+
+# ==========================================================
+# CACHE
+# ==========================================================
+CACHE_FILE = "erp_translation_cache.json"
+cache = {}
+if os.path.exists(CACHE_FILE):
+    try:
+        cache = json.load(open(CACHE_FILE, "r"))
+    except:
+        cache = {}
+
+# ==========================================================
+# MAIN AUDIT
+# ==========================================================
+if st.button("🚀 Run Smart-Batch Dual Audit"):
+    results = []
+    total = len(df)
+    progress = st.progress(0)
+    info = st.empty()
+
+    for start in range(0, total, batch_size):
+        end = min(start + batch_size, total)
+        batch = df.iloc[start:end]
+        lines = []
+
+        for _, r in batch.iterrows():
+            for pair in [("Greek", "English"), ("Title", "English Title")]:
+                src, tgt = str(r.get(pair[0], "")).strip(), str(r.get(pair[1], "")).strip()
+                if src and src not in cache:
+                    lines.append(f"{src} | {tgt}")
+
+        if lines:
+            prompt = f"""{ERP_CONTEXT}
+
+Translate or refine these ERP field pairs (Greek | English or Title | English Title).
+Return in format:
+Greek | Corrected_English
+
+Glossary (optional reference):
+{glossary_text}
+
+{os.linesep.join(lines)}
+"""
+            try:
+                r = client.chat.completions.create(model=MODEL, messages=[{"role": "user", "content": prompt}], temperature=0)
+                for ln in r.choices[0].message.content.strip().splitlines():
+                    parts = [p.strip() for p in ln.split("|")]
+                    if len(parts) >= 2:
+                        cache[parts[0]] = parts[1]
+            except Exception as e:
+                st.warning(f"Batch {start}-{end} failed: {e}")
+
+        for _, r in batch.iterrows():
+            row = {
+                "Report_Name": str(r.get("Report_Name", "")).strip(),
+                "Report_Description": str(r.get("Report_Description", "")).strip(),
+                "Field_Name": str(r.get("Field_Name", "")).strip(),
+                "Greek": str(r.get("Greek", "")).strip(),
+                "English": str(r.get("English", "")).strip(),
+                "Title": str(r.get("Title", "")).strip(),
+                "English_Title": str(r.get("English Title", "")).strip()
+            }
+
+            # Greek-English
+            row["Corrected_English"] = cache.get(row["Greek"], row["English"])
+            row["Status"] = classify_status(row["Greek"], row["English"])
+            row["Quality"] = quality_label(row["Greek"], row["Corrected_English"])
+
+            # Title-English Title
+            row["Corrected_English_Title"] = cache.get(row["Title"], row["English_Title"])
+            row["Status_Title"] = classify_status(row["Title"], row["English_Title"])
+            row["Quality_Title"] = quality_label(row["Title"], row["Corrected_English_Title"])
+
+            results.append(row)
+
+        progress.progress(end / total)
+        info.write(f"Processed {end}/{total} rows...")
+        json.dump(cache, open(CACHE_FILE, "w"), ensure_ascii=False, indent=2)
+        time.sleep(0.3)
+
+    out = pd.DataFrame(results)
+    st.session_state["audit_results"] = out
+    st.success("✅ Full dual audit complete (Greek ↔ English + Title ↔ English Title).")
+    st.dataframe(out.head(30))
+
+# ==========================================================
+# EXPORT
+# ==========================================================
+if "audit_results" in st.session_state:
+    out = st.session_state["audit_results"]
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "ERP Translation Audit"
+    ws.append(list(out.columns))
+    for c in ws[1]:
+        c.font = Font(bold=True)
+        c.alignment = Alignment(horizontal="center")
+    for _, r in out.iterrows():
+        ws.append([r[col] for col in out.columns])
+    for col in ws.columns:
+        ws.column_dimensions[col[0].column_letter].width = min(
+            max(len(str(c.value or "")) for c in col) + 2, 60
+        )
+    buf = io.BytesIO(); wb.save(buf); buf.seek(0)
+    st.download_button(
+        "📥 Download Final Excel (Dual Audit)",
+        data=buf,
+        file_name="erp_translation_audit_dual.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
