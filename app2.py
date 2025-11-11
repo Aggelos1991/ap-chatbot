@@ -283,7 +283,7 @@ def tier2_match(erp_miss, ven_miss):
             diff = abs(e_amt - v_amt)
             sim = 1.0 if (e_code in v_code or v_code in e_code) else fuzzy_ratio(e_code, v_code)
 
-            if diff <= 1.00 and sim >= 0.70:
+            if diff <= 1.00 and sim >= 0.90:
                 matches.append({
                     "ERP Invoice": e_inv,
                     "Vendor Invoice": v_inv,
@@ -332,7 +332,7 @@ def tier3_match(erp_miss, ven_miss):
                 continue
 
             sim = fuzzy_ratio(e_code, v_code)
-            if e_date == v_date and sim >= 0.85:
+            if e_date == v_date and sim >= 0.9:
                 diff = abs(e_amt - v_amt)
                 matches.append({
                     "ERP Invoice": e_inv,
