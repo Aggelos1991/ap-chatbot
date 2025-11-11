@@ -179,22 +179,39 @@ def match_invoices(erp_df, ven_df):
     erp_df["__type"] = erp_df.apply(lambda r: doc_type(r, "erp"), axis=1)
     ven_df["__type"] = ven_df.apply(lambda r: doc_type(r, "ven"), axis=1)
     # --- Consolidate by Alternative Document (Invoice) to combine INV + CN ---
+    # --- Consolidate by Alternative Document (Invoice) — skip payments ---
     def consolidate_by_invoice(df, inv_col, tag):
         if inv_col not in df.columns:
             return df
+    
+        pay_kw = [
+            "payment", "remittance", "transferencia", "pago", "cobro", "trf", "deposit",
+            "bank transfer", "πληρωμή", "έμβασμα", "εξόφληση", "remesa", "paid"
+        ]
+    
         grouped = []
         for inv, g in df.groupby(inv_col, dropna=False):
             if g.empty:
                 continue
+    
+            # Skip consolidation if group looks like a payment
+            txt = " ".join(g.get(f"reason_{tag}", "").astype(str).str.lower().tolist())
+            if any(k in txt for k in pay_kw):
+                grouped.extend(g.to_dict("records"))
+                continue
+    
             total = g.apply(
                 lambda r: normalize_number(r.get(f"debit_{tag}", 0)) - normalize_number(r.get(f"credit_{tag}", 0)),
                 axis=1
             ).sum()
+    
             row = g.iloc[0].copy()
             row["__amt"] = abs(total)
             row["__type"] = "INV" if total >= 0 else "CN"
             grouped.append(row)
+    
         return pd.DataFrame(grouped).reset_index(drop=True)
+
     
     # Consolidate both ERP and Vendor datasets
     erp_df = consolidate_by_invoice(erp_df, "invoice_erp", "erp")
