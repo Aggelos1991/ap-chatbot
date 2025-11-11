@@ -1,5 +1,5 @@
 # --------------------------------------------------------------
-# ReconRaptor — Vendor Reconciliation (FINAL • Tier de-dup • FIXED)
+# ReconRaptor — Vendor Reconciliation (FINAL CLEAN VERSION)
 # --------------------------------------------------------------
 import streamlit as st
 import pandas as pd
@@ -79,12 +79,9 @@ def normalize_date(v):
         return ""
     s = str(v).strip().replace(".", "/").replace("-", "/").replace(",", "/")
     for fmt in [
-        "%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y",
-        "%m/%d/%Y", "%m-%d-%Y",
-        "%Y/%m/%d", "%Y-%m-%d",
-        "%d/%m/%y", "%d-%m-%y", "%d.%m.%y",
-        "%m/%d/%y", "%m-%d-%y",
-        "%Y.%m.%d",
+        "%d/%m/%Y","%d-%m-%Y","%d.%m.%Y","%m/%d/%Y","%m-%d-%Y",
+        "%Y/%m/%d","%Y-%m-%d","%d/%m/%y","%d-%m-%y","%d.%m.%y",
+        "%m/%d/%y","%m-%d-%y","%Y.%m.%d",
     ]:
         try:
             d = pd.to_datetime(s, format=fmt, errors="coerce")
@@ -132,14 +129,14 @@ def normalize_columns(df, tag):
         for col, low in cols_lower.items():
             if any(a in low for a in aliases):
                 rename_map[col] = f"{key}_{tag}"
+
     out = df.rename(columns=rename_map)
-    for req in ["debit","credit"]:
+    for req in ["debit", "credit"]:
         c = f"{req}_{tag}"
         if c not in out.columns:
             out[c] = 0.0
     if f"date_{tag}" in out.columns:
         out[f"date_{tag}"] = out[f"date_{tag}"].apply(normalize_date)
-    st.write(f"✅ Normalized {tag.upper()} columns:", list(out.columns))
     return out
 
 def style(df, css):
