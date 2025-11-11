@@ -206,8 +206,10 @@ def match_invoices(erp_df, ven_df):
     erp_df["__amt"] = erp_df["__amt"].apply(lambda x: round(normalize_number(x), 2))
     ven_df["__amt"] = ven_df["__amt"].apply(lambda x: round(normalize_number(x), 2))
 
-    erp_use = erp_df[erp_df["__type"] != "IGNORE"].copy()
-    ven_use = ven_df[ven_df["__type"] != "IGNORE"].copy()
+    # 🔹 Exclude payments entirely (keep only invoices & credit notes)
+    erp_use = erp_df[erp_df["__type"].isin(["INV", "CN"])].copy()
+    ven_use = ven_df[ven_df["__type"].isin(["INV", "CN"])].copy()
+
 
     matched, used_vendor = [], set()
     for e_idx, e in erp_use.iterrows():
