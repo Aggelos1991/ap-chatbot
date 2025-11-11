@@ -59,6 +59,43 @@ st.markdown("<p style='text-align: center; font-size: 1.3rem; color: #555;'>Inte
 def fuzzy_ratio(a, b):
     return SequenceMatcher(None, str(a), str(b)).ratio()
 
+# --- Other helper functions above (like normalize_invoice, etc.) ---
+
+
+# --- Strong ERP/Vendor amount detection with 'Charge' support ---
+def _strong_amount(row, tag):
+    debit = normalize_number(row.get(f"debit_{tag}", 0))
+    credit = normalize_number(row.get(f"credit_{tag}", 0))
+    # Base preference
+    if row.get("__type") == "CN":  # Credit Note
+        if credit != 0:
+            return round(abs(credit), 2)
+        for col in row.index:
+            if isinstance(col, str) and "charge" in col.lower():
+                v = normalize_number(row.get(col))
+                if v != 0:
+                    return round(abs(v), 2)
+    else:  # Invoice
+        if debit != 0:
+            return round(abs(debit), 2)
+        for col in row.index:
+            if isinstance(col, str) and any(k in col.lower() for k in ["amount", "importe", "valor", "total"]):
+                v = normalize_number(row.get(col))
+                if v != 0:
+                    return round(abs(v), 2)
+    diff = abs(debit - credit)
+    if diff != 0:
+        return round(diff, 2)
+    return 0.0
+
+
+# --- Matching Logic ---
+def match_invoices(erp_df, ven_df):
+    erp_df["__amt"] = erp_df.apply(lambda r: _strong_amount(r, "erp"), axis=1)
+    ven_df["__amt"] = ven_df.apply(lambda r: _strong_amount(r, "ven"), axis=1)
+    ...
+
+
 def normalize_number(v):
     if pd.isna(v) or str(v).strip() == "":
         return 0.0
