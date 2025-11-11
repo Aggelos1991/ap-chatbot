@@ -178,6 +178,28 @@ def match_invoices(erp_df, ven_df):
 
     erp_df["__type"] = erp_df.apply(lambda r: doc_type(r, "erp"), axis=1)
     ven_df["__type"] = ven_df.apply(lambda r: doc_type(r, "ven"), axis=1)
+    # --- Consolidate by Alternative Document (Invoice) to combine INV + CN ---
+    def consolidate_by_invoice(df, inv_col, tag):
+        if inv_col not in df.columns:
+            return df
+        grouped = []
+        for inv, g in df.groupby(inv_col, dropna=False):
+            if g.empty:
+                continue
+            total = g.apply(
+                lambda r: normalize_number(r.get(f"debit_{tag}", 0)) - normalize_number(r.get(f"credit_{tag}", 0)),
+                axis=1
+            ).sum()
+            row = g.iloc[0].copy()
+            row["__amt"] = abs(total)
+            row["__type"] = "INV" if total >= 0 else "CN"
+            grouped.append(row)
+        return pd.DataFrame(grouped).reset_index(drop=True)
+    
+    # Consolidate both ERP and Vendor datasets
+    erp_df = consolidate_by_invoice(erp_df, "invoice_erp", "erp")
+    ven_df = consolidate_by_invoice(ven_df, "invoice_ven", "ven")
+
 
     erp_df["__amt"] = erp_df.apply(lambda r: abs(normalize_number(r.get("debit_erp", 0)) - normalize_number(r.get("credit_erp", 0))), axis=1)
     ven_df["__amt"] = ven_df.apply(lambda r: abs(normalize_number(r.get("debit_ven", 0)) - normalize_number(r.get("credit_ven", 0))), axis=1)
