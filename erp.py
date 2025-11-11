@@ -6,10 +6,19 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment
 
 # ==========================================================
-# CONFIG
+# PAGE CONFIG
 # ==========================================================
 st.set_page_config(page_title="Entersoft ERP Translation Audit", page_icon="🧠", layout="wide")
 st.title("🧠 Entersoft ERP Translation Audit — Dual Field Expert Edition")
+
+# ==========================================================
+# TEST MODE + BATCH FIRST
+# ==========================================================
+col1, col2 = st.columns(2)
+with col1:
+    test_mode = st.checkbox("⚙️ Run only first 30 rows (test mode)", value=False)
+with col2:
+    batch_size = st.slider("📦 Batch size", 20, 200, 50, step=10)
 
 # ==========================================================
 # OPENAI
@@ -19,7 +28,6 @@ if not api_key:
     st.stop()
 client = OpenAI(api_key=api_key)
 MODEL = "gpt-4o-mini"
-BATCH_SIZE = 50   # internal, fixed — no user slider
 
 # ==========================================================
 # OPTIONAL GLOSSARY
@@ -44,14 +52,16 @@ else:
     glossary_text = "(no glossary provided)"
 
 # ==========================================================
-# SOURCE EXCEL
+# SOURCE EXCEL UPLOAD (AFTER SETTINGS)
 # ==========================================================
 upl_file = st.file_uploader("📂 Upload Excel (must include Greek, English, Title, English Title)", type=["xlsx"])
 if not upl_file:
-    st.info("Please upload your exported Excel file from SQL.")
+    st.info("Please upload your exported Excel file from SQL to continue.")
     st.stop()
 
 df = pd.read_excel(upl_file)
+if test_mode:
+    df = df.head(30)
 st.write(f"✅ File loaded successfully — {len(df)} rows detected.")
 
 req_cols = {"Greek", "English", "Title", "English Title"}
@@ -60,7 +70,7 @@ if not req_cols.issubset(df.columns):
     st.stop()
 
 # ==========================================================
-# ERP CONTEXT
+# ERP CONTEXT PROMPT
 # ==========================================================
 ERP_CONTEXT = """
 You are a senior ERP Localization Director with 20+ years of experience in translating, mapping,
@@ -148,28 +158,27 @@ if os.path.exists(CACHE_FILE):
         cache = {}
 
 # ==========================================================
-# RUN AUTOMATIC AUDIT
+# MAIN AUDIT
 # ==========================================================
-st.write("🚀 Starting Smart-Batch Dual Audit... please wait.")
+if st.button("🚀 Run Smart-Batch Dual Audit"):
+    results = []
+    total = len(df)
+    progress = st.progress(0)
+    info = st.empty()
 
-results = []
-total = len(df)
-progress = st.progress(0)
-info = st.empty()
+    for start in range(0, total, batch_size):
+        end = min(start + batch_size, total)
+        batch = df.iloc[start:end]
+        lines = []
 
-for start in range(0, total, BATCH_SIZE):
-    end = min(start + BATCH_SIZE, total)
-    batch = df.iloc[start:end]
-    lines = []
+        for _, r in batch.iterrows():
+            for pair in [("Greek", "English"), ("Title", "English Title")]:
+                src, tgt = str(r.get(pair[0], "")).strip(), str(r.get(pair[1], "")).strip()
+                if src and src not in cache:
+                    lines.append(f"{src} | {tgt}")
 
-    for _, r in batch.iterrows():
-        for pair in [("Greek", "English"), ("Title", "English Title")]:
-            src, tgt = str(r.get(pair[0], "")).strip(), str(r.get(pair[1], "")).strip()
-            if src and src not in cache:
-                lines.append(f"{src} | {tgt}")
-
-    if lines:
-        prompt = f"""{ERP_CONTEXT}
+        if lines:
+            prompt = f"""{ERP_CONTEXT}
 
 Translate or refine these ERP field pairs (Greek | English or Title | English Title).
 Return in format:
@@ -180,70 +189,70 @@ Glossary (optional reference):
 
 {os.linesep.join(lines)}
 """
-        try:
-            r = client.chat.completions.create(model=MODEL, messages=[{"role": "user", "content": prompt}], temperature=0)
-            for ln in r.choices[0].message.content.strip().splitlines():
-                parts = [p.strip() for p in ln.split("|")]
-                if len(parts) >= 2:
-                    cache[parts[0]] = parts[1]
-        except Exception as e:
-            st.warning(f"Batch {start}-{end} failed: {e}")
+            try:
+                r = client.chat.completions.create(model=MODEL, messages=[{"role": "user", "content": prompt}], temperature=0)
+                for ln in r.choices[0].message.content.strip().splitlines():
+                    parts = [p.strip() for p in ln.split("|")]
+                    if len(parts) >= 2:
+                        cache[parts[0]] = parts[1]
+            except Exception as e:
+                st.warning(f"Batch {start}-{end} failed: {e}")
 
-    for _, r in batch.iterrows():
-        row = {
-            "Report_Name": str(r.get("Report_Name", "")).strip(),
-            "Report_Description": str(r.get("Report_Description", "")).strip(),
-            "Field_Name": str(r.get("Field_Name", "")).strip(),
-            "Greek": str(r.get("Greek", "")).strip(),
-            "English": str(r.get("English", "")).strip(),
-            "Title": str(r.get("Title", "")).strip(),
-            "English_Title": str(r.get("English Title", "")).strip()
-        }
+        for _, r in batch.iterrows():
+            row = {
+                "Report_Name": str(r.get("Report_Name", "")).strip(),
+                "Report_Description": str(r.get("Report_Description", "")).strip(),
+                "Field_Name": str(r.get("Field_Name", "")).strip(),
+                "Greek": str(r.get("Greek", "")).strip(),
+                "English": str(r.get("English", "")).strip(),
+                "Title": str(r.get("Title", "")).strip(),
+                "English_Title": str(r.get("English Title", "")).strip()
+            }
 
-        # Greek-English
-        row["Corrected_English"] = cache.get(row["Greek"], row["English"])
-        row["Status"] = classify_status(row["Greek"], row["English"])
-        row["Quality"] = quality_label(row["Greek"], row["Corrected_English"])
+            # Greek-English
+            row["Corrected_English"] = cache.get(row["Greek"], row["English"])
+            row["Status"] = classify_status(row["Greek"], row["English"])
+            row["Quality"] = quality_label(row["Greek"], row["Corrected_English"])
 
-        # Title-English Title
-        row["Corrected_English_Title"] = cache.get(row["Title"], row["English_Title"])
-        row["Status_Title"] = classify_status(row["Title"], row["English_Title"])
-        row["Quality_Title"] = quality_label(row["Title"], row["Corrected_English_Title"])
+            # Title-English Title
+            row["Corrected_English_Title"] = cache.get(row["Title"], row["English_Title"])
+            row["Status_Title"] = classify_status(row["Title"], row["English_Title"])
+            row["Quality_Title"] = quality_label(row["Title"], row["Corrected_English_Title"])
 
-        results.append(row)
+            results.append(row)
 
-    progress.progress(end / total)
-    info.write(f"Processed {end}/{total} rows...")
-    json.dump(cache, open(CACHE_FILE, "w"), ensure_ascii=False, indent=2)
-    time.sleep(0.3)
+        progress.progress(end / total)
+        info.write(f"Processed {end}/{total} rows...")
+        json.dump(cache, open(CACHE_FILE, "w"), ensure_ascii=False, indent=2)
+        time.sleep(0.3)
 
-out = pd.DataFrame(results)
-st.success("✅ Full dual audit complete.")
-st.dataframe(out.head(30))
+    out = pd.DataFrame(results)
+    st.session_state["audit_results"] = out
+    st.success("✅ Full dual audit complete (Greek ↔ English + Title ↔ English Title).")
+    st.dataframe(out.head(30))
 
 # ==========================================================
 # EXPORT
 # ==========================================================
-wb = Workbook()
-ws = wb.active
-ws.title = "ERP Translation Audit"
-ws.append(list(out.columns))
-for c in ws[1]:
-    c.font = Font(bold=True)
-    c.alignment = Alignment(horizontal="center")
-for _, r in out.iterrows():
-    ws.append([r[col] for col in out.columns])
-for col in ws.columns:
-    ws.column_dimensions[col[0].column_letter].width = min(
-        max(len(str(c.value or "")) for c in col) + 2, 60
+if "audit_results" in st.session_state:
+    out = st.session_state["audit_results"]
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "ERP Translation Audit"
+    ws.append(list(out.columns))
+    for c in ws[1]:
+        c.font = Font(bold=True)
+        c.alignment = Alignment(horizontal="center")
+    for _, r in out.iterrows():
+        ws.append([r[col] for col in out.columns])
+    for col in ws.columns:
+        ws.column_dimensions[col[0].column_letter].width = min(
+            max(len(str(c.value or "")) for c in col) + 2, 60
+        )
+    buf = io.BytesIO(); wb.save(buf); buf.seek(0)
+    st.download_button(
+        "📥 Download Final Excel (ERP Dual Audit)",
+        data=buf,
+        file_name="erp_translation_audit_final.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
-buf = io.BytesIO()
-wb.save(buf)
-buf.seek(0)
-
-st.download_button(
-    "📥 Download Final Excel (ERP Dual Audit)",
-    data=buf,
-    file_name="erp_translation_audit_final.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-)
