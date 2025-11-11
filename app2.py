@@ -193,8 +193,13 @@ def match_invoices(erp_df, ven_df):
         if amt==0: amt=abs(debit) if abs(debit)>0 else abs(credit)
         return round(amt,2)
 
-    erp_df["__amt"]=erp_df.apply(lambda r: compute_amt(r,"erp"),axis=1)
-    ven_df["__amt"]=ven_df.apply(lambda r: compute_amt(r,"ven"),axis=1)
+   # Preserve existing __amt if already calculated during consolidation
+    if "__amt" not in erp_df.columns or erp_df["__amt"].fillna(0).sum() == 0:
+        erp_df["__amt"] = erp_df.apply(lambda r: compute_amt(r, "erp"), axis=1)
+    
+    if "__amt" not in ven_df.columns or ven_df["__amt"].fillna(0).sum() == 0:
+        ven_df["__amt"] = ven_df.apply(lambda r: compute_amt(r, "ven"), axis=1)
+
 
     erp_use=erp_df[erp_df["__type"]!="IGNORE"].copy()
     ven_use=ven_df[ven_df["__type"]!="IGNORE"].copy()
