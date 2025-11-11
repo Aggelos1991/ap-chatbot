@@ -511,8 +511,16 @@ if uploaded_erp and uploaded_vendor:
             tier1, miss_erp, miss_ven = match_invoices(erp_df, ven_df)
 
             # progressive de-dup after Tier-1
-            used_erp_inv = set(tier1["ERP Invoice"].astype(str)) if not tier1.empty else set()
-            used_ven_inv = set(tier1["Vendor Invoice"].astype(str)) if not tier1.empty else set()
+            if isinstance(tier1, pd.DataFrame) and "ERP Invoice" in tier1.columns:
+                used_erp_inv = set(tier1["ERP Invoice"].astype(str))
+            else:
+                used_erp_inv = set()
+            
+            if isinstance(tier1, pd.DataFrame) and "Vendor Invoice" in tier1.columns:
+                used_ven_inv = set(tier1["Vendor Invoice"].astype(str))
+            else:
+                used_ven_inv = set()
+
             if not miss_erp.empty:
                 miss_erp = miss_erp[~miss_erp["Invoice"].astype(str).isin(used_erp_inv)]
             if not miss_ven.empty:
