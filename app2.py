@@ -497,13 +497,34 @@ uploaded_vendor = st.file_uploader("Vendor Statement (Excel)", type=["xlsx"], ke
 
 if uploaded_erp and uploaded_vendor:
     try:
+        # --- Read Excel files ---
         erp_raw = pd.read_excel(uploaded_erp, dtype=str)
         ven_raw = pd.read_excel(uploaded_vendor, dtype=str)
 
+        # --- Clean ERP columns and numeric formats ---
+        erp_raw.columns = [str(c).strip().lower() for c in erp_raw.columns]
+        erp_raw = erp_raw.applymap(lambda x: str(x).strip() if pd.notna(x) else x)
+
+        # Fix European-style numbers (1.574,10 → 1574.10)
+        for c in erp_raw.columns:
+            if any(k in c for k in ["debit", "credit", "importe", "valor", "amount", "total"]):
+                erp_raw[c] = (
+                    erp_raw[c]
+                    .astype(str)
+                    .str.replace(".", "", regex=False)   # remove thousand separators
+                    .str.replace(",", ".", regex=False)  # replace decimal commas with dots
+                )
+
+        # --- Clean Vendor columns (optional) ---
+        ven_raw.columns = [str(c).strip().lower() for c in ven_raw.columns]
+        ven_raw = ven_raw.applymap(lambda x: str(x).strip() if pd.notna(x) else x)
+
+        # --- Continue with your existing normalization ---
         erp_df = normalize_columns(erp_raw, "erp")
         ven_df = normalize_columns(ven_raw, "ven")
         st.write("🧩 ERP columns detected:", list(erp_df.columns))
         st.write("🧩 Vendor columns detected:", list(ven_df.columns))
+
 
 
         with st.spinner("Analyzing invoices..."):
