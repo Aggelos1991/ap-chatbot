@@ -180,6 +180,7 @@ def match_invoices(erp_df, ven_df):
     ven_df["__type"] = ven_df.apply(lambda r: doc_type(r, "ven"), axis=1)
     # --- Consolidate by Alternative Document (Invoice) to combine INV + CN ---
     # --- Consolidate by Alternative Document (Invoice) — skip payments ---
+   # --- Consolidate by Alternative Document (Invoice) — skip payments safely ---
     def consolidate_by_invoice(df, inv_col, tag):
         if inv_col not in df.columns:
             return df
@@ -189,28 +190,34 @@ def match_invoices(erp_df, ven_df):
             "bank transfer", "πληρωμή", "έμβασμα", "εξόφληση", "remesa", "paid"
         ]
     
-        grouped = []
+        consolidated_rows = []
+    
         for inv, g in df.groupby(inv_col, dropna=False):
             if g.empty:
                 continue
     
-            # Skip consolidation if group looks like a payment
+            # Skip consolidation if the reason looks like a payment
             txt = " ".join(g.get(f"reason_{tag}", "").astype(str).str.lower().tolist())
             if any(k in txt for k in pay_kw):
-                grouped.extend(g.to_dict("records"))
+                # Keep group rows as-is (no merging)
+                for _, row in g.iterrows():
+                    consolidated_rows.append(row.copy())
                 continue
     
+            # Otherwise: consolidate invoice + CN amounts
             total = g.apply(
                 lambda r: normalize_number(r.get(f"debit_{tag}", 0)) - normalize_number(r.get(f"credit_{tag}", 0)),
                 axis=1
             ).sum()
     
-            row = g.iloc[0].copy()
-            row["__amt"] = abs(total)
-            row["__type"] = "INV" if total >= 0 else "CN"
-            grouped.append(row)
+            base = g.iloc[0].copy()
+            base["__amt"] = abs(total)
+            base["__type"] = "INV" if total >= 0 else "CN"
+            consolidated_rows.append(base)
     
-        return pd.DataFrame(grouped).reset_index(drop=True)
+        # Return clean DataFrame
+        return pd.DataFrame(consolidated_rows).reset_index(drop=True)
+
 
     
     # Consolidate both ERP and Vendor datasets
