@@ -233,16 +233,25 @@ def match_invoices(erp_df, ven_df):
                     consolidated_rows.append(row.copy())
                 continue
     
-            # Otherwise: consolidate invoice + CN amounts
-            total = g.apply(
-                lambda r: normalize_number(r.get(f"debit_{tag}", 0)) - normalize_number(r.get(f"credit_{tag}", 0)),
-                axis=1
-            ).sum()
-    
-            base = g.iloc[0].copy()
-            base["__amt"] = abs(total)
-            base["__type"] = "INV" if total >= 0 else "CN"
-            consolidated_rows.append(base)
+            # Otherwise: consolidate invoice + CN amounts (with Charge fallback)
+        def extract_amt(r):
+            d = normalize_number(r.get(f"debit_{tag}", 0))
+            c = normalize_number(r.get(f"credit_{tag}", 0))
+            if d == 0 and c == 0:
+                for col in r.index:
+                    if isinstance(col, str) and "charge" in col.lower():
+                        val = normalize_number(r.get(col))
+                        if val != 0:
+                            return val
+            return d - c
+        
+        total = g.apply(extract_amt, axis=1).sum()
+        
+        base = g.iloc[0].copy()
+        base["__amt"] = round(abs(total), 2)
+        base["__type"] = "INV" if total >= 0 else "CN"
+        consolidated_rows.append(base)
+
     
         # Return clean DataFrame
         return pd.DataFrame(consolidated_rows).reset_index(drop=True)
