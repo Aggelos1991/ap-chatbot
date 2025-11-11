@@ -186,19 +186,31 @@ def match_invoices(erp_df, ven_df):
     erp_df=consolidate_by_invoice(erp_df,"invoice_erp","erp")
     ven_df=consolidate_by_invoice(ven_df,"invoice_ven","ven")
 
-    def compute_amt(row,tag):
-        debit=normalize_number(row.get(f"debit_{tag}",0))
-        credit=normalize_number(row.get(f"credit_{tag}",0))
-        amt=abs(debit-credit)
-        if amt==0: amt=abs(debit) if abs(debit)>0 else abs(credit)
-        return round(amt,2)
-
-   # Preserve existing __amt if already calculated during consolidation
-    if "__amt" not in erp_df.columns or erp_df["__amt"].fillna(0).sum() == 0:
-        erp_df["__amt"] = erp_df.apply(lambda r: compute_amt(r, "erp"), axis=1)
+        # --- Preserve consolidated amount if already computed ---
+    def compute_amt(row, tag):
+        # if consolidation already provided a valid amount, keep it
+        if "__amt" in row and normalize_number(row["__amt"]) != 0:
+            return round(normalize_number(row["__amt"]), 2)
     
-    if "__amt" not in ven_df.columns or ven_df["__amt"].fillna(0).sum() == 0:
-        ven_df["__amt"] = ven_df.apply(lambda r: compute_amt(r, "ven"), axis=1)
+        debit  = normalize_number(row.get(f"debit_{tag}", 0))
+        credit = normalize_number(row.get(f"credit_{tag}", 0))
+        charge = 0.0
+    
+        # Fallback to "charge" if debit/credit are both 0
+        if debit == 0 and credit == 0:
+            for col in row.index:
+                if isinstance(col, str) and "charge" in col.lower():
+                    v = normalize_number(row.get(col, 0))
+                    if v != 0:
+                        charge = v
+                        break
+    
+        amt = debit - credit if (debit or credit) else charge
+        return round(abs(amt), 2)
+    
+    erp_df["__amt"] = erp_df.apply(lambda r: compute_amt(r, "erp"), axis=1)
+    ven_df["__amt"] = ven_df.apply(lambda r: compute_amt(r, "ven"), axis=1)
+
 
 
     erp_use=erp_df[erp_df["__type"]!="IGNORE"].copy()
