@@ -62,29 +62,23 @@ def fuzzy_ratio(a, b):
 # --- Other helper functions above (like normalize_invoice, etc.) ---
 # --- Strong ERP/Vendor amount detection with 'Charge' support ---
 def _strong_amount(row, tag):
-    debit = normalize_number(row.get(f"debit_{tag}", 0))
-    credit = normalize_number(row.get(f"credit_{tag}", 0))
-    # Base preference
-    if row.get("__type") == "CN":  # Credit Note
-        if credit != 0:
-            return round(abs(credit), 2)
-        for col in row.index:
-            if isinstance(col, str) and "charge" in col.lower():
-                v = normalize_number(row.get(col))
-                if v != 0:
-                    return round(abs(v), 2)
-    else:  # Invoice
-        if debit != 0:
-            return round(abs(debit), 2)
-        for col in row.index:
-            if isinstance(col, str) and any(k in col.lower() for k in ["amount", "importe", "valor", "total"]):
-                v = normalize_number(row.get(col))
-                if v != 0:
-                    return round(abs(v), 2)
-    diff = abs(debit - credit)
-    if diff != 0:
-        return round(diff, 2)
+    # Try common amount-like columns
+    candidates = []
+    for col in row.index:
+        if not isinstance(col, str):
+            continue
+        col_lower = col.lower()
+        if any(k in col_lower for k in [
+            "debit", "debe", "haber", "credit",
+            "importe", "valor", "amount", "total", "bruto", "cargo", "charge", "neto"
+        ]):
+            v = normalize_number(row.get(col, 0))
+            if v != 0:
+                candidates.append(abs(v))
+    if candidates:
+        return round(max(candidates), 2)
     return 0.0
+
 
 
 # --- Matching Logic ---
