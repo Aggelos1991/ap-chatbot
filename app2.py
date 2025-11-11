@@ -60,8 +60,6 @@ def fuzzy_ratio(a, b):
     return SequenceMatcher(None, str(a), str(b)).ratio()
 
 # --- Other helper functions above (like normalize_invoice, etc.) ---
-
-
 # --- Strong ERP/Vendor amount detection with 'Charge' support ---
 def _strong_amount(row, tag):
     debit = normalize_number(row.get(f"debit_{tag}", 0))
