@@ -782,9 +782,19 @@ if uploaded_erp and uploaded_vendor:
 
         st.markdown('<h2 class="section-title">Tier-3: Date + Strict Fuzzy</h2>', unsafe_allow_html=True)
         if not tier3.empty:
-            st.dataframe(style(tier3, "background:#7E57C2;color:#fff;font-weight:bold;"), use_container_width=True)
+            # Try to also show ERP 'Charge' or similar column if it exists
+            cols = list(tier3.columns)
+            extra_cols = [c for c in ["Charge", "Importe", "Valor", "Total", "Amount"] if c in tier3.columns]
+            base_cols = ["ERP Invoice", "Vendor Invoice", "ERP Amount", "Vendor Amount", "Difference", "Fuzzy Score"]
+            show_cols = base_cols + [c for c in extra_cols if c not in base_cols]
+        
+            st.dataframe(
+                style(tier3[show_cols], "background:#7E57C2;color:#fff;font-weight:bold;"),
+                use_container_width=True
+            )
         else:
             st.info("No Tier-3 matches.")
+
 
         col_m1, col_m2 = st.columns(2)
         with col_m1:
