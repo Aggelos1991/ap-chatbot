@@ -227,9 +227,20 @@ Glossary (optional reference):
         time.sleep(0.3)
 
     out = pd.DataFrame(results)
+
+    # Reorder columns as requested
+    desired_order = [
+        "Greek", "English", "Corrected_English", "Status", "Quality",
+        "Title", "English_Title", "Corrected_English_Title", "Status_Title", "Quality_Title"
+    ]
+    # Keep any extra metadata (like Report_Name etc.) at the end
+    extra_cols = [c for c in out.columns if c not in desired_order]
+    out = out[desired_order + extra_cols]
+    
     st.session_state["audit_results"] = out
     st.success("✅ Full dual audit complete (Greek ↔ English + Title ↔ English Title).")
     st.dataframe(out.head(30))
+
 
 # ==========================================================
 # EXPORT
