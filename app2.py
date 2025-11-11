@@ -177,6 +177,10 @@ def match_invoices(erp_df, ven_df):
 
     erp_df["__type"] = erp_df.apply(lambda r: doc_type(r, "erp"), axis=1)
     ven_df["__type"] = ven_df.apply(lambda r: doc_type(r, "ven"), axis=1)
+    # 🚫 Exclude payments before consolidation (strict fix)
+    erp_df = erp_df[erp_df["__type"].isin(["INV", "CN"])].copy()
+    ven_df = ven_df[ven_df["__type"].isin(["INV", "CN"])].copy()
+
 
     # 🔹 Consolidate same invoice codes (sum of all rows like INV+CN)
     def consolidate(df, tag):
