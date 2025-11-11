@@ -532,8 +532,27 @@ if uploaded_erp and uploaded_vendor:
             tier1, miss_erp, miss_ven = match_invoices(erp_df, ven_df)
 
             # progressive de-dup after Tier-1
-            used_erp_inv = set(tier1["ERP Invoice"].astype(str)) if not tier1.empty else set()
-            used_ven_inv = set(tier1["Vendor Invoice"].astype(str)) if not tier1.empty else set()
+            # --- Safe guard for corrupted DataFrame cases ---
+        def safe_series_to_str(obj):
+            if isinstance(obj, pd.Series):
+                return obj.astype(str)
+            elif isinstance(obj, list):
+                return pd.Series(obj, dtype=str)
+            elif isinstance(obj, str):
+                return pd.Series([obj], dtype=str)
+            else:
+                return pd.Series([], dtype=str)
+        
+        if isinstance(tier1, pd.DataFrame) and not tier1.empty and "ERP Invoice" in tier1.columns:
+            used_erp_inv = set(safe_series_to_str(tier1["ERP Invoice"]))
+        else:
+            used_erp_inv = set()
+        
+        if isinstance(tier1, pd.DataFrame) and not tier1.empty and "Vendor Invoice" in tier1.columns:
+            used_ven_inv = set(safe_series_to_str(tier1["Vendor Invoice"]))
+        else:
+            used_ven_inv = set()
+        
 
 
             if not miss_erp.empty:
