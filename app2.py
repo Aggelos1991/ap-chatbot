@@ -162,11 +162,10 @@ def match_invoices(erp_df, ven_df):
         txt = (str(row.get(f"reason_{tag}", "")) + " " + str(row.get(f"invoice_{tag}", ""))).lower()
         debit  = normalize_number(row.get(f"debit_{tag}", 0))
         credit = normalize_number(row.get(f"credit_{tag}", 0))
-
         pay_kw = [
             "πληρωμ", "payment", "remittance", "bank transfer",
             "transferencia", "trf", "remesa", "pago", "deposit",
-            "μεταφορά", "έμβασμα", "εξοφληση", "pagado", "paid", "cobro"
+            "μεταφορά", "έμβασμα", "εξόφληση", "pagado", "paid", "cobro"
         ]
         if any(k in txt for k in pay_kw):
             return "IGNORE"
@@ -179,8 +178,33 @@ def match_invoices(erp_df, ven_df):
     erp_df["__type"] = erp_df.apply(lambda r: doc_type(r, "erp"), axis=1)
     ven_df["__type"] = ven_df.apply(lambda r: doc_type(r, "ven"), axis=1)
 
-    erp_df["__amt"] = erp_df.apply(lambda r: abs(normalize_number(r.get("debit_erp", 0)) - normalize_number(r.get("credit_erp", 0))), axis=1)
-    ven_df["__amt"] = ven_df.apply(lambda r: abs(normalize_number(r.get("debit_ven", 0)) - normalize_number(r.get("credit_ven", 0))), axis=1)
+    # 🔹 Consolidate same invoice codes (sum of all rows like INV+CN)
+    def consolidate(df, tag):
+        if f"invoice_{tag}" not in df.columns:
+            return df
+        grouped = []
+        for inv, g in df.groupby(f"invoice_{tag}", dropna=False):
+            if not inv or pd.isna(inv):
+                continue
+            total = 0.0
+            for _, r in g.iterrows():
+                d = normalize_number(r.get(f"debit_{tag}", 0))
+                c = normalize_number(r.get(f"credit_{tag}", 0))
+                if r.get("__type") == "CN":
+                    total -= abs(d - c) if (d or c) else 0.0
+                else:
+                    total += abs(d - c) if (d or c) else 0.0
+            base = g.iloc[0].copy()
+            base["__amt"] = round(abs(total), 2)
+            grouped.append(base)
+        return pd.DataFrame(grouped)
+
+    erp_df = consolidate(erp_df, "erp")
+    ven_df = consolidate(ven_df, "ven")
+
+    # Compute __amt if missing
+    erp_df["__amt"] = erp_df["__amt"].apply(lambda x: round(normalize_number(x), 2))
+    ven_df["__amt"] = ven_df["__amt"].apply(lambda x: round(normalize_number(x), 2))
 
     erp_use = erp_df[erp_df["__type"] != "IGNORE"].copy()
     ven_use = ven_df[ven_df["__type"] != "IGNORE"].copy()
@@ -212,8 +236,12 @@ def match_invoices(erp_df, ven_df):
     erp_use["__inv_norm"] = erp_use["invoice_erp"].apply(clean_invoice_code)
     ven_use["__inv_norm"] = ven_use["invoice_ven"].apply(clean_invoice_code)
 
-    miss_erp = erp_use[~erp_use["__inv_norm"].isin(matched_df["ERP Invoice"].apply(clean_invoice_code) if not matched_df.empty else [])]
-    miss_ven = ven_use[~ven_use["__inv_norm"].isin(matched_df["Vendor Invoice"].apply(clean_invoice_code) if not matched_df.empty else [])]
+    miss_erp = erp_use[~erp_use["__inv_norm"].isin(
+        matched_df["ERP Invoice"].apply(clean_invoice_code) if not matched_df.empty else []
+    )]
+    miss_ven = ven_use[~ven_use["__inv_norm"].isin(
+        matched_df["Vendor Invoice"].apply(clean_invoice_code) if not matched_df.empty else []
+    )]
 
     miss_erp = miss_erp.rename(columns={"invoice_erp": "Invoice", "__amt": "Amount", "date_erp": "Date"})
     miss_ven = miss_ven.rename(columns={"invoice_ven": "Invoice", "__amt": "Amount", "date_ven": "Date"})
@@ -221,6 +249,7 @@ def match_invoices(erp_df, ven_df):
     miss_erp = miss_erp[[c for c in keep_cols if c in miss_erp.columns]].reset_index(drop=True)
     miss_ven = miss_ven[[c for c in keep_cols if c in miss_ven.columns]].reset_index(drop=True)
     return matched_df, miss_erp, miss_ven
+
 
 
 # ==================== REST OF YOUR APP (TIERS, PAYMENTS, UI, EXPORT) ====================
