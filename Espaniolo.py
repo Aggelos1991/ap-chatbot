@@ -1,6 +1,5 @@
 import streamlit as st
 from openai import OpenAI
-import base64
 
 # =========================================================
 # PAGE CONFIG
@@ -19,17 +18,16 @@ if not api_key:
 client = OpenAI(api_key=api_key)
 
 # =========================================================
-# INLINE LOGO (your uploaded file)
+# LOGO + SIGNATURE
 # =========================================================
-with open("3116FEF9-419C-47D2-A832-15A27AD9D1F8.jpeg", "rb") as img:
-    logo_base64 = base64.b64encode(img.read()).decode("utf-8")
+logo_url = "https://career.unipi.gr/career_cv/logo_comp/81996-new-logo.png"
 
 signature_block = f"""
 <br><br>
 <table style='margin-top:10px;'>
 <tr>
 <td style='vertical-align:top; padding-right:10px;'>
-    <img src='data:image/jpeg;base64,{logo_base64}' width='180'>
+    <img src='{logo_url}' width='180'>
 </td>
 <td style='vertical-align:top;'>
     <b>Angelos Keramaris</b><br>
@@ -115,11 +113,12 @@ if st.button("✉️ Generate Vendor Email") and user_input.strip():
     st.markdown("### 📩 Generated Vendor Email")
     st.markdown(email_text, unsafe_allow_html=True)
 
-    # --- Copy to Clipboard button ---
+    # Copy-to-Clipboard button (copies plain text)
+    clean_text = st.session_state.get("plain_email", email_text)
     copy_script = f"""
     <script>
     function copyToClipboard() {{
-        navigator.clipboard.writeText({email_text!r});
+        navigator.clipboard.writeText({repr(clean_text)});
         alert("📋 Email copied to clipboard!");
     }}
     </script>
