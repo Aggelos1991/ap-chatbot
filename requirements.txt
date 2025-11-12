@@ -5,6 +5,10 @@ pandas
 numpy
 streamlit-plotly-events
 pytesseract
+speechrecognition
+pyaudio
+gtts
+playsound
 
 
 # --- OCR Engine (Spanish + Greek + English) ---
