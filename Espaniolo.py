@@ -1,6 +1,5 @@
 import streamlit as st
 from openai import OpenAI
-import re
 
 # =========================================================
 # PAGE CONFIG
@@ -41,6 +40,7 @@ signature_block = f"""
 # HELPER FUNCTIONS
 # =========================================================
 def transcribe_audio(uploaded_file):
+    """Transcribe audio (Greek, English, or Spanish)."""
     with uploaded_file as f:
         result = client.audio.transcriptions.create(
             model="gpt-4o-mini-transcribe",
@@ -48,38 +48,41 @@ def transcribe_audio(uploaded_file):
         )
     return result.text.strip()
 
+
 def create_vendor_email(note, lang_code, subject_text):
     tone = "in English (US)" if lang_code == "en" else "in Spanish"
     subject_clean = subject_text or "Request for Invoice Submission"
 
+    # 💬 Improved prompt — keeps exact invoice numbers & enforces spacing
     prompt = (
         f"You are an Accounts Payable specialist responsible for vendor communication. "
         f"The input may be in English, Spanish, or Greek — detect and translate automatically. "
-        f"Detect the vendor name (e.g., 'Iberostar') and include it in the greeting (e.g., 'Dear Iberostar,'). "
+        f"Detect the vendor name (e.g., 'Iberostar') and include it naturally in the greeting (e.g., 'Dear Iberostar,'). "
         f"If no vendor name is found, use 'Dear Vendor,'. "
-        f"Write a concise, polite vendor email {tone}. "
-        f"Ensure the structure strictly follows this layout:\n\n"
+        f"Preserve all invoice numbers, codes, and monetary values *exactly as provided* by the user. "
+        f"Do not simplify, reformat, or expand numeric sequences. "
+        f"Write a concise and polite vendor email {tone} following this exact structure:\n\n"
         f"Dear [Vendor],\n\n"
-        f"[Email body — 2 to 3 short paragraphs]\n\n"
+        f"[Short paragraph(s) of message body]\n\n"
         f"Thank you for your attention to this matter.\n\n"
         f"Best regards,\n\n"
         f"[Signature block]\n\n"
-        f"Always use <p> and <br> tags for proper spacing in HTML.\n"
-        f"Append the following signature (only once):\n{signature_block}\n"
+        f"Always use proper <p> and <br> tags for spacing in HTML. "
+        f"Append this signature block exactly once:\n{signature_block}\n"
         f"User note:\n{note}"
     )
 
     completion = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
-            {"role": "system", "content": "You are a bilingual AP email expert that writes clear, perfectly formatted business emails."},
+            {"role": "system", "content": "You are a bilingual AP email expert writing clean, well-formatted HTML vendor emails."},
             {"role": "user", "content": prompt}
         ]
     )
 
     email_body = completion.choices[0].message.content.strip()
 
-    # ✅ Enforce clean line spacing and structure
+    # ✨ Enforce visual structure and spacing
     email_body = (
         email_body.replace("\n\n", "</p><p>")
         .replace("\n", " ")
@@ -90,7 +93,7 @@ def create_vendor_email(note, lang_code, subject_text):
     if not email_body.startswith("<p>"):
         email_body = f"<p>{email_body}</p>"
 
-    # ✨ Beautiful structured HTML wrapper
+    # 🌤️ Beautiful, readable email preview
     email_html = f"""
 <html>
 <head>
@@ -102,16 +105,16 @@ body {{
     font-size: 15px;
     color: #222;
     line-height: 1.6;
-    margin: 40px;
-    background-color: #f6f7f9;
+    margin: 0;
+    background-color: #eceff1;
 }}
 .container {{
     max-width: 720px;
-    margin: auto;
-    background: #fff;
+    margin: 40px auto;
+    background: #ffffff;
     border-radius: 10px;
     padding: 35px 45px;
-    box-shadow: 0 0 10px rgba(0,0,0,0.08);
+    box-shadow: 0 2px 12px rgba(0,0,0,0.1);
 }}
 h2 {{
     font-size: 18px;
@@ -164,10 +167,10 @@ with col2:
 # =========================================================
 if audio_file:
     st.audio(audio_file)
-    with st.spinner("🎧 Transcribing..."):
+    with st.spinner("🎧 Transcribing your message..."):
         try:
             spoken_text = transcribe_audio(audio_file)
-            st.success("✅ Transcribed successfully.")
+            st.success("✅ Transcription complete.")
             st.write(f"🗣 **You said:** {spoken_text}")
             user_input = spoken_text
         except Exception as e:
@@ -178,7 +181,7 @@ if audio_file:
 # GENERATE EMAIL
 # =========================================================
 if st.button("✉️ Generate Vendor Email") and user_input.strip():
-    with st.spinner("🤖 Creating email..."):
+    with st.spinner("🤖 Creating professional email..."):
         email_html = create_vendor_email(user_input, lang_code, subject_text)
 
     st.markdown("### 📩 Preview (HTML email)")
@@ -194,15 +197,14 @@ if st.button("✉️ Generate Vendor Email") and user_input.strip():
 
     with st.expander("ℹ️ How to use this file in Outlook (Mac or Windows)"):
         st.markdown("""
-**💻 If you're using macOS Outlook (Legacy or New):**
+**💻 macOS Outlook (Legacy or New):**
 1. Click **⬇️ Download HTML Email (for Outlook)** above.  
 2. Open the `.html` file in **Safari**.  
-3. Press **Cmd +A → Cmd +C** to copy the rendered content.  
-4. Paste directly into your Outlook message body. ✅  
+3. Press **Cmd + A → Cmd + C** to copy the rendered content.  
+4. Paste directly into Outlook’s email body. ✅  
 
-**💼 If using Windows Outlook:**
-1. In a new email → **Insert → Attach File →** browse to your `.html` file.  
-2. Click the small arrow beside **Insert** → select **Insert as Text**.  
-
-Your email will display perfectly formatted with logo, spacing, and signature.  
+**💼 Windows Outlook:**
+1. In a new email, go to **Insert → Attach File →** choose the `.html` file.  
+2. Click the small arrow next to **Insert** → select **Insert as Text**.  
+3. The formatted email will appear perfectly with logo and spacing.
         """)
