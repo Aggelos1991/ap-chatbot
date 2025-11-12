@@ -16,7 +16,6 @@ client = OpenAI(api_key=api_key)
 
 # --- Helpers ---
 def transcribe_audio(uploaded_file):
-    # Streamlit gives a SpooledTemporaryFile; pass directly to OpenAI
     with uploaded_file as f:
         result = client.audio.transcriptions.create(
             model="gpt-4o-mini-transcribe",
@@ -41,10 +40,10 @@ def bilingual_chat(message):
 # --- UI ---
 st.subheader("🎧 Speak or type to chat!")
 
-# ✅ mp4 added here
+# ✅ now supports m4a, mp3, mp4, wav
 audio_file = st.file_uploader(
-    "Upload audio (.wav, .mp3, .mp4)",
-    type=["wav", "mp3", "mp4"]
+    "Upload audio (.wav, .mp3, .mp4, .m4a)",
+    type=["wav", "mp3", "mp4", "m4a"]
 )
 user_input = st.text_input("Or type your message (English or Español):")
 
@@ -64,7 +63,7 @@ if user_input:
         reply = bilingual_chat(user_input)
     st.markdown(f"**🤖 Bot:** {reply}")
 
-    # voice output
+    # Voice output
     try:
         lang = "es" if any(
             w in user_input.lower() for w in ["el", "la", "de", "que", "y", "un"]
