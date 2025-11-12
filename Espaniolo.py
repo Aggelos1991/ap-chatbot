@@ -1,5 +1,6 @@
 import streamlit as st
 from openai import OpenAI
+import base64
 
 # =========================================================
 # PAGE CONFIG
@@ -18,16 +19,17 @@ if not api_key:
 client = OpenAI(api_key=api_key)
 
 # =========================================================
-# BRANDING
+# INLINE LOGO (your uploaded file)
 # =========================================================
-logo_url = "https://upload.wikimedia.org/wikipedia/commons/thumb/1/13/Sani_Resort_logo.png/320px-Sani_Resort_logo.png"
+with open("3116FEF9-419C-47D2-A832-15A27AD9D1F8.jpeg", "rb") as img:
+    logo_base64 = base64.b64encode(img.read()).decode("utf-8")
 
 signature_block = f"""
 <br><br>
 <table style='margin-top:10px;'>
 <tr>
 <td style='vertical-align:top; padding-right:10px;'>
-    <img src='{logo_url}' width='140'>
+    <img src='data:image/jpeg;base64,{logo_base64}' width='180'>
 </td>
 <td style='vertical-align:top;'>
     <b>Angelos Keramaris</b><br>
@@ -41,7 +43,7 @@ signature_block = f"""
 # HELPERS
 # =========================================================
 def transcribe_audio(uploaded_file):
-    """Transcribe audio in any language (Greek, English, Spanish)."""
+    """Transcribe voice in Greek, English, or Spanish."""
     with uploaded_file as f:
         result = client.audio.transcriptions.create(
             model="gpt-4o-mini-transcribe",
@@ -50,16 +52,18 @@ def transcribe_audio(uploaded_file):
     return result.text.strip()
 
 def create_vendor_email(note, lang_code):
-    """Generate bilingual vendor email with clean format and correct tone."""
+    """Generate polished vendor email with vendor name detection."""
     tone = "in English" if lang_code == "en" else "in Spanish"
+
     prompt = (
         f"You are an Accounts Payable specialist writing directly to a vendor. "
-        f"The input may be in English, Spanish, or Greek — detect and translate automatically. "
-        f"Compose a clear, professional, and polite vendor email {tone}. "
+        f"The input may be in English, Spanish, or Greek — detect it automatically. "
+        f"Detect the vendor name mentioned by the user and use it in the greeting (e.g., 'Dear Iberostar,'). "
+        f"If no vendor name is found, use 'Dear Vendor,'. "
+        f"Translate and rewrite the content as a clear, polite vendor email {tone}. "
         f"If invoices or credit notes are mentioned, request them to be sent to ap.iberia@ikosresorts.com. "
-        f"Include a subject line, greeting, concise body, and one single 'Best regards,' closing. "
-        f"End with the following signature block exactly as shown, without repeating 'Best regards':\n\n"
-        f"{signature_block}\n\n"
+        f"Include a subject line, greeting, concise body, and one single 'Best regards' closing. "
+        f"End with the provided signature block (no duplicates):\n\n{signature_block}\n\n"
         f"User note:\n{note}"
     )
 
@@ -110,3 +114,18 @@ if st.button("✉️ Generate Vendor Email") and user_input.strip():
 
     st.markdown("### 📩 Generated Vendor Email")
     st.markdown(email_text, unsafe_allow_html=True)
+
+    # --- Copy to Clipboard button ---
+    copy_script = f"""
+    <script>
+    function copyToClipboard() {{
+        navigator.clipboard.writeText({email_text!r});
+        alert("📋 Email copied to clipboard!");
+    }}
+    </script>
+    <button onclick="copyToClipboard()" style="background-color:#0066cc;color:white;border:none;
+        padding:10px 18px;border-radius:6px;cursor:pointer;font-weight:bold;">
+        Copy Email to Clipboard
+    </button>
+    """
+    st.markdown(copy_script, unsafe_allow_html=True)
