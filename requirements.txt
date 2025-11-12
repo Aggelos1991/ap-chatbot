@@ -9,7 +9,7 @@ speechrecognition
 pyaudio
 gtts
 playsound
-
+transformers
 
 # --- OCR Engine (Spanish + Greek + English) ---
 easyocr
