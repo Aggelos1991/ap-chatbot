@@ -26,7 +26,7 @@ MODEL = "gpt-4o-mini"
 # HELPERS
 # ==========================================================
 def normalize_number(v):
-    if pd.isna(v) or v is None or (isinstance(v, str) and str(v).strip() == ""):
+    if v is None or (isinstance(v, str) and str(v).strip() == ""):
         return ""
     if isinstance(v, (int, float)):
         return round(float(v), 2)
@@ -40,7 +40,8 @@ def normalize_number(v):
         s = s.replace(",", ".")
     s = re.sub(r"[^\d.\-]", "", s)
     try:
-        return round(float(s), 2)
+        f = float(s)
+        return round(f, 2)
     except ValueError:
         return ""
 # ==========================================================
@@ -73,11 +74,11 @@ def extract_raw_lines(uploaded_pdf):
         st.info(f"OCR applied on pages: {', '.join(map(str, ocr_pages))}")
     return all_lines
 # ==========================================================
-# GPT → Structure (doc/date/desc/debe/haber)
+# GPT → Structure (only doc/date/desc/full_line)
 # ==========================================================
 def gpt_structure(lines):
     all_records = []
-    BATCH = 40  # Smaller batch to avoid token limits
+    BATCH = 40
     for i in range(0, len(lines), BATCH):
         batch = lines[i:i+BATCH]
         text_block = "\n".join(batch)
@@ -85,32 +86,25 @@ def gpt_structure(lines):
 You are an expert accounting statement parser. The text consists of lines from a vendor statement table with columns: Fecha, Dia, Ord., Concepto, Docum., Debe, Haber, Saldo.
 Identify only transaction lines (ignore headers, footers, summaries, saldo anterior or final).
 For each transaction, extract:
+- Full Line: the exact full line text
 - Alternative Document: the Docum. field (e.g., NF A25021)
 - Date: the Fecha field (e.g., 31/01/25)
 - Description: the Concepto field (e.g., N.F. A250213 or Cobro factura A250269 Rec)
-- Debe: the Debe amount exactly as string (e.g., "907,98") or empty string "" if no amount in Debe
-- Haber: the Haber amount exactly as string (e.g., "542,90") or empty string "" if no amount in Haber
-IMPORTANT: Do NOT extract or include the Saldo or balance column in Debe or Haber. Ignore Saldo completely. Set Debe or Haber to "" if the column is empty.
+Do NOT include any amounts or the Saldo in the output fields.
 Output only a valid JSON array of objects, nothing else.
 Example:
-Text:
-31/01/25 1 245 N.F. A250213 NF A25021 907,98  6.355,74
-26/02/25 1 801 Cobro factura A250269 Rec NF A25069  542,90 3.719,83
-Output:
 [
   {{
+    "Full Line": "31/01/25 1 245 N.F. A250213 NF A25021 907,98 6.355,74",
     "Alternative Document": "NF A25021",
     "Date": "31/01/25",
-    "Description": "N.F. A250213",
-    "Debe": "907,98",
-    "Haber": ""
+    "Description": "N.F. A250213"
   }},
   {{
+    "Full Line": "26/02/25 1 801 Cobro factura A250269 Rec NF A25069  542,90 3.719,83",
     "Alternative Document": "NF A25069",
     "Date": "26/02/25",
-    "Description": "Cobro factura A250269 Rec",
-    "Debe": "",
-    "Haber": "542,90"
+    "Description": "Cobro factura A250269 Rec"
   }}
 ]
 Text:
@@ -136,18 +130,35 @@ Text:
             st.warning(f"GPT batch {i//BATCH+1} failed: {e}")
     return all_records
 # ==========================================================
+# REGEX → Extract DEBE/HABER
+# ==========================================================
+def extract_numbers(line):
+    nums = re.findall(r'[-]?\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?', line)
+    nums = [normalize_number(n) for n in nums if ',' in n or '.' in n]
+    if len(nums) >= 3:
+        debe = nums[-3]
+        haber = nums[-2]
+    elif len(nums) == 2:
+        debe = ""
+        haber = nums[-2]
+    else:
+        return "", ""
+    if isinstance(debe, float) and abs(debe) < 0.01:
+        debe = ""
+    if isinstance(haber, float) and abs(haber) < 0.01:
+        haber = ""
+    return debe, haber
+# ==========================================================
 # CLASSIFY BY POLARITY
 # ==========================================================
 def classify(records):
     parsed = []
     for r in records:
+        full_line = str(r.get("Full Line", "")).strip()
         doc = str(r.get("Alternative Document", "")).strip()
         date = str(r.get("Date", "")).strip()
         desc = str(r.get("Description", "")).strip()
-        debe_raw = str(r.get("Debe", "")).strip()
-        haber_raw = str(r.get("Haber", "")).strip()
-        debe = normalize_number(debe_raw)
-        haber = normalize_number(haber_raw)
+        debe, haber = extract_numbers(full_line)
         if debe == "" and haber == "":
             continue
         reason = ""
@@ -161,7 +172,7 @@ def classify(records):
             reason = "Payment" if sign > 0 else "Reversal"
             amount = abs(haber)
         elif debe != "" and haber != "":
-            reason = "Payment"  # or handle mixed
+            reason = "Payment"
             amount = abs(haber) if haber != 0 else abs(debe)
         parsed.append({
             "Alternative Document": doc,
@@ -183,7 +194,7 @@ if uploaded_pdf:
     st.success(f"✅ {len(lines)} lines extracted.")
     st.text_area("Preview of text (30 lines):", "\n".join(lines[:30]), height=250)
     if st.button("🤖 Run Hybrid Extraction", type="primary"):
-        with st.spinner("Parsing structure with GPT …"):
+        with st.spinner("Parsing structure with GPT and regex …"):
             base = gpt_structure(lines)
             df = classify(base)
         if len(df) == 0:
