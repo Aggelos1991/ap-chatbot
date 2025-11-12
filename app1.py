@@ -199,6 +199,7 @@ Text to analyze:
                 continue
             all_records.append({
                 "Alternative Document": alt_doc,
+                "Concepto": str(row.get("Concepto", "")).strip(),
                 "Date": str(row.get("Date", "")).strip(),
                 "Reason": reason,
                 "Debit": debit_val,
