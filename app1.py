@@ -6,33 +6,30 @@ from io import BytesIO
 from openai import OpenAI
 from pdf2image import convert_from_bytes
 import pytesseract
-
 # ==========================================================
 # CONFIG
 # ==========================================================
 st.set_page_config(page_title="🦅 DataFalcon Pro — OCR + Regex Hybrid", layout="wide")
 st.title("🦅 DataFalcon Pro — Final OCR + Regex Accounting Edition")
-
 try:
     from dotenv import load_dotenv
     load_dotenv()
 except:
     pass
-
 api_key = os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY")
 if not api_key:
     st.error("❌ No OpenAI API key found.")
     st.stop()
-
 client = OpenAI(api_key=api_key)
 MODEL = "gpt-4o-mini"
-
 # ==========================================================
 # HELPERS
 # ==========================================================
 def normalize_number(v):
-    if pd.isna(v) or str(v).strip() == "":
+    if pd.isna(v) or v is None or (isinstance(v, str) and str(v).strip() == ""):
         return ""
+    if isinstance(v, (int, float)):
+        return round(float(v), 2)
     s = str(v).replace("€", "").replace(" ", "")
     if "," in s and "." in s:
         if s.rfind(",") > s.rfind("."):
@@ -46,7 +43,6 @@ def normalize_number(v):
         return round(float(s), 2)
     except:
         return ""
-
 # ==========================================================
 # PDF + OCR
 # ==========================================================
@@ -55,7 +51,6 @@ def extract_raw_lines(uploaded_pdf):
     pdf_bytes = uploaded_pdf.read()
     uploaded_pdf.seek(0)
     ocr_pages = []
-
     with pdfplumber.open(BytesIO(pdf_bytes)) as pdf:
         for i, page in enumerate(pdf.pages, start=1):
             text = page.extract_text()
@@ -77,9 +72,8 @@ def extract_raw_lines(uploaded_pdf):
     if ocr_pages:
         st.info(f"OCR applied on pages: {', '.join(map(str, ocr_pages))}")
     return all_lines
-
 # ==========================================================
-# GPT → Structure (only doc/date/desc)
+# GPT → Structure (doc/date/desc/debe/haber)
 # ==========================================================
 def gpt_structure(lines):
     all_records = []
@@ -87,25 +81,24 @@ def gpt_structure(lines):
     for i in range(0, len(lines), BATCH):
         batch = lines[i:i+BATCH]
         text_block = "\n".join(batch)
-
         prompt = f"""
-You are a parser. Identify only:
+You are a parser. Identify:
 - Alternative Document (invoice/payment code)
 - Date
 - Description / Concept
-
-Do NOT include numeric columns, balances or totals.  
+- Debe (debit amount as number or empty string)
+- Haber (credit amount as number or empty string)
 Output JSON array only.
-
 Example:
 [
   {{
     "Alternative Document": "A250212",
     "Date": "25/02/25",
-    "Description": "Cobro factura A250212 Rec"
+    "Description": "Cobro factura A250212 Rec",
+    "Debe": 100.50,
+    "Haber": ""
   }}
 ]
-
 Text:
 {text_block}
 """
@@ -123,33 +116,18 @@ Text:
         except Exception as e:
             st.warning(f"GPT batch {i//BATCH+1} failed: {e}")
     return all_records
-
-# ==========================================================
-# REGEX → Extract DEBE/HABER
-# ==========================================================
-def extract_numbers(line):
-    # find up to two numeric values (DEBE, HABER)
-    nums = re.findall(r"[-]?\d{1,3}(?:[\.,]\d{3})*(?:[\.,]\d{2})", line)
-    if len(nums) == 1:
-        return normalize_number(nums[0]), ""
-    elif len(nums) >= 2:
-        return normalize_number(nums[-2]), normalize_number(nums[-1])
-    return "", ""
-
 # ==========================================================
 # CLASSIFY BY POLARITY
 # ==========================================================
-def classify(records, lines):
+def classify(records):
     parsed = []
-    for idx, r in enumerate(records):
+    for r in records:
         doc = str(r.get("Alternative Document", "")).strip()
         date = str(r.get("Date", "")).strip()
         desc = str(r.get("Description", "")).strip()
-        line_text = lines[idx] if idx < len(lines) else ""
-
-        debe, haber = extract_numbers(line_text)
+        debe = normalize_number(r.get("Debe", ""))
+        haber = normalize_number(r.get("Haber", ""))
         reason, amount = "", 0.0
-
         if debe != "" and haber == "":
             reason = "Invoice" if debe > 0 else "Credit Note"
             amount = abs(debe)
@@ -162,7 +140,6 @@ def classify(records, lines):
             amount = abs(haber)
         else:
             continue
-
         parsed.append({
             "Alternative Document": doc,
             "Date": date,
@@ -171,34 +148,27 @@ def classify(records, lines):
             "Amount": amount
         })
     return pd.DataFrame(parsed)
-
 # ==========================================================
 # STREAMLIT APP
 # ==========================================================
 uploaded_pdf = st.file_uploader("📂 Upload Vendor Statement (PDF)", type=["pdf"])
-
 if uploaded_pdf:
     with st.spinner("🧩 Extracting text …"):
         lines = extract_raw_lines(uploaded_pdf)
     st.success(f"✅ {len(lines)} lines extracted.")
     st.text_area("Preview of text (30 lines):", "\n".join(lines[:30]), height=250)
-
     if st.button("🤖 Run Hybrid Extraction", type="primary"):
-        with st.spinner("Parsing structure with GPT and regex …"):
+        with st.spinner("Parsing structure with GPT …"):
             base = gpt_structure(lines)
-            df = classify(base, lines)
-
+            df = classify(base)
         if len(df) == 0:
             st.warning("⚠️ No records found.")
             st.stop()
-
         st.success(f"✅ Extraction complete — {len(df)} records found.")
         st.dataframe(df, use_container_width=True, hide_index=True)
-
         totals = df.groupby("Reason")["Amount"].sum().round(2).reset_index()
         st.markdown("### 💰 Summary by Type")
         st.dataframe(totals, hide_index=True)
-
         buf = BytesIO()
         df.to_excel(buf, index=False)
         buf.seek(0)
