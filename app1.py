@@ -116,7 +116,7 @@ Each line may contain:
 ⚠️ RULES
 1. Ignore lines with 'Asiento', 'Saldo', 'IVA', or 'Total Saldo'.
 2. Exclude codes like "Código IC N" or similar from document detection.
-3. If "N° DOC" or "Documento" missing, detect invoice-like code (FAC123, F23, INV-2024, FRA-005, ΤΙΜ 123, etc).
+3. If "N° DOC" or "Documento" missing, detect invoice-like code (FAC123, F23, INV-2024, FRA-005, ΤΙΜ 123, etc or embedded in Concepto/Περιγραφή/Comentario as fallback)).
 4. Detect reason:
    - "Cobro", "Pago", "Transferencia", "Remesa", "Bank", "Trf", "Pagado" → Payment
    - "Abono", "Nota de crédito", "Crédito", "Descuento", "Πίστωση" → Credit Note
@@ -136,6 +136,7 @@ OUTPUT FORMAT:
 [
   {{
     "Alternative Document": "string (invoice or payment ref)",
+    "Concepto": "factura num from description",
     "Date": "dd/mm/yy or yyyy-mm-dd",
     "Reason": "Invoice | Payment | Credit Note",
     "Debit": "DEBE or TOTAL amount",
