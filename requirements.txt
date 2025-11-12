@@ -5,10 +5,8 @@ pandas
 numpy
 streamlit-plotly-events
 pytesseract
-speechrecognition
-pyaudio
-gtts
-transformers
+torch
+sentencepiece
 
 # --- OCR Engine (Spanish + Greek + English) ---
 easyocr
