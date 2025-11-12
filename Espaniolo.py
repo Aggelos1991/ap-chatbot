@@ -1,16 +1,28 @@
 import streamlit as st
 import torch
-import speech_recognition as sr
-from transformers import M2M100ForConditionalGeneration, M2M100Tokenizer, AutoModelForCausalLM, AutoTokenizer
-from gtts import gTTS
+import sounddevice as sd
+import wavio
 from io import BytesIO
+from gtts import gTTS
+from openai import OpenAI
+from transformers import (
+    M2M100ForConditionalGeneration, 
+    M2M100Tokenizer, 
+    AutoModelForCausalLM, 
+    AutoTokenizer
+)
 
-st.set_page_config(page_title="Bilingual Chat (EN ↔ ES)", layout="wide")
-st.title("💬 Bilingual Chat (English ↔ Español)")
+# =========================
+# CONFIGURATION
+# =========================
+st.set_page_config(page_title="🎙️ Bilingual Voice Chat", layout="wide")
+st.title("🎙️ English ↔ Español Voice Chat")
 
-# ================================
-# Load models (cached)
-# ================================
+client = OpenAI(api_key=st.secrets.get("OPENAI_API_KEY"))
+
+# =========================
+# LOAD MODELS
+# =========================
 @st.cache_resource
 def load_models():
     trans_model = M2M100ForConditionalGeneration.from_pretrained("facebook/m2m100_418M")
@@ -21,44 +33,47 @@ def load_models():
 
 trans_model, trans_tokenizer, conv_model, conv_tokenizer = load_models()
 
-# ================================
-# Translation helper
-# ================================
+# =========================
+# TRANSLATION HELPERS
+# =========================
 def translate(text, src_lang, tgt_lang):
     trans_tokenizer.src_lang = src_lang
     encoded = trans_tokenizer(text, return_tensors="pt")
-    generated = trans_model.generate(**encoded, forced_bos_token_id=trans_tokenizer.get_lang_id(tgt_lang), max_length=256)
+    generated = trans_model.generate(
+        **encoded,
+        forced_bos_token_id=trans_tokenizer.get_lang_id(tgt_lang),
+        max_length=256
+    )
     return trans_tokenizer.decode(generated[0], skip_special_tokens=True)
 
-# ================================
-# Language detection
-# ================================
 def detect_language(text):
-    spanish_keywords = {"el", "la", "los", "las", "un", "una", "de", "en", "y", "que", "por", "para", "con"}
+    spanish = {"el", "la", "los", "las", "un", "una", "de", "en", "y", "que", "por", "para"}
     words = set(text.lower().split())
-    return "es" if words & spanish_keywords else "en"
+    return "es" if words & spanish else "en"
 
-# ================================
-# Voice input
-# ================================
-def record_audio():
-    recognizer = sr.Recognizer()
-    with sr.Microphone() as source:
-        st.info("🎙️ Speak now...")
-        audio_data = recognizer.listen(source)
-        st.success("✅ Audio captured!")
-    try:
-        text = recognizer.recognize_google(audio_data, language="es-ES")
-        return text
-    except sr.UnknownValueError:
-        st.error("Could not understand audio.")
-    except sr.RequestError:
-        st.error("Speech recognition service unavailable.")
-    return ""
+# =========================
+# RECORD VOICE
+# =========================
+def record_voice(seconds=6, samplerate=44100):
+    st.info("🎤 Recording... speak now!")
+    audio = sd.rec(int(seconds * samplerate), samplerate=samplerate, channels=1, dtype='int16')
+    sd.wait()
+    st.success("✅ Recording finished!")
+    filename = "voice_input.wav"
+    wavio.write(filename, audio, samplerate, sampwidth=2)
+    return filename
 
-# ================================
-# Conversation with memory
-# ================================
+def transcribe_audio(file_path):
+    with open(file_path, "rb") as f:
+        transcript = client.audio.transcriptions.create(
+            model="gpt-4o-mini-transcribe",
+            file=f
+        )
+    return transcript.text.strip()
+
+# =========================
+# CHAT MEMORY + LOGIC
+# =========================
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
@@ -77,25 +92,29 @@ def bilingual_chat(user_input):
     st.session_state.chat_history.append(response_en + conv_tokenizer.eos_token)
     return translate(response_en, "en", tgt) if src == "es" else response_en
 
-# ================================
-# Streamlit UI
-# ================================
+# =========================
+# STREAMLIT UI
+# =========================
 col1, col2 = st.columns([2, 1])
+
 with col1:
     user_input = st.text_input("💬 Type your message (English or Español):")
+
 with col2:
-    if st.button("🎤 Voice Input (Spanish)"):
-        voice_text = record_audio()
-        if voice_text:
-            st.text(f"🗣 You said: {voice_text}")
-            user_input = voice_text
+    if st.button("🎙️ Record Voice"):
+        audio_path = record_voice()
+        st.audio(audio_path)
+        text_from_audio = transcribe_audio(audio_path)
+        st.write(f"🗣 You said: **{text_from_audio}**")
+        user_input = text_from_audio
 
 if user_input:
     response = bilingual_chat(user_input)
     st.markdown(f"**🤖 Bot:** {response}")
 
-    # Voice output
-    tts = gTTS(response, lang="es" if detect_language(user_input) == "es" else "en")
-    audio_bytes = BytesIO()
-    tts.write_to_fp(audio_bytes)
-    st.audio(audio_bytes.getvalue(), format="audio/mp3")
+    # Speak the reply
+    lang_reply = "es" if detect_language(user_input) == "es" else "en"
+    tts = gTTS(response, lang=lang_reply)
+    audio_out = BytesIO()
+    tts.write_to_fp(audio_out)
+    st.audio(audio_out.getvalue(), format="audio/mp3")
