@@ -9,11 +9,34 @@ from transformers import (
 from io import BytesIO
 from gtts import gTTS
 
+# =========================================================
+# PAGE CONFIG
+# =========================================================
 st.set_page_config(page_title="🎙️ Bilingual Voice Chat", layout="wide")
-st.title("🎙️ English ↔ Español Voice Chat (Upload Audio)")
+st.title("🎙️ English ↔ Español Voice Chat")
 
-client = OpenAI(api_key=st.secrets.get("OPENAI_API_KEY"))
+# =========================================================
+# API KEY CHECK
+# =========================================================
+api_key = None
+try:
+    api_key = st.secrets.get("OPENAI_API_KEY")
+except Exception:
+    pass
 
+if not api_key:
+    st.error(
+        "❌ OpenAI API key not found.\n\n"
+        "Please add it in **Settings → Secrets** like this:\n\n"
+        '```\nOPENAI_API_KEY="sk-your-key-here"\n```'
+    )
+    st.stop()
+
+client = OpenAI(api_key=api_key)
+
+# =========================================================
+# LOAD MODELS
+# =========================================================
 @st.cache_resource
 def load_models():
     trans_model = M2M100ForConditionalGeneration.from_pretrained("facebook/m2m100_418M")
@@ -24,6 +47,9 @@ def load_models():
 
 trans_model, trans_tokenizer, conv_model, conv_tokenizer = load_models()
 
+# =========================================================
+# HELPERS
+# =========================================================
 def translate(text, src_lang, tgt_lang):
     trans_tokenizer.src_lang = src_lang
     encoded = trans_tokenizer(text, return_tensors="pt")
@@ -39,13 +65,17 @@ def detect_language(text):
     words = set(text.lower().split())
     return "es" if words & spanish else "en"
 
-def transcribe_audio(file):
-    transcript = client.audio.transcriptions.create(
-        model="gpt-4o-mini-transcribe",
-        file=file
-    )
+def transcribe_audio(uploaded_file):
+    with uploaded_file as f:
+        transcript = client.audio.transcriptions.create(
+            model="gpt-4o-mini-transcribe",
+            file=f
+        )
     return transcript.text.strip()
 
+# =========================================================
+# MEMORY + CHAT LOGIC
+# =========================================================
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
@@ -64,27 +94,35 @@ def bilingual_chat(user_input):
     st.session_state.chat_history.append(response_en + conv_tokenizer.eos_token)
     return translate(response_en, "en", tgt) if src == "es" else response_en
 
-# =========================
-# Streamlit UI
-# =========================
-st.subheader("🎧 Upload your voice or type your message")
+# =========================================================
+# STREAMLIT UI
+# =========================================================
+st.subheader("🎧 Speak or type to chat!")
 
 audio_file = st.file_uploader("Upload an audio file (.wav, .mp3)", type=["wav", "mp3"])
 user_input = st.text_input("Or type your message (English or Español):")
 
 if audio_file is not None:
     st.audio(audio_file)
-    with st.spinner("🧠 Transcribing audio..."):
-        text_from_audio = transcribe_audio(audio_file)
-    st.write(f"🗣 You said: **{text_from_audio}**")
-    user_input = text_from_audio
+    with st.spinner("🧠 Transcribing your voice..."):
+        try:
+            spoken_text = transcribe_audio(audio_file)
+            st.write(f"🗣 You said: **{spoken_text}**")
+            user_input = spoken_text
+        except Exception as e:
+            st.error(f"Transcription failed: {e}")
+            st.stop()
 
 if user_input:
-    response = bilingual_chat(user_input)
+    with st.spinner("🤖 Thinking..."):
+        response = bilingual_chat(user_input)
     st.markdown(f"**🤖 Bot:** {response}")
 
     lang_reply = "es" if detect_language(user_input) == "es" else "en"
-    tts = gTTS(response, lang=lang_reply)
-    audio_out = BytesIO()
-    tts.write_to_fp(audio_out)
-    st.audio(audio_out.getvalue(), format="audio/mp3")
+    try:
+        tts = gTTS(response, lang=lang_reply)
+        audio_out = BytesIO()
+        tts.write_to_fp(audio_out)
+        st.audio(audio_out.getvalue(), format="audio/mp3")
+    except Exception:
+        st.warning("Unable to generate voice output.")
