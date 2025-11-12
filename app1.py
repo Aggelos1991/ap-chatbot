@@ -44,7 +44,7 @@ def normalize_number(value):
     except:
         return ""
 # ==========================================================
-# PDF + OCR EXTRACTION (added)
+# PDF + OCR EXTRACTION
 # ==========================================================
 def extract_raw_lines(uploaded_pdf):
     """Extract ALL text lines from every page of the PDF (excluding Saldo lines), using OCR fallback."""
@@ -103,50 +103,41 @@ def extract_with_gpt(lines):
     for i in range(0, len(lines), BATCH_SIZE):
         batch = lines[i:i + BATCH_SIZE]
         text_block = "\n".join(batch)
-        prompt = f"""
-You are a financial data extractor specialized in Spanish and Greek vendor statements.
-Each line may contain:
-- Fecha (Date)
-- Documento / N° DOC / Αρ. Παραστατικού / Αρ. Τιμολογίου (Document number)
-- Concepto / Περιγραφή / Comentario (description)
-- DEBE / Χρέωση (Invoice amount)
-- HABER / Πίστωση (Payments or credit notes)
-- SALDO (ignore)
-- TOTAL / TOTALES / ΤΕΛΙΚΟ / ΣΥΝΟΛΟ / IMPORTE TOTAL / TOTAL FACTURA — treat as invoice total if no DEBE/HABER available
-⚠️ RULES
-1. Ignore lines with 'Asiento', 'Saldo', 'IVA', or 'Total Saldo'.
-2. Exclude codes like "Código IC N" or similar from document detection.
-3. If "N° DOC" or "Documento" missing, detect invoice-like code (FAC123, F23, INV-2024, FRA-005, ΤΙΜ 123, etc).
-4. Detect reason:
-   - "Cobro", "Pago", "Transferencia", "Remesa", "Bank", "Trf", "Pagado" → Payment
-   - "Abono", "Nota de crédito", "Crédito", "Descuento", "Πίστωση" → Credit Note
-   - "Fra.", "Factura", "Τιμολόγιο", "Παραστατικό" → Invoice
-5. DEBE / Χρέωση → Invoice (put in Debit)
-6. HABER / Πίστωση → Payment or Credit Note (put in Credit)
-7. If neither DEBE nor HABER exists but TOTAL/TOTALES/ΤΕΛΙΚΟ/ΣΥΝΟΛΟ appear, use that value as Debit (Invoice total).
-8. Output strictly JSON array only, no explanations.
+        prompt = """
+You are a financial data extractor for Spanish/Greek vendor statements.
+Extract from lines:
+- Date (Fecha)
+- Doc num (Documento/N° DOC/Αρ. Παραστατικού/Αρ. Τιμολογίου or embedded in Concepto/Περιγραφή/Comentario as fallback)
+- Description (Concepto/Περιγραφή/Comentario)
+- Debit (DEBE/Χρέωση or TOTAL/ΤΕΛΙΚΟ/ΣΥΝΟΛΟ as fallback if no DEBE/HABER)
+- Credit (HABER/Πίστωση)
+Ignore SALDO, 'Asiento', 'Saldo', 'IVA', 'Total Saldo', "Código IC N".
+
+Reason classification:
+- Invoice: "Fra.", "Factura", "Τιμολόγιο", "Παραστατικό"
+- Payment: "Cobro", "Pago", "Transferencia", "Remesa", "Bank", "Trf", "Pagado"
+- Credit Note: "Abono", "Nota de crédito", "Crédito", "Descuento", "Πίστωση"
+
+Output JSON array only:
+[
+  {
+    "Alternative Document": "doc ref",
+    "Date": "dd/mm/yy or yyyy-mm-dd",
+    "Reason": "Invoice|Payment|Credit Note",
+    "Debit": "amount",
+    "Credit": "amount"
+  }
+]
 
 Examples:
-Line: "31/01/25 1 245 N.F. A250213 NF A25021 907,98  6.355,74"
-Output object: {{"Alternative Document": "NF A25021", "Date": "31/01/25", "Reason": "Invoice", "Debit": "907,98", "Credit": ""}}
-
-Line: "26/02/25 1 801 Cobro factura A250269 Rec NF A25069  542,90 3.719,83"
-Output object: {{"Alternative Document": "NF A25069", "Date": "26/02/25", "Reason": "Payment", "Debit": "", "Credit": "542,90"}}
-
-Line: "Fecha: 15/03/25 Factura FRA-123 Total: 1.234,56"
-Output object: {{"Alternative Document": "FRA-123", "Date": "15/03/25", "Reason": "Invoice", "Debit": "1.234,56", "Credit": ""}}
-
-OUTPUT FORMAT:
-[
-  {{
-    "Alternative Document": "string (invoice or payment ref)",
-    "Date": "dd/mm/yy or yyyy-mm-dd",
-    "Reason": "Invoice | Payment | Credit Note",
-    "Debit": "DEBE or TOTAL amount",
-    "Credit": "HABER amount"
-  }}
-]
-Text to analyze:
+"31/01/25 1 245 N.F. A250213 NF A25021 907,98 6.355,74" → {"Alternative Document": "NF A25021", "Date": "31/01/25", "Reason": "Invoice", "Debit": "907,98", "Credit": ""}
+"26/02/25 1 801 Cobro factura A250269 Rec NF A25069 542,90 3.719,83" → {"Alternative Document": "NF A25069", "Date": "26/02/25", "Reason": "Payment", "Debit": "", "Credit": "542,90"}
+"Fecha: 15/03/25 Factura FRA-123 Total: 1.234,56" → {"Alternative Document": "FRA-123", "Date": "15/03/25", "Reason": "Invoice", "Debit": "1.234,56", "Credit": ""}
+"10/04/25 Nota de crédito por devolución NC-456 0,00 789.12" → {"Alternative Document": "NC-456", "Date": "10/04/25", "Reason": "Credit Note", "Debit": "", "Credit": "789.12"}
+"2025-05-20 Τιμολόγιο Αρ. Παραστατικού: ΤΙΜ-789 Χρέωση: 1.500,00" → {"Alternative Document": "ΤΙΜ-789", "Date": "2025-05-20", "Reason": "Invoice", "Debit": "1.500,00", "Credit": ""}
+"01/06/25 Pago por transferencia bancaria ref. TRF-101 2.345,67" → {"Alternative Document": "TRF-101", "Date": "01/06/25", "Reason": "Payment", "Debit": "", "Credit": "2.345,67"}
+"20/07/25 Concepto: Factura embedded F-2025-07 en pago parcial Total: 4.567,89" → {"Alternative Document": "F-2025-07", "Date": "20/07/25", "Reason": "Invoice", "Debit": "4.567,89", "Credit": ""}
+Text:
 {text_block}
 """
         for model in [PRIMARY_MODEL, BACKUP_MODEL]:
