@@ -7,6 +7,11 @@ streamlit-plotly-events
 pytesseract
 torch
 sentencepiece
+transformers 
+torch 
+openai 
+gtts 
+SpeechRecognition
 
 # --- OCR Engine (Spanish + Greek + English) ---
 easyocr
