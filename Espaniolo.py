@@ -16,6 +16,7 @@ client = OpenAI(api_key=api_key)
 
 # --- Helpers ---
 def transcribe_audio(uploaded_file):
+    # Streamlit gives a SpooledTemporaryFile; pass directly to OpenAI
     with uploaded_file as f:
         result = client.audio.transcriptions.create(
             model="gpt-4o-mini-transcribe",
@@ -30,23 +31,33 @@ def bilingual_chat(message):
     )
     completion = client.chat.completions.create(
         model="gpt-4o-mini",
-        messages=[{"role": "system", "content": prompt},
-                  {"role": "user", "content": message}]
+        messages=[
+            {"role": "system", "content": prompt},
+            {"role": "user", "content": message}
+        ]
     )
     return completion.choices[0].message.content.strip()
 
 # --- UI ---
 st.subheader("🎧 Speak or type to chat!")
 
-audio_file = st.file_uploader("Upload audio (.wav or .mp3)", type=["wav", "mp3"])
+# ✅ mp4 added here
+audio_file = st.file_uploader(
+    "Upload audio (.wav, .mp3, .mp4)",
+    type=["wav", "mp3", "mp4"]
+)
 user_input = st.text_input("Or type your message (English or Español):")
 
 if audio_file:
     st.audio(audio_file)
     with st.spinner("🧠 Transcribing..."):
-        text = transcribe_audio(audio_file)
-        st.write(f"🗣 You said: **{text}**")
-        user_input = text
+        try:
+            text = transcribe_audio(audio_file)
+            st.write(f"🗣 You said: **{text}**")
+            user_input = text
+        except Exception as e:
+            st.error(f"Transcription failed: {e}")
+            st.stop()
 
 if user_input:
     with st.spinner("🤖 Thinking..."):
@@ -55,7 +66,9 @@ if user_input:
 
     # voice output
     try:
-        lang = "es" if any(w in user_input.lower() for w in ["el","la","de","que","y","un"]) else "en"
+        lang = "es" if any(
+            w in user_input.lower() for w in ["el", "la", "de", "que", "y", "un"]
+        ) else "en"
         tts = gTTS(reply, lang=lang)
         out = BytesIO()
         tts.write_to_fp(out)
