@@ -18,7 +18,7 @@ if not api_key:
 client = OpenAI(api_key=api_key)
 
 # =========================================================
-# LOGO + SIGNATURE (HTML)
+# LOGO + SIGNATURE (inline HTML)
 # =========================================================
 logo_url = "https://career.unipi.gr/career_cv/logo_comp/81996-new-logo.png"
 
@@ -38,21 +38,10 @@ signature_block = f"""
 """
 
 # =========================================================
-# HELPERS
+# HELPER
 # =========================================================
-def transcribe_audio(uploaded_file):
-    """Transcribe audio in Greek, English, or Spanish."""
-    with uploaded_file as f:
-        result = client.audio.transcriptions.create(
-            model="gpt-4o-mini-transcribe",
-            file=f
-        )
-    return result.text.strip()
-
 def create_vendor_email(note, lang_code):
-    """Generate formatted vendor email (HTML) with vendor detection."""
     tone = "in English" if lang_code == "en" else "in Spanish"
-
     prompt = (
         f"You are an Accounts Payable specialist writing directly to a vendor. "
         f"The input may be in English, Spanish, or Greek — detect it automatically. "
@@ -77,61 +66,37 @@ def create_vendor_email(note, lang_code):
 # =========================================================
 # UI
 # =========================================================
-st.subheader("🎙️ Upload your voice memo or type your message for the vendor")
-
-col1, col2 = st.columns([2, 1])
-with col1:
-    audio_file = st.file_uploader(
-        "Upload audio (.wav, .mp3, .mp4, .m4a)",
-        type=["wav", "mp3", "mp4", "m4a"]
-    )
-    user_input = st.text_area("Or type your note (in English, Español, or Ελληνικά):", height=150)
-
-with col2:
-    target_lang = st.radio("Output email language:", ["English 🇬🇧", "Español 🇪🇸"])
-    lang_code = "en" if "English" in target_lang else "es"
-
-# =========================================================
-# PROCESS
-# =========================================================
-if audio_file:
-    st.audio(audio_file)
-    with st.spinner("🧠 Transcribing your recording..."):
-        try:
-            text = transcribe_audio(audio_file)
-            st.success("✅ Transcription complete.")
-            st.write(f"**You said:** {text}")
-            user_input = text
-        except Exception as e:
-            st.error(f"Transcription failed: {e}")
-            st.stop()
+user_input = st.text_area("Write or speak your note (Greek, English, Spanish):", height=150)
+target_lang = st.radio("Output language:", ["English 🇬🇧", "Español 🇪🇸"])
+lang_code = "en" if "English" in target_lang else "es"
 
 if st.button("✉️ Generate Vendor Email") and user_input.strip():
     with st.spinner("🤖 Creating vendor email..."):
         email_html = create_vendor_email(user_input, lang_code)
 
-    st.markdown("### 📩 Generated Vendor Email (formatted)")
+    st.markdown("### 📩 Formatted Vendor Email")
     st.markdown(email_html, unsafe_allow_html=True)
 
-    # --- Copy Formatted (HTML) Email ---
-    html_encoded = email_html.replace("'", "\\'").replace("\n", " ")
+    # ✅ Clean HTML for Outlook copy (no <html> / <body> tags)
+    html_clean = email_html.replace("\n", " ").replace("'", "\\'")
+
     copy_script = f"""
-    <button id="copyButton" style="background-color:#0066cc;color:white;border:none;
+    <button id="copyHTML" style="background-color:#0066cc;color:white;border:none;
         padding:10px 18px;border-radius:6px;cursor:pointer;font-weight:bold;">
         📋 Copy Formatted Email
     </button>
     <script>
-    const btn = document.getElementById("copyButton");
+    const btn = document.getElementById("copyHTML");
     btn.addEventListener("click", async () => {{
         try {{
-            const html = '{html_encoded}';
+            const html = '{html_clean}';
             const blob = new Blob([html], {{ type: 'text/html' }});
-            const data = [new ClipboardItem({{'text/html': blob}})];
-            await navigator.clipboard.write(data);
+            const item = new ClipboardItem({{'text/html': blob}});
+            await navigator.clipboard.write([item]);
             btn.innerText = "✅ Copied!";
             setTimeout(() => btn.innerText = "📋 Copy Formatted Email", 2000);
         }} catch (err) {{
-            alert("Copy failed. Please allow clipboard permissions.");
+            alert("Clipboard blocked by browser security settings.");
         }}
     }});
     </script>
