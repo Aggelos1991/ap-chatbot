@@ -188,8 +188,14 @@ Text to analyze:
                         else:
                             credit_val = ""
             # Classification fix
+            # Classification fix + negative DEBE handling
             if debit_val and not credit_val:
-                reason = "Invoice"
+                if debit_val < 0:
+                    credit_val = abs(debit_val)
+                    debit_val = ""
+                    reason = "Credit Note"
+                else:
+                    reason = "Invoice"
             elif credit_val and not debit_val:
                 if re.search(r"abono|nota|crédit|descuento|πίστωση", str(row), re.IGNORECASE):
                     reason = "Credit Note"
