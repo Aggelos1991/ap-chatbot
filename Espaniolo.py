@@ -65,8 +65,10 @@ def create_vendor_email(note, lang_code, subject_text):
 
     completion = client.chat.completions.create(
         model="gpt-4o-mini",
-        messages=[{"role": "system", "content": "You are a bilingual AP email expert."},
-                  {"role": "user", "content": prompt}]
+        messages=[
+            {"role": "system", "content": "You are a bilingual AP email expert."},
+            {"role": "user", "content": prompt}
+        ]
     )
     email_body = completion.choices[0].message.content.strip()
     return subject_html + email_body
@@ -114,11 +116,16 @@ if st.button("✉️ Generate Vendor Email") and user_input.strip():
     st.markdown("### 📩 Generated Vendor Email")
     st.markdown(email_html, unsafe_allow_html=True)
 
-    # Plain text fallback for guaranteed copy
+    # ---- Plain text version (for preview)
     plain = re.sub("<[^>]*>", "", email_html)
-    st.markdown("### 📋 Copy Email")
-    st.text_area("Press Ctrl/Cmd +A → Ctrl/Cmd +C to copy (keeps formatting when pasted in Outlook)",
-                 email_html, height=350)
 
-    st.info("💡 Tip: When pasting in Outlook or Gmail, use standard paste (Ctrl/Cmd + V) "
-            "to preserve logo and spacing. No disclaimer will duplicate.")
+    # ---- Download HTML version
+    st.download_button(
+        label="⬇️ Download HTML Email (for Outlook)",
+        data=email_html.encode("utf-8"),
+        file_name="vendor_email.html",
+        mime="text/html"
+    )
+
+    st.info("💡 To use in Outlook: New Email → Insert → Attach File → Insert as Text. "
+            "Your email will render perfectly with logo and formatting.")
