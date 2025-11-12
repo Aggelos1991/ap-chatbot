@@ -2,7 +2,6 @@ import streamlit as st
 from openai import OpenAI
 from io import BytesIO
 from gtts import gTTS
-import base64
 
 # =========================================================
 # PAGE CONFIG
@@ -21,17 +20,23 @@ if not api_key:
 client = OpenAI(api_key=api_key)
 
 # =========================================================
-# BRANDING – INLINE LOGO
+# BRANDING – INLINE LOGO (RELIABLE SOURCE)
 # =========================================================
-logo_url = "https://upload.wikimedia.org/wikipedia/commons/1/13/Sani_Resort_logo.png"  # example placeholder
-logo_html = f"<img src='{logo_url}' width='160' style='margin-top:15px;'>"
+logo_url = "https://upload.wikimedia.org/wikipedia/commons/thumb/1/13/Sani_Resort_logo.png/320px-Sani_Resort_logo.png"
 
 signature_block = f"""
 <br><br>
-Best regards,<br>
-<b>Angelos Keramaris</b><br>
-AP Process Officer – Sani Ikos Group<br>
-{logo_html}
+<table style='margin-top:10px;'>
+<tr>
+<td style='vertical-align:top; padding-right:10px;'>
+    <img src='{logo_url}' width='140'>
+</td>
+<td style='vertical-align:top;'>
+    <b>Angelos Keramaris</b><br>
+    AP Process Officer – Sani Ikos Group
+</td>
+</tr>
+</table>
 """
 
 # =========================================================
@@ -47,15 +52,14 @@ def transcribe_audio(uploaded_file):
 
 def create_vendor_email(note, lang_code):
     tone = "in English" if lang_code == "en" else "in Spanish"
-
     prompt = (
         f"You are an Accounts Payable specialist writing directly to a vendor. "
         f"The user may speak in English, Spanish, or Greek — detect it automatically. "
         f"Translate the content if needed and write a professional, polite, and concise vendor email {tone}. "
         f"If invoices or credit notes are mentioned, request them to be sent to ap.iberia@ikosresorts.com. "
-        f"Include a proper subject line and greeting suitable for external vendors. "
-        f"Finish the email with the signature block for Angelos Keramaris, AP Process Officer – Sani Ikos Group, "
-        f"and leave two line breaks before it. Do not use placeholders. "
+        f"Include a proper subject line and greeting. "
+        f"Always end the email with: 'Best regards,' followed by the provided signature block. "
+        f"Do NOT repeat 'Best regards' more than once. "
         f"User note:\n\n{note}"
     )
 
@@ -104,12 +108,12 @@ if st.button("✉️ Generate Vendor Email") and user_input.strip():
     with st.spinner("🤖 Creating vendor email..."):
         email_text = create_vendor_email(user_input, lang_code)
 
-    # Inject the signature visually for Streamlit (HTML)
-    styled_email = email_text + signature_block
+    # Only one clean signature appended
+    styled_email = email_text.strip() + signature_block
     st.markdown("### 📩 Generated Vendor Email")
     st.markdown(styled_email, unsafe_allow_html=True)
 
-    # Optional voice playback of the email
+    # Optional voice playback
     try:
         tts = gTTS(email_text, lang=lang_code)
         out = BytesIO()
