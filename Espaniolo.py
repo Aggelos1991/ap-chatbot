@@ -41,7 +41,7 @@ signature_block = f"""
 # HELPERS
 # =========================================================
 def transcribe_audio(uploaded_file):
-    """Transcribe voice in Greek, English, or Spanish."""
+    """Transcribe audio in Greek, English, or Spanish."""
     with uploaded_file as f:
         result = client.audio.transcriptions.create(
             model="gpt-4o-mini-transcribe",
@@ -110,21 +110,18 @@ if st.button("✉️ Generate Vendor Email") and user_input.strip():
     with st.spinner("🤖 Creating vendor email..."):
         email_text = create_vendor_email(user_input, lang_code)
 
-    st.markdown("### 📩 Generated Vendor Email")
+    st.markdown("### 📩 Generated Vendor Email (formatted)")
     st.markdown(email_text, unsafe_allow_html=True)
 
-    # Copy-to-Clipboard button (copies plain text)
-    clean_text = st.session_state.get("plain_email", email_text)
-    copy_script = f"""
-    <script>
-    function copyToClipboard() {{
-        navigator.clipboard.writeText({repr(clean_text)});
-        alert("📋 Email copied to clipboard!");
-    }}
-    </script>
-    <button onclick="copyToClipboard()" style="background-color:#0066cc;color:white;border:none;
-        padding:10px 18px;border-radius:6px;cursor:pointer;font-weight:bold;">
-        Copy Email to Clipboard
-    </button>
-    """
-    st.markdown(copy_script, unsafe_allow_html=True)
+    # Plain-text version (without HTML tags)
+    import re
+    plain_text = re.sub(r"<[^>]*>", "", email_text)
+
+    st.markdown("### 📋 Copy or Download")
+    st.code(plain_text, language="text")
+    st.download_button(
+        label="⬇️ Download Email as .txt",
+        data=plain_text,
+        file_name="vendor_email.txt",
+        mime="text/plain"
+    )
