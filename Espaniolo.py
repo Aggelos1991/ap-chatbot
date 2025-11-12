@@ -157,7 +157,12 @@ st.subheader("🎙 Record your voice or type your message")
 col1, col2 = st.columns([2, 1])
 with col1:
     st.markdown("**🎤 Record your message below:**")
-    audio_bytes = audio_recorder(text="Click to record or stop", icon_size="2x")
+    audio_bytes = st_audio_recorder(
+    start_prompt="🎙 Click to start recording",
+    stop_prompt="■ Stop recording",
+    neutral_prompt="Recording stopped",
+    use_container_width=True
+)
 
     user_input = ""
     if audio_bytes:
