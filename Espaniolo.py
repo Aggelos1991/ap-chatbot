@@ -1,7 +1,5 @@
 import streamlit as st
 from openai import OpenAI
-from st_audio_recorder import st_audio_recorder
-import tempfile
 
 # =========================================================
 # PAGE CONFIG
@@ -41,9 +39,9 @@ signature_block = f"""
 # =========================================================
 # HELPER FUNCTIONS
 # =========================================================
-def transcribe_audio_from_file(file_path):
-    """Transcribe audio file (Greek, English, or Spanish)."""
-    with open(file_path, "rb") as f:
+def transcribe_audio(uploaded_file):
+    """Transcribe audio (Greek, English, or Spanish)."""
+    with uploaded_file as f:
         result = client.audio.transcriptions.create(
             model="gpt-4o-mini-transcribe",
             file=f
@@ -97,7 +95,7 @@ def create_vendor_email(note, lang_code, subject_text):
     if not email_body.startswith("<p>"):
         email_body = f"<p>{email_body}</p>"
 
-    # ✨ Clean professional HTML wrapper
+    # ✨ Polished HTML wrapper for Outlook / Safari preview
     email_html = f"""
 <html>
 <head>
@@ -150,47 +148,17 @@ br {{
 
 
 # =========================================================
-# MAIN UI
+# UI
 # =========================================================
-st.subheader("🎙 Record your voice or type your message")
+st.subheader("🎙️ Upload a voice memo or type your message for the vendor")
 
 col1, col2 = st.columns([2, 1])
 with col1:
-    st.markdown("**🎤 Record your message below:**")
-    audio_bytes = st_audio_recorder(
-    start_prompt="🎙 Click to start recording",
-    stop_prompt="■ Stop recording",
-    neutral_prompt="Recording stopped",
-    use_container_width=True
-)
-
-    user_input = ""
-    if audio_bytes:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
-            tmp_file.write(audio_bytes)
-            tmp_path = tmp_file.name
-
-        st.audio(tmp_path)
-        with st.spinner("🎧 Transcribing your recording..."):
-            text = transcribe_audio_from_file(tmp_path)
-            st.success("✅ Transcription complete.")
-            st.write(f"🗣 **You said:** {text}")
-            user_input = text
-
-    st.markdown("---")
-    audio_file = st.file_uploader("Or upload an existing file", type=["wav", "mp3", "mp4", "m4a"])
-    if audio_file:
-        st.audio(audio_file)
-        with st.spinner("🎧 Transcribing uploaded audio..."):
-            text = transcribe_audio_from_file(audio_file.name)
-            st.success("✅ Transcription complete.")
-            st.write(f"🗣 **You said:** {text}")
-            user_input = text
-
-    st.markdown("---")
-    manual_text = st.text_area("Or type manually:", height=150)
-    if manual_text.strip():
-        user_input = manual_text.strip()
+    audio_file = st.file_uploader(
+        "Upload voice memo (.wav, .mp3, .mp4, .m4a)",
+        type=["wav", "mp3", "mp4", "m4a"]
+    )
+    user_input = st.text_area("Or type your note (in English / Español / Ελληνικά):", height=150)
 
 with col2:
     target_lang = st.radio("Email language:", ["🇺🇸 English (US)", "🇪🇸 Español (ES)"])
@@ -198,15 +166,31 @@ with col2:
     subject_text = st.text_input("✏️ Subject line:", "")
 
 # =========================================================
+# AUDIO TRANSCRIPTION
+# =========================================================
+if audio_file:
+    st.audio(audio_file)
+    with st.spinner("🎧 Transcribing your message..."):
+        try:
+            spoken_text = transcribe_audio(audio_file)
+            st.success("✅ Transcription complete.")
+            st.write(f"🗣 **You said:** {spoken_text}")
+            user_input = spoken_text
+        except Exception as e:
+            st.error(f"Transcription failed: {e}")
+            st.stop()
+
+# =========================================================
 # GENERATE EMAIL
 # =========================================================
 if st.button("✉️ Generate Vendor Email") and user_input.strip():
-    with st.spinner("🤖 Creating vendor email..."):
+    with st.spinner("🤖 Creating professional email..."):
         email_html = create_vendor_email(user_input, lang_code, subject_text)
 
     st.markdown("### 📩 Preview (HTML email)")
     st.markdown(email_html, unsafe_allow_html=True)
 
+    # ---- Download HTML version for Outlook
     st.download_button(
         label="⬇️ Download HTML Email (for Outlook)",
         data=email_html.encode("utf-8"),
@@ -225,5 +209,5 @@ if st.button("✉️ Generate Vendor Email") and user_input.strip():
 **💼 Windows Outlook:**
 1. In a new email, go to **Insert → Attach File →** choose the `.html` file.  
 2. Click the small arrow next to **Insert** → select **Insert as Text**.  
-3. The formatted email will appear perfectly with logo and spacing.
+3. The formatted email will appear perfectly with logo, spacing, and signature.
         """)
