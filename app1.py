@@ -189,6 +189,7 @@ Text to analyze:
                             credit_val = ""
             # Classification fix
             # Classification fix + negative DEBE handling
+           # Classification fix + negative DEBE handling
             if debit_val and not credit_val:
                 if debit_val < 0:
                     credit_val = abs(debit_val)
