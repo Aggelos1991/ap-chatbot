@@ -1,5 +1,6 @@
 import streamlit as st
 from openai import OpenAI
+import re
 
 # =========================================================
 # PAGE CONFIG
@@ -8,11 +9,11 @@ st.set_page_config(page_title="📧 Vendor Email Creator – Sani Ikos Group", l
 st.title("📧 Vendor Email Creator – Sani Ikos Group")
 
 # =========================================================
-# API KEY CHECK
+# API KEY
 # =========================================================
-api_key = st.secrets.get("OPENAI_API_KEY", None)
+api_key = st.secrets.get("OPENAI_API_KEY")
 if not api_key:
-    st.error("❌ Add your OpenAI key in Settings → Secrets → `OPENAI_API_KEY=\"sk-...\"`")
+    st.error("❌ Please add your API key in Streamlit → Secrets → OPENAI_API_KEY")
     st.stop()
 
 client = OpenAI(api_key=api_key)
@@ -21,7 +22,6 @@ client = OpenAI(api_key=api_key)
 # LOGO + SIGNATURE
 # =========================================================
 logo_url = "https://career.unipi.gr/career_cv/logo_comp/81996-new-logo.png"
-
 signature_block = f"""
 <br><br>
 <table style='margin-top:10px;'>
@@ -41,7 +41,6 @@ signature_block = f"""
 # HELPERS
 # =========================================================
 def transcribe_audio(uploaded_file):
-    """Transcribe voice memo in Greek, English, or Spanish."""
     with uploaded_file as f:
         result = client.audio.transcriptions.create(
             model="gpt-4o-mini-transcribe",
@@ -49,93 +48,77 @@ def transcribe_audio(uploaded_file):
         )
     return result.text.strip()
 
-def create_vendor_email(note, lang_code):
-    """Generate polished HTML vendor email."""
-    tone = "in English" if lang_code == "en" else "in Spanish"
+def create_vendor_email(note, lang_code, subject_text):
+    tone = "in English (US)" if lang_code == "en" else "in Spanish"
+    subject_html = f"<b>Subject:</b> {subject_text or 'Vendor communication'}<br><br>"
+
     prompt = (
         f"You are an Accounts Payable specialist writing directly to a vendor. "
-        f"The input may be in English, Spanish, or Greek — detect it automatically. "
-        f"Detect the vendor name mentioned by the user and use it in the greeting (e.g., 'Dear Iberostar,'). "
-        f"If no vendor name is found, use 'Dear Vendor,'. "
-        f"Translate and rewrite the content as a clear, polite vendor email {tone}. "
+        f"The input may be in English, Spanish, or Greek — detect and translate automatically. "
+        f"Detect the vendor name mentioned by the user and use it in the greeting. "
         f"If invoices or credit notes are mentioned, request them to be sent to ap.iberia@ikosresorts.com. "
-        f"Include a subject line, greeting, concise body, and one single 'Best regards' closing. "
-        f"End with this signature block (no duplicates):\n\n{signature_block}\n\n"
+        f"Write a clear, polite, and professional vendor email {tone}. "
+        f"Include a greeting, concise body, and a single 'Best regards' closing. "
+        f"Do NOT include another signature; append this block at the end:\n{signature_block}\n"
         f"User note:\n{note}"
     )
 
     completion = client.chat.completions.create(
         model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": "You are an expert bilingual AP vendor communication specialist."},
-            {"role": "user", "content": prompt},
-        ]
+        messages=[{"role": "system", "content": "You are a bilingual AP email expert."},
+                  {"role": "user", "content": prompt}]
     )
-    return completion.choices[0].message.content.strip()
+    email_body = completion.choices[0].message.content.strip()
+    return subject_html + email_body
 
 # =========================================================
 # UI
 # =========================================================
-st.subheader("🎙️ Upload a voice memo or type your message for the vendor")
+st.subheader("🎙️ Upload a voice memo or type your note")
 
 col1, col2 = st.columns([2, 1])
 with col1:
     audio_file = st.file_uploader(
-        "Upload audio (.wav, .mp3, .mp4, .m4a)",
+        "Upload voice (.wav, .mp3, .mp4, .m4a)",
         type=["wav", "mp3", "mp4", "m4a"]
     )
-    user_input = st.text_area("Or type your note (in English, Español, or Ελληνικά):", height=150)
+    user_input = st.text_area("Or type your note (English / Español / Ελληνικά):", height=150)
 
 with col2:
-    target_lang = st.radio("Output email language:", ["English 🇺🇸", "Español 🇪🇸"])
+    target_lang = st.radio("Email language:", ["🇺🇸 English (US)", "🇪🇸 Español (ES)"])
     lang_code = "en" if "English" in target_lang else "es"
+    subject_text = st.text_input("✏️ Subject line (optional):", "")
 
 # =========================================================
-# TRANSCRIBE VOICE
+# TRANSCRIBE
 # =========================================================
 if audio_file:
     st.audio(audio_file)
-    with st.spinner("🧠 Transcribing your recording..."):
+    with st.spinner("🎧 Transcribing..."):
         try:
-            spoken_text = transcribe_audio(audio_file)
-            st.success("✅ Transcription complete.")
-            st.write(f"**You said:** {spoken_text}")
-            user_input = spoken_text
+            spoken = transcribe_audio(audio_file)
+            st.success("✅ Transcribed successfully.")
+            st.write(f"🗣 **You said:** {spoken}")
+            user_input = spoken
         except Exception as e:
             st.error(f"Transcription failed: {e}")
             st.stop()
 
 # =========================================================
-# GENERATE EMAIL
+# GENERATE
 # =========================================================
 if st.button("✉️ Generate Vendor Email") and user_input.strip():
-    with st.spinner("🤖 Creating vendor email..."):
-        email_html = create_vendor_email(user_input, lang_code)
+    with st.spinner("🤖 Creating email..."):
+        email_html = create_vendor_email(user_input, lang_code, subject_text)
 
-    st.markdown("### 📩 Formatted Vendor Email")
+    st.markdown("### 📩 Generated Vendor Email")
     st.markdown(email_html, unsafe_allow_html=True)
 
-    # --- Copy to clipboard (formatted HTML only, no <html> tags)
-    html_clean = email_html.replace("\n", " ").replace("'", "\\'")
-    copy_script = f"""
-    <button id="copyHTML" style="background-color:#0066cc;color:white;border:none;
-        padding:10px 18px;border-radius:6px;cursor:pointer;font-weight:bold;">
-        📋 Copy Formatted Email
-    </button>
-    <script>
-    const btn = document.getElementById("copyHTML");
-    btn.addEventListener("click", async () => {{
-        try {{
-            const html = '{html_clean}';
-            const blob = new Blob([html], {{ type: 'text/html' }});
-            const item = new ClipboardItem({{'text/html': blob}});
-            await navigator.clipboard.write([item]);
-            btn.innerText = "✅ Copied!";
-            setTimeout(() => btn.innerText = "📋 Copy Formatted Email", 2000);
-        }} catch (err) {{
-            alert("Clipboard blocked. Please allow clipboard permissions.");
-        }}
-    }});
-    </script>
-    """
-    st.markdown(copy_script, unsafe_allow_html=True)
+    # Plain text fallback for guaranteed copy
+    plain = re.sub("<[^>]*>", "", email_html)
+    st.markdown("### 📋 Copy Email")
+    st.text_area("Press Ctrl/Cmd +A → Ctrl/Cmd +C to copy (keeps formatting when pasted in Outlook)",
+                 email_html, height=350)
+
+    st.info("💡 Tip: When pasting in Outlook or Gmail, use standard paste (Ctrl/Cmd + V) "
+            "to preserve logo and spacing. No disclaimer will duplicate.")
