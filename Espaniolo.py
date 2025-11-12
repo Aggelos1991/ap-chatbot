@@ -2,12 +2,13 @@ import streamlit as st
 from openai import OpenAI
 from io import BytesIO
 from gtts import gTTS
+import base64
 
 # =========================================================
 # PAGE CONFIG
 # =========================================================
-st.set_page_config(page_title="📧 AI Email Creator (EN ↔ ES)", layout="wide")
-st.title("📧 AI Email Creator (Voice + Text + Bilingual)")
+st.set_page_config(page_title="📧 Vendor Email Creator – Sani Ikos Group", layout="wide")
+st.title("📧 Vendor Email Creator – Sani Ikos Group")
 
 # =========================================================
 # API KEY CHECK
@@ -20,10 +21,23 @@ if not api_key:
 client = OpenAI(api_key=api_key)
 
 # =========================================================
+# BRANDING – INLINE LOGO
+# =========================================================
+logo_url = "https://upload.wikimedia.org/wikipedia/commons/1/13/Sani_Resort_logo.png"  # example placeholder
+logo_html = f"<img src='{logo_url}' width='160' style='margin-top:15px;'>"
+
+signature_block = f"""
+<br><br>
+Best regards,<br>
+<b>Angelos Keramaris</b><br>
+AP Process Officer – Sani Ikos Group<br>
+{logo_html}
+"""
+
+# =========================================================
 # HELPERS
 # =========================================================
 def transcribe_audio(uploaded_file):
-    """Transcribe voice using Whisper (GPT-4o-mini)."""
     with uploaded_file as f:
         result = client.audio.transcriptions.create(
             model="gpt-4o-mini-transcribe",
@@ -31,19 +45,24 @@ def transcribe_audio(uploaded_file):
         )
     return result.text.strip()
 
-def create_email(content, target_lang):
-    """Generate professional email from content in chosen language."""
-    lang_instruction = "in English" if target_lang == "en" else "in Spanish"
+def create_vendor_email(note, lang_code):
+    tone = "in English" if lang_code == "en" else "in Spanish"
+
     prompt = (
-        f"You are a highly skilled professional email writer. "
-        f"Rewrite the following note as a well-structured, polite, and natural business email {lang_instruction}. "
-        "Keep it concise and accurate, include a subject line and closing signature. "
-        f"Text:\n\n{content}"
+        f"You are an Accounts Payable specialist writing directly to a vendor. "
+        f"The user may speak in English, Spanish, or Greek — detect it automatically. "
+        f"Translate the content if needed and write a professional, polite, and concise vendor email {tone}. "
+        f"If invoices or credit notes are mentioned, request them to be sent to ap.iberia@ikosresorts.com. "
+        f"Include a proper subject line and greeting suitable for external vendors. "
+        f"Finish the email with the signature block for Angelos Keramaris, AP Process Officer – Sani Ikos Group, "
+        f"and leave two line breaks before it. Do not use placeholders. "
+        f"User note:\n\n{note}"
     )
+
     completion = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
-            {"role": "system", "content": "You write professional emails quickly and accurately."},
+            {"role": "system", "content": "You are an expert bilingual AP vendor communication specialist."},
             {"role": "user", "content": prompt},
         ]
     )
@@ -52,7 +71,7 @@ def create_email(content, target_lang):
 # =========================================================
 # UI
 # =========================================================
-st.subheader("🎙️ Upload your voice memo or type your draft")
+st.subheader("🎙️ Upload your voice memo or type your message for the vendor")
 
 col1, col2 = st.columns([2, 1])
 with col1:
@@ -60,10 +79,10 @@ with col1:
         "Upload audio (.wav, .mp3, .mp4, .m4a)",
         type=["wav", "mp3", "mp4", "m4a"]
     )
-    user_input = st.text_area("Or type your rough message here:", height=150)
+    user_input = st.text_area("Or type your note (in English, Español, or Ελληνικά):", height=150)
 
 with col2:
-    target_lang = st.radio("Output language:", ["English 🇬🇧", "Español 🇪🇸"])
+    target_lang = st.radio("Output email language:", ["English 🇬🇧", "Español 🇪🇸"])
     lang_code = "en" if "English" in target_lang else "es"
 
 # =========================================================
@@ -81,13 +100,16 @@ if audio_file:
             st.error(f"Transcription failed: {e}")
             st.stop()
 
-if st.button("✉️ Generate Email") and user_input.strip():
-    with st.spinner("🤖 Creating email..."):
-        email_text = create_email(user_input, lang_code)
-    st.markdown("### 📩 Generated Email")
-    st.markdown(email_text)
+if st.button("✉️ Generate Vendor Email") and user_input.strip():
+    with st.spinner("🤖 Creating vendor email..."):
+        email_text = create_vendor_email(user_input, lang_code)
 
-    # Voice playback of the email (optional)
+    # Inject the signature visually for Streamlit (HTML)
+    styled_email = email_text + signature_block
+    st.markdown("### 📩 Generated Vendor Email")
+    st.markdown(styled_email, unsafe_allow_html=True)
+
+    # Optional voice playback of the email
     try:
         tts = gTTS(email_text, lang=lang_code)
         out = BytesIO()
