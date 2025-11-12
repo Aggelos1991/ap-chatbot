@@ -1,7 +1,5 @@
 import streamlit as st
 from openai import OpenAI
-from io import BytesIO
-from gtts import gTTS
 
 # =========================================================
 # PAGE CONFIG
@@ -20,7 +18,7 @@ if not api_key:
 client = OpenAI(api_key=api_key)
 
 # =========================================================
-# BRANDING – INLINE LOGO (RELIABLE SOURCE)
+# BRANDING
 # =========================================================
 logo_url = "https://upload.wikimedia.org/wikipedia/commons/thumb/1/13/Sani_Resort_logo.png/320px-Sani_Resort_logo.png"
 
@@ -43,6 +41,7 @@ signature_block = f"""
 # HELPERS
 # =========================================================
 def transcribe_audio(uploaded_file):
+    """Transcribe audio in any language (Greek, English, Spanish)."""
     with uploaded_file as f:
         result = client.audio.transcriptions.create(
             model="gpt-4o-mini-transcribe",
@@ -51,16 +50,17 @@ def transcribe_audio(uploaded_file):
     return result.text.strip()
 
 def create_vendor_email(note, lang_code):
+    """Generate bilingual vendor email with clean format and correct tone."""
     tone = "in English" if lang_code == "en" else "in Spanish"
     prompt = (
         f"You are an Accounts Payable specialist writing directly to a vendor. "
-        f"The user may speak in English, Spanish, or Greek — detect it automatically. "
-        f"Translate the content if needed and write a professional, polite, and concise vendor email {tone}. "
+        f"The input may be in English, Spanish, or Greek — detect and translate automatically. "
+        f"Compose a clear, professional, and polite vendor email {tone}. "
         f"If invoices or credit notes are mentioned, request them to be sent to ap.iberia@ikosresorts.com. "
-        f"Include a proper subject line and greeting. "
-        f"Always end the email with: 'Best regards,' followed by the provided signature block. "
-        f"Do NOT repeat 'Best regards' more than once. "
-        f"User note:\n\n{note}"
+        f"Include a subject line, greeting, concise body, and one single 'Best regards,' closing. "
+        f"End with the following signature block exactly as shown, without repeating 'Best regards':\n\n"
+        f"{signature_block}\n\n"
+        f"User note:\n{note}"
     )
 
     completion = client.chat.completions.create(
@@ -108,16 +108,5 @@ if st.button("✉️ Generate Vendor Email") and user_input.strip():
     with st.spinner("🤖 Creating vendor email..."):
         email_text = create_vendor_email(user_input, lang_code)
 
-    # Only one clean signature appended
-    styled_email = email_text.strip() + signature_block
     st.markdown("### 📩 Generated Vendor Email")
-    st.markdown(styled_email, unsafe_allow_html=True)
-
-    # Optional voice playback
-    try:
-        tts = gTTS(email_text, lang=lang_code)
-        out = BytesIO()
-        tts.write_to_fp(out)
-        st.audio(out.getvalue(), format="audio/mp3")
-    except Exception:
-        st.warning("Voice playback unavailable.")
+    st.markdown(email_text, unsafe_allow_html=True)
