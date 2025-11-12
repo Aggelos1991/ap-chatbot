@@ -54,22 +54,45 @@ def create_vendor_email(note, lang_code, subject_text):
     subject_clean = subject_text or "Request for Invoice Submission"
 
     prompt = (
-        f"You are an Accounts Payable specialist writing to a vendor. "
-        f"The input may be in English, Spanish, or Greek — detect and translate automatically. "
-        f"Identify the vendor name (e.g., 'Iberostar') and include it naturally in the greeting (e.g., 'Dear Iberostar,'). "
-        f"If no vendor name is found, use 'Dear Vendor,'. "
-        f"Preserve all invoice numbers, amounts, and codes *exactly as written* by the user — "
-        f"do not reformat, simplify, or expand them. "
-        f"Write a concise, polite vendor email {tone} following this exact layout:\n\n"
-        f"Dear [Vendor],\n\n"
-        f"[Short body — 2 or 3 clear paragraphs.]\n\n"
-        f"Thank you for your attention to this matter.\n\n"
-        f"Best regards,\n\n"
-        f"[Signature block]\n\n"
-        f"Do not include markdown syntax (no ```html, no ``` blocks). "
-        f"Use <p> and <br> for spacing and append this signature once:\n{signature_block}\n"
-        f"User note:\n{note}"
-    )
+    f"You are an Accounts Payable specialist writing a formal vendor email. "
+    
+    # Language handling
+    f"The user's note may be in English, Greek, or Spanish — detect the language automatically. "
+    f"ALWAYS write the final email entirely {tone}, with no mixing of languages. "
+    f"If the user selected Spanish, the ENTIRE email must be 100% in Spanish, including phrasing, transitions, and closing. "
+    f"Do NOT include any English sentences inside a Spanish email. "
+    f"Maintain formal business Spanish using constructions such as 'Nos gustaría informarle', "
+    f"'Le agradeceríamos', 'Agradecemos su pronta atención', etc. "
+    
+    # Vendor name logic
+    f"Detect the vendor name mentioned by the user and insert it after 'Dear'. "
+    f"If no vendor name exists, use 'Dear Vendor,'. "
+    f"Do NOT translate or modify vendor names (e.g., 'Κεραμάρης Βασίλειος ΑΕ' stays exactly the same). "
+
+    # CRITICAL: Do not expand numbers
+    f"Preserve all invoice numbers, amounts, and document references EXACTLY as written by the user. "
+    f"Do NOT split numbers (e.g., 123 must NEVER become 1, 2, 3). "
+    f"Do NOT expand or guess missing sequences. "
+    f"Do NOT translate or modify invoice numbers in Spanish. "
+    f"Example: If the user says 'invoice 123 and 456', your email MUST contain 'facturas 123 y 456'. "
+    
+    # Structure rules
+    f"Write the email with this exact structure:\n\n"
+    f"Dear [Vendor],\n\n"
+    f"[Short body: 2–3 clear paragraphs expressing the user's note]\n\n"
+    f"Thank you for your attention to this matter.\n\n"
+    f"Best regards,\n\n"
+    f"[Signature block]\n\n"
+
+    # Output rules
+    f"Do NOT use markdown. "
+    f"NEVER output ```html or any code fences. "
+    f"Use <p> and <br> for spacing. "
+    f"Append this signature block exactly once:\n{signature_block}\n"
+    
+    # User content
+    f"User note:\n{note}"
+)
 
     completion = client.chat.completions.create(
         model="gpt-4o-mini",
