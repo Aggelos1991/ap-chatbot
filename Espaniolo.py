@@ -1,6 +1,5 @@
 import streamlit as st
 from openai import OpenAI
-import re
 
 # =========================================================
 # PAGE CONFIG
@@ -19,7 +18,7 @@ if not api_key:
 client = OpenAI(api_key=api_key)
 
 # =========================================================
-# LOGO + SIGNATURE
+# LOGO + SIGNATURE (HTML)
 # =========================================================
 logo_url = "https://career.unipi.gr/career_cv/logo_comp/81996-new-logo.png"
 
@@ -51,7 +50,7 @@ def transcribe_audio(uploaded_file):
     return result.text.strip()
 
 def create_vendor_email(note, lang_code):
-    """Generate polished vendor email with vendor name detection."""
+    """Generate formatted vendor email (HTML) with vendor detection."""
     tone = "in English" if lang_code == "en" else "in Spanish"
 
     prompt = (
@@ -114,29 +113,25 @@ if st.button("✉️ Generate Vendor Email") and user_input.strip():
     st.markdown("### 📩 Generated Vendor Email (formatted)")
     st.markdown(email_html, unsafe_allow_html=True)
 
-    # Clean plain text for clipboard copy
-    plain_email = re.sub(r"<[^>]*>", "", email_html).strip()
-
-    st.markdown("### 📋 Copy Email Text")
-
-    # Display in a readonly text area
-    st.text_area("Click below → Ctrl/Cmd + A → Ctrl/Cmd + C to copy", plain_email, height=300)
-
-    # Clipboard copy button using JS (works safely)
+    # --- Copy Formatted (HTML) Email ---
+    html_encoded = email_html.replace("'", "\\'").replace("\n", " ")
     copy_script = f"""
     <button id="copyButton" style="background-color:#0066cc;color:white;border:none;
         padding:10px 18px;border-radius:6px;cursor:pointer;font-weight:bold;">
-        📋 Copy Email to Clipboard
+        📋 Copy Formatted Email
     </button>
     <script>
     const btn = document.getElementById("copyButton");
     btn.addEventListener("click", async () => {{
         try {{
-            await navigator.clipboard.writeText({repr(plain_email)});
+            const html = '{html_encoded}';
+            const blob = new Blob([html], {{ type: 'text/html' }});
+            const data = [new ClipboardItem({{'text/html': blob}})];
+            await navigator.clipboard.write(data);
             btn.innerText = "✅ Copied!";
-            setTimeout(() => btn.innerText = "📋 Copy Email to Clipboard", 2000);
+            setTimeout(() => btn.innerText = "📋 Copy Formatted Email", 2000);
         }} catch (err) {{
-            alert("Copy failed. Please select manually.");
+            alert("Copy failed. Please allow clipboard permissions.");
         }}
     }});
     </script>
