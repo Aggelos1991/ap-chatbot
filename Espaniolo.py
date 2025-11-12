@@ -1,5 +1,6 @@
 import streamlit as st
 from openai import OpenAI
+import re
 
 # =========================================================
 # PAGE CONFIG
@@ -108,20 +109,36 @@ if audio_file:
 
 if st.button("✉️ Generate Vendor Email") and user_input.strip():
     with st.spinner("🤖 Creating vendor email..."):
-        email_text = create_vendor_email(user_input, lang_code)
+        email_html = create_vendor_email(user_input, lang_code)
 
     st.markdown("### 📩 Generated Vendor Email (formatted)")
-    st.markdown(email_text, unsafe_allow_html=True)
+    st.markdown(email_html, unsafe_allow_html=True)
 
-    # Plain-text version (without HTML tags)
-    import re
-    plain_text = re.sub(r"<[^>]*>", "", email_text)
+    # Clean plain text for clipboard copy
+    plain_email = re.sub(r"<[^>]*>", "", email_html).strip()
 
-    st.markdown("### 📋 Copy or Download")
-    st.code(plain_text, language="text")
-    st.download_button(
-        label="⬇️ Download Email as .txt",
-        data=plain_text,
-        file_name="vendor_email.txt",
-        mime="text/plain"
-    )
+    st.markdown("### 📋 Copy Email Text")
+
+    # Display in a readonly text area
+    st.text_area("Click below → Ctrl/Cmd + A → Ctrl/Cmd + C to copy", plain_email, height=300)
+
+    # Clipboard copy button using JS (works safely)
+    copy_script = f"""
+    <button id="copyButton" style="background-color:#0066cc;color:white;border:none;
+        padding:10px 18px;border-radius:6px;cursor:pointer;font-weight:bold;">
+        📋 Copy Email to Clipboard
+    </button>
+    <script>
+    const btn = document.getElementById("copyButton");
+    btn.addEventListener("click", async () => {{
+        try {{
+            await navigator.clipboard.writeText({repr(plain_email)});
+            btn.innerText = "✅ Copied!";
+            setTimeout(() => btn.innerText = "📋 Copy Email to Clipboard", 2000);
+        }} catch (err) {{
+            alert("Copy failed. Please select manually.");
+        }}
+    }});
+    </script>
+    """
+    st.markdown(copy_script, unsafe_allow_html=True)
