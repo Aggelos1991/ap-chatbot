@@ -229,7 +229,7 @@ if uploaded_pdf:
         if data:
             df = pd.DataFrame(data)
             st.success(f"✅ Extraction complete — {len(df)} valid records found!")
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            st.dataframe(df[["Alternative Document", "Date", "Concepto", "Reason", "Debit", "Credit"]], use_container_width=True, hide_index=True)
             try:
                 total_debit = df["Debit"].apply(pd.to_numeric, errors="coerce").sum()
                 total_credit = df["Credit"].apply(pd.to_numeric, errors="coerce").sum()
