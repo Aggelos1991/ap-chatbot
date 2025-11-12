@@ -194,10 +194,13 @@ def match_invoices(erp_df, ven_df):
             for _, r in g.iterrows():
                 d = normalize_number(r.get(f"debit_{tag}", 0))
                 c = normalize_number(r.get(f"credit_{tag}", 0))
+                # ✅ Correct: treat debits positive, credits negative
+                net = normalize_number(r.get(f"debit_{tag}", 0)) - normalize_number(r.get(f"credit_{tag}", 0))
                 if r.get("__type") == "CN":
-                    total -= abs(d - c) if (d or c) else 0.0
+                    total -= net
                 else:
-                    total += abs(d - c) if (d or c) else 0.0
+                    total += net
+
             base = g.iloc[0].copy()
             base["__amt"] = round(abs(total), 2)
             grouped.append(base)
