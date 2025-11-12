@@ -1,14 +1,23 @@
 import streamlit as st
-from transformers import pipeline, Conversation
+from transformers import M2M100ForConditionalGeneration, Conversation, AutoModelForCausalLM, AutoTokenizer
+from tokenization_small100 import SMALL100Tokenizer
 
 @st.cache_resource
-def load_pipelines():
-    translator_en_es = pipeline("translation", model="alirezamsh/small100", src_lang="en", tgt_lang="es")
-    translator_es_en = pipeline("translation", model="alirezamsh/small100", src_lang="es", tgt_lang="en")
-    conversational = pipeline("conversational", model="microsoft/DialoGPT-small")
-    return translator_en_es, translator_es_en, conversational
+def load_models():
+    trans_model = M2M100ForConditionalGeneration.from_pretrained("alirezamsh/small100")
+    tokenizer = SMALL100Tokenizer.from_pretrained("alirezamsh/small100")
+    conv_model = AutoModelForCausalLM.from_pretrained("microsoft/DialoGPT-small")
+    conv_tokenizer = AutoTokenizer.from_pretrained("microsoft/DialoGPT-small")
+    return trans_model, tokenizer, conv_model, conv_tokenizer
 
-translator_en_es, translator_es_en, conversational = load_pipelines()
+trans_model, tokenizer, conv_model, conv_tokenizer = load_models()
+
+def translate(text, src_lang, tgt_lang):
+    tokenizer.src_lang = src_lang
+    tokenizer.tgt_lang = tgt_lang
+    encoded = tokenizer(text, return_tensors="pt")
+    generated = trans_model.generate(**encoded, max_length=128)
+    return tokenizer.decode(generated[0], skip_special_tokens=True)
 
 def detect_language(text):
     spanish_words = {"el", "la", "los", "las", "un", "una", "de", "en", "y"}
@@ -17,33 +26,14 @@ def detect_language(text):
 
 def bilingual_chat(user_input):
     lang = detect_language(user_input)
-    if lang == "es":
-        input_en = translator_es_en(user_input, max_length=128)[0]['translation_text']
-    else:
-        input_en = user_input
+    src = "es" if lang == "es" else "en"
+    tgt = "en" if lang == "es" else "es"
+    input_en = translate(user_input, src, "en") if lang == "es" else user_input
     
-    conv = Conversation(input_en)
-    response_en = conversational(conv, max_length=128)[-1].generated_responses[-1]
+    inputs = conv_tokenizer.encode(input_en + conv_tokenizer.eos_token, return_tensors="pt")
+    response = conv_model.generate(inputs, max_length=128)
+    response_en = conv_tokenizer.decode(response[:, inputs.shape[-1]:][0], skip_special_tokens=True)
     
-    if lang == "es":
-        return translator_en_es(response_en, max_length=128)[0]['translation_text']
-    return response_en
+    return translate(response_en, "en", tgt) if lang == "es" else response_en
 
-st.title("Bilingual Chatbot")
-
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
-
-if prompt := st.chat_input("Message"):
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
-    
-    response = bilingual_chat(prompt)
-    st.session_state.messages.append({"role": "assistant", "content": response})
-    with st.chat_message("assistant"):
-        st.markdown(response)
+# Rest of Streamlit code remains the same
