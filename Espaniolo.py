@@ -53,28 +53,44 @@ def create_vendor_email(note, lang_code, subject_text):
     subject_clean = subject_text or "Request for Invoice Submission"
 
     prompt = (
-        f"You are an Accounts Payable specialist writing directly to a vendor. "
+        f"You are an Accounts Payable specialist responsible for vendor communication. "
         f"The input may be in English, Spanish, or Greek — detect and translate automatically. "
-        f"Detect the vendor name mentioned by the user and use it in the greeting (e.g., 'Dear Iberostar,'). "
+        f"Detect the vendor name (e.g., 'Iberostar') and include it in the greeting (e.g., 'Dear Iberostar,'). "
         f"If no vendor name is found, use 'Dear Vendor,'. "
-        f"Write a clear, polite, and professional vendor email {tone}. "
-        f"If invoices or credit notes are mentioned, request them to be sent to ap.iberia@ikosresorts.com. "
-        f"Include a greeting, concise body, and one closing only. "
-        f"Append this HTML signature (no duplicates):\n{signature_block}\n"
+        f"Write a concise, polite vendor email {tone}. "
+        f"Ensure the structure strictly follows this layout:\n\n"
+        f"Dear [Vendor],\n\n"
+        f"[Email body — 2 to 3 short paragraphs]\n\n"
+        f"Thank you for your attention to this matter.\n\n"
+        f"Best regards,\n\n"
+        f"[Signature block]\n\n"
+        f"Always use <p> and <br> tags for proper spacing in HTML.\n"
+        f"Append the following signature (only once):\n{signature_block}\n"
         f"User note:\n{note}"
     )
 
     completion = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
-            {"role": "system", "content": "You are a bilingual AP email expert."},
+            {"role": "system", "content": "You are a bilingual AP email expert that writes clear, perfectly formatted business emails."},
             {"role": "user", "content": prompt}
         ]
     )
 
     email_body = completion.choices[0].message.content.strip()
 
-    # ✨ Modern formatted HTML wrapper
+    # ✅ Enforce clean line spacing and structure
+    email_body = (
+        email_body.replace("\n\n", "</p><p>")
+        .replace("\n", " ")
+        .replace("Dear ", "<p>Dear ")
+        .replace("Thank you for your attention to this matter.", "</p><p>Thank you for your attention to this matter.</p>")
+        .replace("Best regards,", "<br><br><strong>Best regards,</strong><br>")
+    )
+    if not email_body.startswith("<p>"):
+        email_body = f"<p>{email_body}</p>"
+
+    # ✨ Beautiful structured HTML wrapper
     email_html = f"""
 <html>
 <head>
@@ -104,8 +120,14 @@ h2 {{
     padding-bottom: 8px;
     margin-bottom: 25px;
 }}
+p {{
+    margin: 12px 0;
+}}
+br {{
+    line-height: 1.8;
+}}
 .signature {{
-    margin-top: 30px;
+    margin-top: 35px;
 }}
 </style>
 </head>
