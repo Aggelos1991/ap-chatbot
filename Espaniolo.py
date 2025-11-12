@@ -1,34 +1,49 @@
-# Install if needed: pip install gtts speechrecognition pyaudio
+import streamlit as st
+from transformers import pipeline, Conversation
 
-import speech_recognition as sr
-from gtts import gTTS
-import os
-import playsound
+@st.cache_resource
+def load_pipelines():
+    translator_en_es = pipeline("translation", model="alirezamsh/small100", src_lang="en", tgt_lang="es")
+    translator_es_en = pipeline("translation", model="alirezamsh/small100", src_lang="es", tgt_lang="en")
+    conversational = pipeline("conversational", model="microsoft/DialoGPT-small")
+    return translator_en_es, translator_es_en, conversational
 
-# Existing: translators, conversational, detect_language
+translator_en_es, translator_es_en, conversational = load_pipelines()
 
-def speak(text, lang='en'):
-    tts = gTTS(text=text, lang=lang)
-    tts.save("response.mp3")
-    playsound.playsound("response.mp3")
-    os.remove("response.mp3")
+def detect_language(text):
+    spanish_words = {"el", "la", "los", "las", "un", "una", "de", "en", "y"}
+    words = set(text.lower().split())
+    return "es" if words & spanish_words else "en"
 
-def listen():
-    r = sr.Recognizer()
-    with sr.Microphone() as source:
-        audio = r.listen(source)
-    try:
-        return r.recognize_google(audio, language="en-US,es-ES")
-    except:
-        return ""
+def bilingual_chat(user_input):
+    lang = detect_language(user_input)
+    if lang == "es":
+        input_en = translator_es_en(user_input, max_length=128)[0]['translation_text']
+    else:
+        input_en = user_input
+    
+    conv = Conversation(input_en)
+    response_en = conversational(conv, max_length=128)[-1].generated_responses[-1]
+    
+    if lang == "es":
+        return translator_en_es(response_en, max_length=128)[0]['translation_text']
+    return response_en
 
-def bilingual_voice_chat():
-    while True:
-        user_input = listen()
-        if user_input.lower() in ["exit", "salir"]:
-            break
-        lang = detect_language(user_input)
-        response = bilingual_chat(user_input)  # From previous
-        speak(response, lang)
+st.title("Bilingual Chatbot")
 
-bilingual_voice_chat()
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+
+if prompt := st.chat_input("Message"):
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    with st.chat_message("user"):
+        st.markdown(prompt)
+    
+    response = bilingual_chat(prompt)
+    st.session_state.messages.append({"role": "assistant", "content": response})
+    with st.chat_message("assistant"):
+        st.markdown(response)
