@@ -190,18 +190,26 @@ Text to analyze:
             # Classification fix
             # Classification fix + negative DEBE handling
            # Classification fix + negative DEBE handling
-            if debit_val and not credit_val:
-                if debit_val < 0:
-                    credit_val = abs(debit_val)
-                    debit_val = ""
-                    reason = "Credit Note"
-                else:
+            # === Classification fix + safe negative DEBE handling ===
+            if debit_val != "" and credit_val == "":
+                try:
+                    val = float(debit_val)
+                    if val < 0:
+                        # Negative DEBE → move to Credit
+                        credit_val = round(abs(val), 2)
+                        debit_val = ""
+                        reason = "Credit Note"
+                    else:
+                        reason = "Invoice"
+                except:
                     reason = "Invoice"
-            elif credit_val and not debit_val:
+            
+            elif credit_val != "" and debit_val == "":
                 if re.search(r"abono|nota|crédit|descuento|πίστωση", str(row), re.IGNORECASE):
                     reason = "Credit Note"
                 else:
                     reason = "Payment"
+            
             elif debit_val == "" and credit_val == "":
                 continue
             all_records.append({
