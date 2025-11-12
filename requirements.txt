@@ -12,6 +12,7 @@ torch
 openai 
 gtts 
 SpeechRecognition
+streamlit-audio-recorder
 
 # --- OCR Engine (Spanish + Greek + English) ---
 easyocr
