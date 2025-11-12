@@ -1,6 +1,6 @@
 import streamlit as st
 from openai import OpenAI
-from streamlit_audio_recorder import audio_recorder
+from st_audio_recorder import st_audio_recorder
 import tempfile
 
 # =========================================================
