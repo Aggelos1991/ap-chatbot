@@ -710,7 +710,7 @@ if uploaded_erp and uploaded_vendor:
                 st.dataframe(
                     style(perf[['ERP Invoice', 'Vendor Invoice', 'ERP Amount', 'Vendor Amount', 'Difference']],
                           "background:#2E7D32;color:#fff;font-weight:bold;"),
-                    use_container_width=True
+                    width="stretch"
                 )
             else:
                 st.info("No perfect matches.")
@@ -720,20 +720,20 @@ if uploaded_erp and uploaded_vendor:
                 st.dataframe(
                     style(diff[['ERP Invoice', 'Vendor Invoice', 'ERP Amount', 'Vendor Amount', 'Difference']],
                           "background:#FF8F00;color:#fff;font-weight:bold;"),
-                    use_container_width=True
+                    width="stretch"
                 )
             else:
                 st.success("No differences.")
 
         st.markdown('<h2 class="section-title">Tier-2: Fuzzy + Small Amount</h2>', unsafe_allow_html=True)
         if not tier2.empty:
-            st.dataframe(style(tier2, "background:#26A69A;color:#fff;font-weight:bold;"), use_container_width=True)
+            st.dataframe(style(tier2, "background:#26A69A;color:#fff;font-weight:bold;"), width="stretch")
         else:
             st.info("No Tier-2 matches.")
 
         st.markdown('<h2 class="section-title">Tier-3: Date + Strict Fuzzy</h2>', unsafe_allow_html=True)
         if not tier3.empty:
-            st.dataframe(style(tier3, "background:#7E57C2;color:#fff;font-weight:bold;"), use_container_width=True)
+            st.dataframe(style(tier3, "background:#7E57C2;color:#fff;font-weight:bold;"), width="stretch")
         else:
             st.info("No Tier-3 matches.")
 
@@ -741,14 +741,14 @@ if uploaded_erp and uploaded_vendor:
         with col_m1:
             st.markdown('<h2 class="section-title">Missing in ERP</h2>', unsafe_allow_html=True)
             if not final_ven_miss.empty:
-                st.dataframe(style(final_ven_miss, "background:#AD1457;color:#fff;font-weight:bold;"), use_container_width=True)
+                st.dataframe(style(final_ven_miss, "background:#AD1457;color:#fff;font-weight:bold;"), width="stretch")
                 st.error(f"{len(final_ven_miss)} vendor invoices missing – {final_ven_miss['Amount'].sum():,.2f}")
             else:
                 st.success("All vendor invoices found in ERP.")
         with col_m2:
             st.markdown('<h2 class="section-title">Missing in Vendor</h2>', unsafe_allow_html=True)
             if not final_erp_miss.empty:
-                st.dataframe(style(final_erp_miss, "background:#C62828;color:#fff;font-weight:bold;"), use_container_width=True)
+                st.dataframe(style(final_erp_miss, "background:#C62828;color:#fff;font-weight:bold;"), width="stretch")
                 st.error(f"{len(final_erp_miss)} ERP invoices missing – {final_erp_miss['Amount'].sum():,.2f}")
             else:
                 st.success("All ERP invoices found in vendor.")
@@ -762,7 +762,7 @@ if uploaded_erp and uploaded_vendor:
                 disp.columns = ['Reason', 'Debit', 'Credit']
                 st.dataframe(
                     disp.style.apply(lambda _: ['background:#4CAF50;color:#fff'] * len(_), axis=1),
-                    use_container_width=True
+                    width="stretch"
                 )
                 st.markdown(f"**Total:** {erp_pay['Amount'].sum():,.2f}")
             else:
@@ -774,7 +774,7 @@ if uploaded_erp and uploaded_vendor:
                 disp.columns = ['Reason', 'Debit', 'Credit', 'Net']
                 st.dataframe(
                     disp.style.apply(lambda _: ['background:#2196F3;color:#fff'] * len(_), axis=1),
-                    use_container_width=True
+                    width="stretch"
                 )
                 st.markdown(f"**Total:** {ven_pay['Amount'].sum():,.2f}")
             else:
@@ -784,7 +784,7 @@ if uploaded_erp and uploaded_vendor:
             st.markdown("**Matched Payments**")
             st.dataframe(
                 pay_match.style.apply(lambda _: ['background:#004D40;color:#fff;font-weight:bold'] * len(_), axis=1),
-                use_container_width=True
+                width="stretch"
             )
 
         # ---------- EXPORT ----------
