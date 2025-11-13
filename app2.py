@@ -95,7 +95,7 @@ def normalize_date(v):
                 return d.strftime("%Y-%m-%d")
         except:
             continue
-    d = pd.to_datetime(s, format="%Y/%m/%d %H:%M:%S", errors="coerce")
+    d = pd.to_datetime(s, errors="coerce", dayfirst=False)
     if pd.isna(d):
         d = pd.to_datetime(s, errors="coerce", dayfirst=False)
     return d.strftime("%Y-%m-%d") if not pd.isna(d) else ""
