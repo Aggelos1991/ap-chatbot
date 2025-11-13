@@ -210,8 +210,23 @@ def match_invoices(erp_df, ven_df):
     ven_df = consolidate(ven_df, "ven")
 
     # Compute __amt if missing
+    # --- Ensure __amt always exists ---
+    if "__amt" not in erp_df.columns:
+        erp_df["__amt"] = (
+            erp_df.get("debit_erp", 0).apply(normalize_number)
+            - erp_df.get("credit_erp", 0).apply(normalize_number)
+        ).abs().round(2)
+    
+    if "__amt" not in ven_df.columns:
+        ven_df["__amt"] = (
+            ven_df.get("debit_ven", 0).apply(normalize_number)
+            - ven_df.get("credit_ven", 0).apply(normalize_number)
+        ).abs().round(2)
+    
+    # Normalize __amt (final cleanup)
     erp_df["__amt"] = erp_df["__amt"].apply(lambda x: round(normalize_number(x), 2))
     ven_df["__amt"] = ven_df["__amt"].apply(lambda x: round(normalize_number(x), 2))
+
 
     # 🔹 Exclude payments entirely (keep only invoices & credit notes)
     erp_use = erp_df[erp_df["__type"].isin(["INV", "CN"])].copy()
