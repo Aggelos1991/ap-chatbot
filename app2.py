@@ -95,9 +95,9 @@ def normalize_date(v):
                 return d.strftime("%Y-%m-%d")
         except:
             continue
-    d = pd.to_datetime(s, errors="coerce", dayfirst=False)
+    d = pd.to_datetime(s, errors="coerce")
     if pd.isna(d):
-        d = pd.to_datetime(s, errors="coerce", dayfirst=False)
+        d = pd.to_datetime(s, errors="coerce")
     return d.strftime("%Y-%m-%d") if not pd.isna(d) else ""
 
 def clean_invoice_code(v):
