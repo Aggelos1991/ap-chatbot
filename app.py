@@ -291,6 +291,7 @@ if pay_file:
             {combined_html}
             <p>Quedamos a su disposición para cualquier aclaración.</p>
             <p>Saludos cordiales,<br><strong>Equipo Finance</strong></p>
+             <em>Adj. Diff</em> = Ajuste correspondiente a un <strong>prepago</strong> realizado anteriormente.
             """
         else:
             html_message = f"""
@@ -299,6 +300,7 @@ if pay_file:
             {combined_html}
             <p>Should you require any clarification, we remain at your disposal.</p>
             <p>Kind regards,<br><strong>Finance Team</strong></p>
+            <em>Adj. Diff</em> = Adjustment corresponding to a previous <strong>prepayment</strong>.
             """
 
         st.markdown(html_message, unsafe_allow_html=True)
