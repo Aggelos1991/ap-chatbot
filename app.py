@@ -141,7 +141,6 @@ if pay_file:
                     inv = str(row["Alt. Document"])
                     diff = round(row["Payment Value"] - row["Invoice Value"], 2)
 
-                    # TRUE DEBUG LOGIC RESTORED: YES only when diff == 0
                     matched = abs(diff) < 0.01
                     debug_rows_all.append({
                         "Payment Code": pay_code,
@@ -186,10 +185,10 @@ if pay_file:
 
     tab1, tab2 = st.tabs(["Summary", "GLPI"])
 
+    # ========== TAB 1 ==========
     with tab1:
         st.markdown(combined_html, unsafe_allow_html=True)
 
-        # ========== DEBUG TABLE RESTORED ==========
         if debug_rows_all:
             st.subheader("🔍 Debug Breakdown — Invoice vs Payment Matching")
             debug_df = pd.DataFrame(debug_rows_all)
@@ -206,7 +205,6 @@ if pay_file:
                 mime="text/csv"
             )
 
-        # ========== EXCEL EXPORT ==========
         if export_data:
             wb = Workbook()
             ws = wb.active
@@ -252,7 +250,6 @@ if pay_file:
                     ws.cell(row, 2).value = amt
                     ws.cell(row, 2).number_format = money
                     ws.cell(row, 2).alignment = Alignment(horizontal="right")
-                    
 
                 ws.cell(row, 1).value = "TOTAL"
                 ws.cell(row, 2).value = subtotal
@@ -277,19 +274,33 @@ if pay_file:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
+    # ========== TAB 2 (GLPI) ==========
     with tab2:
+        language = st.radio("Language", ["Spanish", "English"], horizontal=True)
+
         c1, c2, c3 = st.columns(3)
         ticket_id = c1.text_input("Ticket ID", placeholder="101004")
         category_id = c2.text_input("Category ID", value="400")
         assigned_email = c3.text_input("Assign To Email", placeholder="akeramaris@saniikos.com")
 
-        html_message = f"""
-        <p><strong>Estimado proveedor,</strong></p>
-        <p>Por favor, encuentre a continuación las facturas que corresponden a los pagos realizados:</p>
-        {combined_html}
-        <p>Quedamos a su disposición para cualquier aclaración.</p>
-        <p>Saludos cordiales,<br><strong>Equipo Finance</strong></p>
-        """
+        # ===== LANGUAGE SWITCH =====
+        if language == "Spanish":
+            html_message = f"""
+            <p><strong>Estimado proveedor,</strong></p>
+            <p>Por favor, encuentre a continuación las facturas que corresponden a los pagos realizados:</p>
+            {combined_html}
+            <p>Quedamos a su disposición para cualquier aclaración.</p>
+            <p>Saludos cordiales,<br><strong>Equipo Finance</strong></p>
+            """
+        else:
+            html_message = f"""
+            <p><strong>Dear supplier,</strong></p>
+            <p>Please find below the invoices corresponding to the completed payments:</p>
+            {combined_html}
+            <p>Should you require any clarification, we remain at your disposal.</p>
+            <p>Kind regards,<br><strong>Finance Team</strong></p>
+            """
+
         st.markdown(html_message, unsafe_allow_html=True)
 
         if st.button("Send to GLPI"):
