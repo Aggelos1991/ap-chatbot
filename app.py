@@ -118,7 +118,16 @@ if pay_file:
     export_data = {}
 
     for pay_code in selected_codes:
-        subset = df[df["Payment Document Code"].astype(str) == str(pay_code)].copy()
+        # Auto-detect correct column for payment document matching
+        possible_cols = ["Payment Document Code", "Payment Document"]
+        col_match = next((c for c in possible_cols if c in df.columns), None)
+        
+        if col_match:
+            subset = df[df[col_match].astype(str) == str(pay_code)].copy()
+        else:
+            st.error("❌ Cannot find a Payment Document column in the uploaded Excel.")
+            continue
+
         if subset.empty: continue
 
         subset["Invoice Value"] = subset["Invoice Value"].apply(parse_amount)
