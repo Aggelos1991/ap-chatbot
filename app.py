@@ -132,7 +132,9 @@ if pay_file:
 
         subset["Invoice Value"] = subset["Invoice Value"].apply(parse_amount)
         subset["Payment Value"] = subset["Payment Value"].apply(parse_amount)
-        vendor = subset["Supplier Name"].iloc[0]
+        vendor_col = find_col(df, ["Supplier Name", "Vendor", "Supplier", "Vendor Name"])
+        vendor = subset[vendor_col].iloc[0] if vendor_col else "Unknown Vendor"
+
 
         summary = subset[["Alt. Document", "Invoice Value"]].copy()
         cn_rows, unmatched_invoices = [], []
