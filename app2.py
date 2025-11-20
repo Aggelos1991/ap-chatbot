@@ -85,7 +85,7 @@ def normalize_date(v):
         "%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y",
         "%m/%d/%Y", "%m-%d-%Y",
         "%Y/%m/%d", "%Y-%m-%d",
-        "%d/%m/%y", "%d-%m-%y", "%d.%m.%y",
+        "%d/%m/%y", "%d-%m-%y", "%d.%m/%y",
         "%m/%d/%y", "%m-%d-%y",
         "%Y.%m.%d",
     ]:
@@ -120,7 +120,7 @@ def normalize_columns(df, tag):
     mapping = {
         "invoice": [
             "invoice", "invoice number", "inv no", "factura", "fact", "nº", "num",
-            "numero", "document", "doc", "ref", "αρ", "παραστ", 
+            "numero", "document", "doc", "ref", "αρ", "παραστ",
             "alternative document", "alt document", "alt. document", "alternative doc"
         ],
         "credit":  ["credit", "haber", "credito", "abono"],
@@ -152,12 +152,12 @@ def normalize_columns(df, tag):
     st.write(f"✅ Normalized {tag.upper()} columns:", list(out.columns))
     return out
 
-
 def style(df, css):
     return df.style.apply(lambda _: [css] * len(_), axis=1)
 
 # ==================== MATCHING CORE ==========================
 def match_invoices(erp_df, ven_df):
+    # ---- classify invoice type: INV / CN / IGNORE ----
     def doc_type(row, tag):
         txt = (str(row.get(f"reason_{tag}", "")) + " " + str(row.get(f"invoice_{tag}", ""))).lower()
         debit  = normalize_number(row.get(f"debit_{tag}", 0))
@@ -177,10 +177,10 @@ def match_invoices(erp_df, ven_df):
 
     erp_df["__type"] = erp_df.apply(lambda r: doc_type(r, "erp"), axis=1)
     ven_df["__type"] = ven_df.apply(lambda r: doc_type(r, "ven"), axis=1)
+
     # 🚫 Exclude payments before consolidation (strict fix)
     erp_df = erp_df[erp_df["__type"].isin(["INV", "CN"])].copy()
     ven_df = ven_df[ven_df["__type"].isin(["INV", "CN"])].copy()
-
 
     # 🔹 Consolidate same invoice codes (sum of all rows like INV+CN)
     def consolidate(df, tag):
@@ -194,54 +194,63 @@ def match_invoices(erp_df, ven_df):
             for _, r in g.iterrows():
                 d = normalize_number(r.get(f"debit_{tag}", 0))
                 c = normalize_number(r.get(f"credit_{tag}", 0))
-                # ✅ Correct: treat debits positive, credits negative
-                net = normalize_number(r.get(f"debit_{tag}", 0)) - normalize_number(r.get(f"credit_{tag}", 0))
+
+                # --- CN clean handling (absolute amount) ---
                 if r.get("__type") == "CN":
-                    total -= net
+                    # CN amount = positive number regardless of debit/credit sign
+                    cn_val = abs(d if d != 0 else c)
+                    total -= cn_val
                 else:
-                    total += net
+                    # Normal invoice: debit minus credit
+                    total += (d - c)
 
             base = g.iloc[0].copy()
-            base["__amt"] = round(abs(total), 2)
+            net_val = round(abs(total), 2)
+
+            # 🚫 Skip fully cancelling documents (INV + CN = 0)
+            if net_val == 0:
+                continue
+
+            base["__amt"] = net_val
             grouped.append(base)
         return pd.DataFrame(grouped)
 
     erp_df = consolidate(erp_df, "erp")
     ven_df = consolidate(ven_df, "ven")
 
-    # Compute __amt if missing
     # --- Ensure __amt always exists ---
     if "__amt" not in erp_df.columns:
         erp_df["__amt"] = (
             erp_df.get("debit_erp", 0).apply(normalize_number)
             - erp_df.get("credit_erp", 0).apply(normalize_number)
         ).abs().round(2)
-    
+
     if "__amt" not in ven_df.columns:
         ven_df["__amt"] = (
             ven_df.get("debit_ven", 0).apply(normalize_number)
             - ven_df.get("credit_ven", 0).apply(normalize_number)
         ).abs().round(2)
-    
+
     # Normalize __amt (final cleanup)
     erp_df["__amt"] = erp_df["__amt"].apply(lambda x: round(normalize_number(x), 2))
     ven_df["__amt"] = ven_df["__amt"].apply(lambda x: round(normalize_number(x), 2))
-
 
     # 🔹 Exclude payments entirely (keep only invoices & credit notes)
     erp_use = erp_df[erp_df["__type"].isin(["INV", "CN"])].copy()
     ven_use = ven_df[ven_df["__type"].isin(["INV", "CN"])].copy()
 
-
+    # ---------- Tier-1 exact matches ----------
     matched, used_vendor = [], set()
     for e_idx, e in erp_use.iterrows():
         e_inv = str(e.get("invoice_erp", "")).strip()
         e_amt = round(float(e.get("__amt", 0.0)), 2)
+
         for v_idx, v in ven_use.iterrows():
             if v_idx in used_vendor:
                 continue
             v_inv = str(v.get("invoice_ven", "")).strip()
             v_amt = round(float(v.get("__amt", 0.0)), 2)
+
             if e_inv == v_inv:
                 diff = abs(e_amt - v_amt)
                 status = "Perfect Match" if diff <= 0.01 else "Difference Match"
@@ -257,6 +266,8 @@ def match_invoices(erp_df, ven_df):
                 break
 
     matched_df = pd.DataFrame(matched)
+
+    # ---------- Remaining / missing ----------
     erp_use["__inv_norm"] = erp_use["invoice_erp"].apply(clean_invoice_code)
     ven_use["__inv_norm"] = ven_use["invoice_ven"].apply(clean_invoice_code)
 
@@ -274,13 +285,7 @@ def match_invoices(erp_df, ven_df):
     miss_ven = miss_ven[[c for c in keep_cols if c in miss_ven.columns]].reset_index(drop=True)
     return matched_df, miss_erp, miss_ven
 
-
-
-# ==================== REST OF YOUR APP (TIERS, PAYMENTS, UI, EXPORT) ====================
-# 👇 (Keep everything exactly as in your latest working file — this fix only corrected
-#     the misplaced return and credit variable handling inside match_invoices)
-
-
+# ==================== TIERS 2 & 3 ==========================
 # ------- Tier-2: fuzzy invoice + small amount tolerance -------
 def tier2_match(erp_miss, ven_miss):
     if erp_miss.empty or ven_miss.empty:
@@ -378,9 +383,6 @@ def tier3_match(erp_miss, ven_miss):
     return mdf, used_e, used_v, rem_e, rem_v
 
 # ------- Payments detection & matching (reason + invoice text) -------
-# ------- Payments detection & matching (reason + invoice text) -------
-# ------- Payments detection & matching (reason + invoice text) -------
-# ------- Payments detection & matching (reason + invoice text) -------
 def extract_payments(erp_df, ven_df):
     pay_kw = [
         "πληρωμή", "payment", "remittance", "bank transfer",
@@ -406,33 +408,40 @@ def extract_payments(erp_df, ven_df):
             return df
 
         # ensure numeric debit/credit columns exist
-        if f"debit_{tag}" not in df.columns:  df[f"debit_{tag}"]  = 0
-        if f"credit_{tag}" not in df.columns: df[f"credit_{tag}"] = 0
+        if f"debit_{tag}" not in df.columns:
+            df[f"debit_{tag}"] = 0
+        if f"credit_{tag}" not in df.columns:
+            df[f"credit_{tag}"] = 0
 
         df["Debit"]  = df[f"debit_{tag}"].apply(normalize_number)
         df["Credit"] = df[f"credit_{tag}"].apply(normalize_number)
 
-        # Base rule (like your vendor logic): prefer absolute difference.
+        # Base rule: absolute difference
         base_amount = (df["Debit"] - df["Credit"]).abs().round(2)
 
-        # If that’s zero (common in single-column ERP exports), use the larger side.
-        side_max = pd.Series([max(abs(d), abs(c)) for d, c in zip(df["Debit"], df["Credit"])], index=df.index).round(2)
+        # If that’s zero, use the larger side.
+        side_max = pd.Series(
+            [max(abs(d), abs(c)) for d, c in zip(df["Debit"], df["Credit"])],
+            index=df.index
+        ).round(2)
 
-        # Fallback: scan any alternative amountish columns (ERP often uses one)
+        # Fallback: scan any alternative amountish columns
         candidate_words = [
             "amount", "importe", "valor", "total", "document value", "net", "paid",
             "cobro", "pago", "charge", "base imponible", "importe factura", "importe neto"
         ]
-        amount_like_cols = [c for c in df.columns if any(w in str(c).lower() for w in candidate_words)
-                            and c not in {f"debit_{tag}", f"credit_{tag}", "Debit", "Credit"}]
+        amount_like_cols = [
+            c for c in df.columns
+            if any(w in str(c).lower() for w in candidate_words)
+            and c not in {f"debit_{tag}", f"credit_{tag}", "Debit", "Credit"}
+        ]
 
         fallback_vals = pd.Series(0.0, index=df.index)
         for c in amount_like_cols:
-            # take the largest absolute numeric found among candidate columns
             vals = df[c].apply(normalize_number).abs()
             fallback_vals = pd.concat([fallback_vals, vals], axis=1).max(axis=1)
 
-        # Now pick, in order of reliability:
+        # Pick, in order:
         # 1) base_amount if > 0
         # 2) side_max if > 0
         # 3) fallback_vals if > 0
@@ -445,7 +454,6 @@ def extract_payments(erp_df, ven_df):
 
         return df
 
-    # Mirror vendor logic and adapt ERP with the fallbacks above
     erp_pay = compute_amounts(erp_pay, "erp")
     ven_pay = compute_amounts(ven_pay, "ven")
 
@@ -468,10 +476,6 @@ def extract_payments(erp_df, ven_df):
 
     pay_match = pd.DataFrame(matched)
     return erp_pay, ven_pay, pay_match
-
-
-
-
 
 # ==================== EXCEL EXPORT =========================
 def export_excel(miss_erp, miss_ven):
@@ -526,7 +530,6 @@ if uploaded_erp and uploaded_vendor:
         st.write("🧩 ERP columns detected:", list(erp_df.columns))
         st.write("🧩 Vendor columns detected:", list(ven_df.columns))
 
-
         with st.spinner("Analyzing invoices..."):
             # Tier-1
             tier1, miss_erp, miss_ven = match_invoices(erp_df, ven_df)
@@ -557,9 +560,7 @@ if uploaded_erp and uploaded_vendor:
                         )
                     ]
 
-
             # Tier-3
-                       # Tier-3
             tier3, _, _, final_erp_miss, final_ven_miss = tier3_match(miss_erp2, miss_ven2)
 
             if not final_erp_miss.empty:
@@ -579,14 +580,11 @@ if uploaded_erp and uploaded_vendor:
             # Payments
             erp_pay, ven_pay, pay_match = extract_payments(erp_df, ven_df)
 
-            # Payments
-            erp_pay, ven_pay, pay_match = extract_payments(erp_df, ven_df)
-
         st.success("Reconciliation Complete!")
 
         # ---------- METRICS ----------
         st.markdown('<h2 class="section-title">Reconciliation Summary</h2>', unsafe_allow_html=True)
-        c1, c2, c3, c4, c5, c6, c7,c8 = st.columns(8)
+        c1, c2, c3, c4, c5, c6, c7, c8 = st.columns(8)
         perf = tier1[tier1["Status"] == "Perfect Match"] if not tier1.empty else pd.DataFrame()
         diff = tier1[tier1["Status"] == "Difference Match"] if not tier1.empty else pd.DataFrame()
 
@@ -664,13 +662,8 @@ if uploaded_erp and uploaded_vendor:
                 st.metric("New Payment Matches (€)", "0.00")
             st.markdown('</div>', unsafe_allow_html=True)
 
-
-        # ---- Balance Summary Metric (C8 • Yellow • bulletproof detection for Vendor Balance) ----
-       # ---- Balance Summary Metric (C8 • Yellow • fully robust detection) ----
         # ---- Balance Summary Metric (C8 • Yellow • auto-detect & tolerant) ----
         with c8:
-            import numpy as np
-        
             def parse_amt(v):
                 if v is None or str(v).strip() == "":
                     return np.nan
@@ -680,20 +673,20 @@ if uploaded_erp and uploaded_vendor:
                     return float(s)
                 except:
                     return np.nan
-        
+
             # detect balance columns by name (case insensitive)
             balance_col_erp = next((c for c in erp_df.columns if "balance" in c.lower() or "saldo" in c.lower()), None)
             balance_col_ven = next((c for c in ven_df.columns if "balance" in c.lower() or "saldo" in c.lower() or "υπολ" in c.lower()), None)
-        
+
             if balance_col_erp and balance_col_ven:
                 erp_vals = erp_df[balance_col_erp].apply(parse_amt).dropna()
                 ven_vals = ven_df[balance_col_ven].apply(parse_amt).dropna()
-        
+
                 if not erp_vals.empty and not ven_vals.empty:
                     erp_last = erp_vals.iloc[-1]
                     ven_last = ven_vals.iloc[-1]
                     diff_val = round(erp_last - ven_last, 2)
-        
+
                     st.markdown(
                         '<div class="metric-container" style="background:#FBC02D;color:#000;font-weight:bold;">',
                         unsafe_allow_html=True
@@ -711,9 +704,6 @@ if uploaded_erp and uploaded_vendor:
             else:
                 st.info("ℹ️ Could not detect Balance columns in both files.")
 
-
-
-
         st.markdown("---")
 
         # ---------- DISPLAY ----------
@@ -723,8 +713,10 @@ if uploaded_erp and uploaded_vendor:
             st.markdown("**Perfect Matches**")
             if not perf.empty:
                 st.dataframe(
-                    style(perf[['ERP Invoice', 'Vendor Invoice', 'ERP Amount', 'Vendor Amount', 'Difference']],
-                          "background:#2E7D32;color:#fff;font-weight:bold;"),
+                    style(
+                        perf[['ERP Invoice', 'Vendor Invoice', 'ERP Amount', 'Vendor Amount', 'Difference']],
+                        "background:#2E7D32;color:#fff;font-weight:bold;"
+                    ),
                     width="stretch"
                 )
             else:
@@ -733,8 +725,10 @@ if uploaded_erp and uploaded_vendor:
             st.markdown("**Amount Differences**")
             if not diff.empty:
                 st.dataframe(
-                    style(diff[['ERP Invoice', 'Vendor Invoice', 'ERP Amount', 'Vendor Amount', 'Difference']],
-                          "background:#FF8F00;color:#fff;font-weight:bold;"),
+                    style(
+                        diff[['ERP Invoice', 'Vendor Invoice', 'ERP Amount', 'Vendor Amount', 'Difference']],
+                        "background:#FF8F00;color:#fff;font-weight:bold;"
+                    ),
                     width="stretch"
                 )
             else:
@@ -798,7 +792,10 @@ if uploaded_erp and uploaded_vendor:
         if not pay_match.empty:
             st.markdown("**Matched Payments**")
             st.dataframe(
-                pay_match.style.apply(lambda _: ['background:#004D40;color:#fff;font-weight:bold'] * len(_), axis=1),
+                pay_match.style.apply(
+                    lambda _: ['background:#004D40;color:#fff;font-weight:bold'] * len(_),
+                    axis=1
+                ),
                 width="stretch"
             )
 
