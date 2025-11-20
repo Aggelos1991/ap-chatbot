@@ -85,7 +85,7 @@ def normalize_date(v):
         "%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y",
         "%m/%d/%Y", "%m-%d-%Y",
         "%Y/%m/%d", "%Y-%m-%d",
-        "%d/%m/%y", "%d-%m-%y", "%d.%m/%y",
+        "%d/%m/%y", "%d-%m-%y", "%d.%m.%y",
         "%m/%d/%y", "%m-%d-%y",
         "%Y.%m.%d",
     ]:
@@ -120,7 +120,7 @@ def normalize_columns(df, tag):
     mapping = {
         "invoice": [
             "invoice", "invoice number", "inv no", "factura", "fact", "nº", "num",
-            "numero", "document", "doc", "ref", "αρ", "παραστ",
+            "numero", "document", "doc", "ref", "αρ", "παραστ", 
             "alternative document", "alt document", "alt. document", "alternative doc"
         ],
         "credit":  ["credit", "haber", "credito", "abono"],
@@ -178,11 +178,11 @@ def match_invoices(erp_df, ven_df):
     erp_df["__type"] = erp_df.apply(lambda r: doc_type(r, "erp"), axis=1)
     ven_df["__type"] = ven_df.apply(lambda r: doc_type(r, "ven"), axis=1)
 
-    # 🚫 Exclude payments before consolidation (strict fix)
+    # 🚫 Exclude payments before consolidation
     erp_df = erp_df[erp_df["__type"].isin(["INV", "CN"])].copy()
     ven_df = ven_df[ven_df["__type"].isin(["INV", "CN"])].copy()
 
-    # 🔹 Consolidate same invoice codes (sum of all rows like INV+CN)
+    # 🔹 Consolidate same invoice codes (INV + CN netting)
     def consolidate(df, tag):
         if f"invoice_{tag}" not in df.columns:
             return df
@@ -190,29 +190,35 @@ def match_invoices(erp_df, ven_df):
         for inv, g in df.groupby(f"invoice_{tag}", dropna=False):
             if not inv or pd.isna(inv):
                 continue
+
             total = 0.0
             for _, r in g.iterrows():
                 d = normalize_number(r.get(f"debit_{tag}", 0))
                 c = normalize_number(r.get(f"credit_{tag}", 0))
 
-                # --- CN clean handling (absolute amount) ---
+                # Raw amount from ERP/Vendor: debit positive, credit negative
+                raw = d - c
+
                 if r.get("__type") == "CN":
-                    # CN amount = positive number regardless of debit/credit sign
-                    cn_val = abs(d if d != 0 else c)
-                    total -= cn_val
+                    # Credit notes must ALWAYS reduce the invoice
+                    raw = -abs(raw)   # ensure negative
                 else:
-                    # Normal invoice: debit minus credit
-                    total += (d - c)
+                    # Invoices must ALWAYS increase the balance
+                    raw = abs(raw)    # ensure positive
 
-            base = g.iloc[0].copy()
-            net_val = round(abs(total), 2)
+                total += raw
 
-            # 🚫 Skip fully cancelling documents (INV + CN = 0)
-            if net_val == 0:
+            net_val = round(total, 2)
+
+            # 🚫 Skip fully cancelling documents (INV + CN = 0 net)
+            if abs(net_val) == 0:
                 continue
 
-            base["__amt"] = net_val
+            base = g.iloc[0].copy()
+            # For matching & display we use absolute net amount
+            base["__amt"] = abs(net_val)
             grouped.append(base)
+
         return pd.DataFrame(grouped)
 
     erp_df = consolidate(erp_df, "erp")
