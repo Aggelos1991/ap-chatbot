@@ -135,8 +135,17 @@ def load_data(uploaded_file):
     # --- CORE METRICS ---
     df['Overdue'] = df['Due_Date'] < TODAY
     df['Status'] = np.where(df['Overdue'], 'Overdue', 'Not Overdue')
-    df['Days_Overdue'] = np.where(df['Overdue'], (TODAY - df['Due_Date']).dt.days, 0)
-    
+    # 🔧 Force datetime conversion for required columns
+    for col in ['Due_Date', 'Overdue', 'Invoice Date', 'Posting Date']:
+        if col in df.columns:
+            df[col] = pd.to_datetime(df[col], dayfirst=True, errors='coerce')
+
+    df['Days_Overdue'] = np.where(
+        df['Overdue'].notna(),
+        (TODAY - df['Due_Date']).dt.days,
+        0
+    )
+
     # Final data selection for dashboard
     df = df[['Vendor_Name', 'VAT_ID', 'Due_Date', 'Open_Amount', 'Status', 'Days_Overdue', 
              'Vendor_Email', 'Account_Email', 'Col_AF', 'Col_AH', 'Col_AJ', 'Col_AN',
