@@ -131,7 +131,11 @@ def normalize_columns(df, tag):
         "credit":  ["credit", "haber", "credito", "abono"],
         "debit":   ["debit", "debe", "cargo", "importe", "amount", "valor", "total"],
         "reason":  ["reason", "motivo", "concepto", "descripcion", "detalle", "περιγραφή"],
-        "date":    ["date", "fecha", "data", "issue date", "posting date", "ημερομηνία"]
+        "date":    ["date", "fecha", "data", "issue date", "posting date", "ημερομηνία"],
+        "vendor_id": ["vendor id", "vendor code", "supplier id", "supplier code", "proveedor", "código", 
+                      "κωδικός", "κωδ", "vendor no", "supplier no", "account", "cust id", "bp code"],
+        "vendor_name": ["vendor name", "supplier name", "nombre", "proveedor nombre", "επωνυμία", 
+                        "όνομα", "name", "business partner", "bp name", "company", "empresa"]
     }
 
     rename_map = {}
@@ -561,10 +565,12 @@ def extract_payments(erp_df, ven_df):
     return erp_pay, ven_pay, pay_match
 
 # ==================== EXCEL EXPORT =========================
-def export_excel(miss_erp, miss_ven):
+def export_excel(miss_erp, miss_ven, missing_erp_enhanced=None):
     wb = Workbook()
     wb.remove(wb.active)
-    ws1 = wb.create_sheet("Missing")
+    
+    # --- Sheet 1: Missing Invoices (Enhanced) ---
+    ws1 = wb.create_sheet("Missing Invoices")
 
     def hdr(ws, row, color):
         for c in ws[row]:
@@ -573,7 +579,17 @@ def export_excel(miss_erp, miss_ven):
             c.alignment = Alignment(horizontal="center", vertical="center")
 
     cur = 1
-    if not miss_ven.empty:
+    
+    # Missing in ERP (Enhanced with Vendor Info)
+    if missing_erp_enhanced is not None and not missing_erp_enhanced.empty:
+        ws1.merge_cells(start_row=cur, start_column=1, end_row=cur, end_column=max(7, missing_erp_enhanced.shape[1]))
+        ws1.cell(cur, 1, "Missing in ERP (Vendor Invoices Not Found)").font = Font(bold=True, size=14, color="C62828")
+        cur += 2
+        for r in dataframe_to_rows(missing_erp_enhanced, index=False, header=True):
+            ws1.append(r)
+        hdr(ws1, cur, "C62828")
+        cur = ws1.max_row + 3
+    elif not miss_ven.empty:
         ws1.merge_cells(start_row=cur, start_column=1, end_row=cur, end_column=max(3, miss_ven.shape[1]))
         ws1.cell(cur, 1, "Missing in ERP").font = Font(bold=True, size=14)
         cur += 2
@@ -581,17 +597,20 @@ def export_excel(miss_erp, miss_ven):
             ws1.append(r)
         hdr(ws1, cur, "C62828")
         cur = ws1.max_row + 3
+        
+    # Missing in Vendor
     if not miss_erp.empty:
         ws1.merge_cells(start_row=cur, start_column=1, end_row=cur, end_column=max(3, miss_erp.shape[1]))
-        ws1.cell(cur, 1, "Missing in Vendor").font = Font(bold=True, size=14)
+        ws1.cell(cur, 1, "Missing in Vendor Statement").font = Font(bold=True, size=14, color="AD1457")
         cur += 2
         for r in dataframe_to_rows(miss_erp, index=False, header=True):
             ws1.append(r)
         hdr(ws1, cur, "AD1457")
 
+    # Auto-fit columns
     for col in ws1.columns:
         max_len = max(len(str(c.value)) if c.value else 0 for c in col)
-        ws1.column_dimensions[get_column_letter(col[0].column)].width = max_len + 3
+        ws1.column_dimensions[get_column_letter(col[0].column)].width = max(max_len + 3, 12)
 
     buf = BytesIO()
     wb.save(buf)
@@ -825,21 +844,77 @@ if uploaded_erp and uploaded_vendor:
         else:
             st.info("No Tier-3 matches.")
 
-        col_m1, col_m2 = st.columns(2)
-        with col_m1:
-            st.markdown('<h2 class="section-title">Missing in ERP</h2>', unsafe_allow_html=True)
-            if not final_ven_miss.empty:
-                st.dataframe(style(final_ven_miss, "background:#AD1457;color:#fff;font-weight:bold;"), width="stretch")
-                st.error(f"{len(final_ven_miss)} vendor invoices missing – {final_ven_miss['Amount'].sum():,.2f}")
-            else:
-                st.success("All vendor invoices found in ERP.")
-        with col_m2:
-            st.markdown('<h2 class="section-title">Missing in Vendor</h2>', unsafe_allow_html=True)
-            if not final_erp_miss.empty:
-                st.dataframe(style(final_erp_miss, "background:#C62828;color:#fff;font-weight:bold;"), width="stretch")
-                st.error(f"{len(final_erp_miss)} ERP invoices missing – {final_erp_miss['Amount'].sum():,.2f}")
-            else:
-                st.success("All ERP invoices found in vendor.")
+        # ========== MISSING INVOICES SECTION ==========
+        st.markdown('<h2 class="section-title">📋 Missing Invoices Tracker</h2>', unsafe_allow_html=True)
+        
+        # Extract Vendor ID and Name from ERP export (use first non-empty value)
+        vendor_id = ""
+        vendor_name = ""
+        
+        if "vendor_id_erp" in erp_df.columns:
+            vendor_id_vals = erp_df["vendor_id_erp"].dropna().astype(str)
+            vendor_id = vendor_id_vals.iloc[0] if not vendor_id_vals.empty else ""
+        if "vendor_name_erp" in erp_df.columns:
+            vendor_name_vals = erp_df["vendor_name_erp"].dropna().astype(str)
+            vendor_name = vendor_name_vals.iloc[0] if not vendor_name_vals.empty else ""
+        
+        # Show detected vendor info
+        if vendor_id or vendor_name:
+            st.info(f"🏢 **Vendor:** {vendor_name} | **ID:** {vendor_id}")
+        
+        # Create enhanced Missing in ERP table
+        st.markdown("### Missing in ERP (Vendor invoices not found)")
+        if not final_ven_miss.empty:
+            # Build the enhanced table
+            missing_erp_enhanced = pd.DataFrame({
+                "Vendor ID": [vendor_id] * len(final_ven_miss),
+                "Vendor Name": [vendor_name] * len(final_ven_miss),
+                "Invoice Number": final_ven_miss["Invoice"].values if "Invoice" in final_ven_miss.columns else [""] * len(final_ven_miss),
+                "Date": final_ven_miss["Date"].values if "Date" in final_ven_miss.columns else [""] * len(final_ven_miss),
+                "Amount": final_ven_miss["Amount"].values if "Amount" in final_ven_miss.columns else [0.0] * len(final_ven_miss),
+                "Status": ["Missing"] * len(final_ven_miss),
+                "Checked": [True] * len(final_ven_miss)
+            })
+            
+            # Use data_editor for interactive editing with dropdown and checkbox
+            edited_missing = st.data_editor(
+                missing_erp_enhanced,
+                column_config={
+                    "Vendor ID": st.column_config.TextColumn("Vendor ID", disabled=True),
+                    "Vendor Name": st.column_config.TextColumn("Vendor Name", disabled=True),
+                    "Invoice Number": st.column_config.TextColumn("Invoice Number", disabled=True),
+                    "Date": st.column_config.TextColumn("Date", disabled=True),
+                    "Amount": st.column_config.NumberColumn("Amount", format="%.2f", disabled=True),
+                    "Status": st.column_config.SelectboxColumn(
+                        "Status",
+                        options=["Missing", "Under Review", "Requested", "Received", "Resolved", "Disputed"],
+                        default="Missing",
+                        required=True
+                    ),
+                    "Checked": st.column_config.CheckboxColumn("Checked", default=True)
+                },
+                hide_index=True,
+                use_container_width=True,
+                key="missing_erp_editor"
+            )
+            
+            st.error(f"⚠️ {len(final_ven_miss)} vendor invoices missing in ERP – Total: €{final_ven_miss['Amount'].sum():,.2f}")
+            
+            # Store in session state for export
+            st.session_state["missing_erp_data"] = edited_missing
+        else:
+            st.success("✅ All vendor invoices found in ERP.")
+            st.session_state["missing_erp_data"] = pd.DataFrame()
+        
+        st.markdown("---")
+        
+        # Missing in Vendor (simplified display)
+        st.markdown("### Missing in Vendor (ERP invoices not in vendor statement)")
+        if not final_erp_miss.empty:
+            st.dataframe(style(final_erp_miss, "background:#C62828;color:#fff;font-weight:bold;"), use_container_width=True)
+            st.error(f"⚠️ {len(final_erp_miss)} ERP invoices missing in vendor – Total: €{final_erp_miss['Amount'].sum():,.2f}")
+        else:
+            st.success("✅ All ERP invoices found in vendor statement.")
 
         st.markdown('<h2 class="section-title">Payment Transactions</h2>', unsafe_allow_html=True)
         col_p1, col_p2 = st.columns(2)
@@ -880,9 +955,13 @@ if uploaded_erp and uploaded_vendor:
 
         # ---------- EXPORT ----------
         st.markdown('<h2 class="section-title">Download Report</h2>', unsafe_allow_html=True)
-        excel_buf = export_excel(final_erp_miss, final_ven_miss)
+        
+        # Get enhanced missing data from session state
+        missing_erp_enhanced = st.session_state.get("missing_erp_data", pd.DataFrame())
+        
+        excel_buf = export_excel(final_erp_miss, final_ven_miss, missing_erp_enhanced)
         st.download_button(
-            label="Download Full Excel Report",
+            label="📥 Download Full Excel Report",
             data=excel_buf,
             file_name="ReconRaptor_Report.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
