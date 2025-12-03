@@ -328,9 +328,8 @@ if pay_file:
         category_id = c2.text_input("Category ID", value="400")
         assigned_email = c3.text_input("Assign To Email", placeholder="akeramaris@saniikos.com")
 
-        # ========= TEMPLATE EDITOR (PLAIN TEXT) =========
-        default_template_es = f"""
-Estimado proveedor,
+        # ========= FULLY EDITABLE TEMPLATE =========
+        default_template_es = f"""Estimado proveedor,
 
 Por favor, encontrad a continuación las facturas correspondientes a los pagos realizados:
 
@@ -339,11 +338,9 @@ Por favor, encontrad a continuación las facturas correspondientes a los pagos r
 Quedamos a vuestra disposición para cualquier aclaración.
 
 Saludos cordiales,
-Equipo Finance
-"""
+Equipo Finance"""
 
-        default_template_en = f"""
-Dear supplier,
+        default_template_en = f"""Dear supplier,
 
 Please find below the invoices corresponding to the completed payments:
 
@@ -352,23 +349,28 @@ Please find below the invoices corresponding to the completed payments:
 Should you require any clarification, we remain at your disposal.
 
 Kind regards,
-Finance Team
-"""
+Finance Team"""
+
+        st.subheader("✏️ Edit Email Template")
+        st.caption("You can edit everything below including the table HTML. The template will be sent as HTML.")
 
         template_text = st.text_area(
-            "✏️ Edit Email Template (plain text):",
+            "Full Template (HTML supported):",
             value=default_template_es if language == "Spanish" else default_template_en,
-            height=300
+            height=400,
+            key="template_editor"
         )
 
-        # Convert plain text → HTML
+        # Convert plain text line breaks to HTML <br> but preserve existing HTML tags
         def text_to_html(t):
-            lines = t.split("\n")
-            html = "<br>".join([line.strip() for line in lines if line.strip()])
-            return html
+            # Replace newlines with <br> but don't double-convert existing <br>
+            result = t.replace("\n", "<br>")
+            return result
 
         html_message = text_to_html(template_text)
 
+        st.markdown("---")
+        st.markdown("**👁️ Preview:**")
         st.markdown(html_message, unsafe_allow_html=True)
 
         # ========= GLPI SEND =========
