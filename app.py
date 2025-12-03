@@ -76,20 +76,40 @@ def glpi_set_apextras_category(token, ticket_id, solution_cat_id=10):
                         headers={"Session-Token": token, "App-Token": APP_TOKEN, "Content-Type": "application/json"}, timeout=30)
 
 def glpi_add_solution(token, ticket_id, html, solution_type_id=10):
-    body = {"input": {"itemtype": "Ticket", "items_id": int(ticket_id), "content": html, "solutiontypes_id": int(solution_type_id), "status": 5}}
-    return requests.post(f"{GLPI_URL}/ITILSolution", json=body,
-                         headers={"Session-Token": token, "App-Token": APP_TOKEN, "Content-Type": "application/json"}, timeout=30)
+    body = {
+        "input": {
+            "itemtype": "Ticket",
+            "items_id": int(ticket_id),
+            "content": html,
+            "solutiontypes_id": int(solution_type_id),
+            "status": 5
+        }
+    }
+    return requests.post(
+        f"{GLPI_URL}/ITILSolution",
+        json=body,
+        headers={"Session-Token": token, "App-Token": APP_TOKEN, "Content-Type": "application/json"},
+        timeout=30
+    )
 
 def glpi_add_followup(token, ticket_id, html):
     body = {"input": {"itemtype": "Ticket", "items_id": int(ticket_id), "content": html, "solutiontypes_id": 10}}
-    return requests.post(f"{GLPI_URL}/Ticket/{ticket_id}/ITILFollowup", json=body,
-                         headers={"Session-Token": token, "App-Token": APP_TOKEN, "Content-Type": "application/json"}, timeout=30)
+    return requests.post(
+        f"{GLPI_URL}/Ticket/{ticket_id}/ITILFollowup",
+        json=body,
+        headers={"Session-Token": token, "App-Token": APP_TOKEN, "Content-Type": "application/json"},
+        timeout=30
+    )
 
 def glpi_assign_userid(token, ticket_id, user_id):
     tid = int(str(ticket_id).strip())
     body = {"input": {"tickets_id": tid, "users_id": int(user_id), "type": 2, "use_notification": 1}}
-    return requests.post(f"{GLPI_URL}/Ticket/{tid}/Ticket_User", json=body,
-                         headers={"Session-Token": token, "App-Token": APP_TOKEN, "Content-Type": "application/json"}, timeout=30)
+    return requests.post(
+        f"{GLPI_URL}/Ticket/{tid}/Ticket_User",
+        json=body,
+        headers={"Session-Token": token, "App-Token": APP_TOKEN, "Content-Type": "application/json"},
+        timeout=30
+    )
 
 # ========== USER MAP ==========
 USER_MAP = {
@@ -118,10 +138,9 @@ if pay_file:
     export_data = {}
 
     for pay_code in selected_codes:
-        # Auto-detect correct column for payment document matching
         possible_cols = ["Payment Document Code", "Payment Document"]
         col_match = next((c for c in possible_cols if c in df.columns), None)
-        
+
         if col_match:
             subset = df[df[col_match].astype(str) == str(pay_code)].copy()
         else:
@@ -132,9 +151,9 @@ if pay_file:
 
         subset["Invoice Value"] = subset["Invoice Value"].apply(parse_amount)
         subset["Payment Value"] = subset["Payment Value"].apply(parse_amount)
+
         vendor_col = find_col(df, ["Supplier Name", "Vendor", "Supplier", "Vendor Name"])
         vendor = subset[vendor_col].iloc[0] if vendor_col else "Unknown Vendor"
-
 
         summary = subset[["Alt. Document", "Invoice Value"]].copy()
         cn_rows, unmatched_invoices = [], []
@@ -143,11 +162,14 @@ if pay_file:
             cn = pd.read_excel(cn_file)
             cn.columns = [c.strip() for c in cn.columns]
             cn = cn.loc[:, ~cn.columns.duplicated()]
+
             cn_alt_col = find_col(cn, ["Alt.Document", "Alt. Document"])
             cn_val_col = find_col(cn, ["Amount", "Debit", "Charge", "Cargo", "DEBE", "Invoice Value", "Invoice Value (€)"])
+
             if cn_alt_col and cn_val_col:
                 cn[cn_val_col] = cn[cn_val_col].apply(parse_amount)
                 used = set()
+
                 for _, row in subset.iterrows():
                     inv = str(row["Alt. Document"])
                     diff = round(row["Payment Value"] - row["Invoice Value"], 2)
@@ -168,17 +190,20 @@ if pay_file:
                         if i in used: continue
                         val = round(abs(r[cn_val_col]), 2)
                         if val == 0: continue
+
                         if round(val, 2) == round(abs(diff), 2):
                             cn_rows.append({"Alt. Document": f"{r[cn_alt_col]} (CN)", "Invoice Value": -val})
                             used.add(i)
                             match = True
                             break
+
                     if not match and abs(diff) > 0.01:
                         unmatched_invoices.append({"Alt. Document": f"{inv} (Adj. Diff)", "Invoice Value": diff})
 
         valid_cn_df = pd.DataFrame([r for r in cn_rows if r["Invoice Value"] != 0])
         unmatched_df = pd.DataFrame(unmatched_invoices)
         all_rows = pd.concat([summary, valid_cn_df, unmatched_df], ignore_index=True)
+
         total_val = subset["Payment Value"].sum()
         all_rows.loc[len(all_rows)] = ["TOTAL", total_val]
 
@@ -190,7 +215,9 @@ if pay_file:
         display_rows = all_rows.copy()
         display_rows["Invoice Value (€)"] = display_rows["Invoice Value"].apply(lambda v: f"€{v:,.2f}")
         display_df = display_rows[["Alt. Document", "Invoice Value (€)"]]
+
         html_table = display_df.to_html(index=False, border=0, justify="center", classes="table")
+
         combined_html += f"<h4>Payment Code: {pay_code} — Vendor: {vendor}</h4>{html_table}<br>"
         combined_vendor_names.append(vendor)
 
@@ -202,10 +229,12 @@ if pay_file:
 
         if debug_rows_all:
             st.subheader("🔍 Debug Breakdown — Invoice vs Payment Matching")
+
             debug_df = pd.DataFrame(debug_rows_all)
             debug_df["Invoice Value"] = debug_df["Invoice Value"].astype(float).round(2)
             debug_df["Payment Value"] = debug_df["Payment Value"].astype(float).round(2)
             debug_df["Difference"] = debug_df["Difference"].astype(float).round(2)
+
             debug_df = debug_df.sort_values(by=["Payment Code", "Vendor", "Alt. Document"]).reset_index(drop=True)
 
             st.dataframe(debug_df, use_container_width=True, hide_index=True)
@@ -220,6 +249,7 @@ if pay_file:
             wb = Workbook()
             ws = wb.active
             ws.title = "Payment Summary"
+
             ws.append(["The Remitator – Payment Summary"])
             ws.append([f"Payment Codes: {', '.join(selected_codes)}"])
             ws.append([f"Vendors: {', '.join(set(combined_vendor_names))}"])
@@ -234,6 +264,7 @@ if pay_file:
 
             for code in selected_codes:
                 if code not in export_data: continue
+
                 data = export_data[code]
                 vendor = data["vendor"]
                 df_block = data["rows"]
@@ -253,21 +284,24 @@ if pay_file:
                 row += 1
 
                 subtotal = 0.0
+
                 for _, r in df_block.iterrows():
                     doc = r["Alt. Document"]
                     amt = float(r["Invoice Value"])
                     subtotal += amt
+
                     ws.cell(row, 1).value = doc
                     ws.cell(row, 2).value = amt
                     ws.cell(row, 2).number_format = money
                     ws.cell(row, 2).alignment = Alignment(horizontal="right")
 
                 ws.cell(row, 1).value = "TOTAL"
-                ws.cell(row, 2).value = subtotal
+                ws.cell[row, 2].value = subtotal
                 ws.cell(row, 1).font = bold
                 ws.cell(row, 2).font = bold
                 ws.cell(row, 2).number_format = money
                 ws.cell(row, 2).fill = light_blue
+
                 row += 2
 
             for col in ws.columns:
@@ -294,28 +328,50 @@ if pay_file:
         category_id = c2.text_input("Category ID", value="400")
         assigned_email = c3.text_input("Assign To Email", placeholder="akeramaris@saniikos.com")
 
-        # ===== LANGUAGE SWITCH =====
-        if language == "Spanish":
-            html_message = f"""
-            <p><strong>Estimado proveedor,</strong></p>
-            <p>Por favor, encuentre a continuación las facturas que corresponden a los pagos realizados:</p>
-            {combined_html}
-            <p>Quedamos a su disposición para cualquier aclaración.</p>
-            <p>Saludos cordiales,<br><strong>Equipo Finance</strong></p>
-             <em>Adj. Diff</em> = Ajuste correspondiente a un <strong>prepago</strong> realizado anteriormente.
-            """
-        else:
-            html_message = f"""
-            <p><strong>Dear supplier,</strong></p>
-            <p>Please find below the invoices corresponding to the completed payments:</p>
-            {combined_html}
-            <p>Should you require any clarification, we remain at your disposal.</p>
-            <p>Kind regards,<br><strong>Finance Team</strong></p>
-            <em>Adj. Diff</em> = Adjustment corresponding to a previous <strong>prepayment</strong>.
-            """
+        # ========= TEMPLATE EDITOR (PLAIN TEXT) =========
+        default_template_es = f"""
+Estimado proveedor,
+
+Por favor, encontrad a continuación las facturas correspondientes a los pagos realizados:
+
+{combined_html}
+
+Quedamos a vuestra disposición para cualquier aclaración.
+
+Saludos cordiales,
+Equipo Finance
+"""
+
+        default_template_en = f"""
+Dear supplier,
+
+Please find below the invoices corresponding to the completed payments:
+
+{combined_html}
+
+Should you require any clarification, we remain at your disposal.
+
+Kind regards,
+Finance Team
+"""
+
+        template_text = st.text_area(
+            "✏️ Edit Email Template (plain text):",
+            value=default_template_es if language == "Spanish" else default_template_en,
+            height=300
+        )
+
+        # Convert plain text → HTML
+        def text_to_html(t):
+            lines = t.split("\n")
+            html = "<br>".join([line.strip() for line in lines if line.strip()])
+            return html
+
+        html_message = text_to_html(template_text)
 
         st.markdown(html_message, unsafe_allow_html=True)
 
+        # ========= GLPI SEND =========
         if st.button("Send to GLPI"):
             if not str(ticket_id).strip().isdigit():
                 st.error("Invalid or empty Ticket ID.")
@@ -338,7 +394,9 @@ if pay_file:
                 glpi_update_ticket(token, ticket_id, status=5, category_id=int(category_id))
                 glpi_set_apextras_category(token, ticket_id, solution_cat_id=10)
                 glpi_assign_userid(token, ticket_id, user_id)
+
                 resp_sol = glpi_add_solution(token, ticket_id, html_message, solution_type_id=10)
+
                 if resp_sol.status_code == 400 or "already solved" in resp_sol.text.lower():
                     st.warning("Ticket already solved — posting as comment.")
                     resp_sol = glpi_add_followup(token, ticket_id, html_message)
