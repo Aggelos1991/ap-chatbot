@@ -295,13 +295,13 @@ if pay_file:
                     ws.cell(row, 2).number_format = money
                     ws.cell(row, 2).alignment = Alignment(horizontal="right")
 
-              ws.cell(row, 1).value = "TOTAL"
-              ws.cell(row, 2).value = subtotal
-              ws.cell(row, 1).font = bold
-              ws.cell(row, 2).font = bold
-              ws.cell(row, 2).number_format = money
-              ws.cell(row, 2).fill = light_blue
-              row += 2
+                ws.cell(row, 1).value = "TOTAL"
+                ws.cell(row, 2).value = subtotal
+                ws.cell(row, 1).font = bold
+                ws.cell(row, 2).font = bold
+                ws.cell(row, 2).number_format = money
+                ws.cell(row, 2).fill = light_blue
+                row += 2
 
 
             for col in ws.columns:
