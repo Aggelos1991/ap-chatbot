@@ -218,8 +218,21 @@ if pay_file:
 
         html_table = display_df.to_html(index=False, border=0, justify="center", classes="table")
 
-        combined_html += f"<h4>Payment Code: {pay_code} — Vendor: {vendor}</h4>{html_table}<br>"
+        # Count actual invoices (excluding CN and Adj rows)
+        invoice_count = len(subset)
+
+        # Build detailed header for each payment block
+        table_header = f"""<b>Payment Code:</b> {pay_code}<br>
+<b>Vendor:</b> {vendor}<br>
+<b>Number of Invoices:</b> {invoice_count}<br>
+<b>Total Amount:</b> €{total_val:,.2f}<br><br>"""
+
+        combined_html += f"{table_header}{html_table}<br><hr><br>"
         combined_vendor_names.append(vendor)
+    
+    # Remove trailing separator
+    if combined_html.endswith("<br><hr><br>"):
+        combined_html = combined_html[:-12] + "<br><br>"
 
     tab1, tab2 = st.tabs(["Summary", "GLPI"])
 
@@ -329,12 +342,13 @@ if pay_file:
         assigned_email = c3.text_input("Assign To Email", placeholder="akeramaris@saniikos.com")
 
         # ========= FULLY EDITABLE TEMPLATE =========
+        today_date = datetime.now().strftime('%d/%m/%Y')
+        
         default_template_es = f"""Estimado proveedor,
 
-Por favor, encontrad a continuación las facturas correspondientes a los pagos realizados:
+Por favor, encontrad a continuación las facturas correspondientes a los pagos realizados a fecha {today_date}:
 
 {combined_html}
-
 Quedamos a vuestra disposición para cualquier aclaración.
 
 Saludos cordiales,
@@ -342,10 +356,9 @@ Equipo Finance"""
 
         default_template_en = f"""Dear supplier,
 
-Please find below the invoices corresponding to the completed payments:
+Please find below the invoices corresponding to the payments made on {today_date}:
 
 {combined_html}
-
 Should you require any clarification, we remain at your disposal.
 
 Kind regards,
