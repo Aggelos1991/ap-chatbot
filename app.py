@@ -218,10 +218,8 @@ if pay_file:
 
         html_table = display_df.to_html(index=False, border=0, justify="center", classes="table")
 
-        # Count actual invoices (excluding CN and Adj rows)
         invoice_count = len(subset)
 
-        # Build detailed header for each payment block
         table_header = f"""<b>Payment Code:</b> {pay_code}<br>
 <b>Vendor:</b> {vendor}<br>
 <b>Number of Invoices:</b> {invoice_count}<br>
@@ -229,8 +227,7 @@ if pay_file:
 
         combined_html += f"{table_header}{html_table}<br><hr><br>"
         combined_vendor_names.append(vendor)
-    
-    # Remove trailing separator
+
     if combined_html.endswith("<br><hr><br>"):
         combined_html = combined_html[:-12] + "<br><br>"
 
@@ -316,7 +313,6 @@ if pay_file:
                 ws.cell(row, 2).fill = light_blue
                 row += 2
 
-
             for col in ws.columns:
                 max_len = max(len(str(cell.value or "")) for cell in col)
                 ws.column_dimensions[col[0].column_letter].width = min(max_len + 2, 50)
@@ -341,28 +337,28 @@ if pay_file:
         category_id = c2.text_input("Category ID", value="400")
         assigned_email = c3.text_input("Assign To Email", placeholder="akeramaris@saniikos.com")
 
-        # ========= FULLY EDITABLE TEMPLATE =========
+        # ========= UPDATED TEMPLATES =========
         today_date = datetime.now().strftime('%d/%m/%Y')
-        
-        default_template_es = f"""Estimado proveedor,
 
-Por favor, encontrad a continuación las facturas correspondientes a los pagos realizados a fecha {today_date}:
-
-{combined_html}
-Quedamos a vuestra disposición para cualquier aclaración.
-
-Saludos cordiales,
-Equipo Finance"""
-
-        default_template_en = f"""Dear supplier,
-
-Please find below the invoices corresponding to the payments made on {today_date}:
+        default_template_es = f"""Estimado proveedor,<br><br>
+Por favor, encontrad a continuación la correlación entre los códigos de pago y las facturas liquidadas. A continuación incluimos el detalle completo de cada pago junto con la relación correspondiente de facturas:<br><br>
 
 {combined_html}
-Should you require any clarification, we remain at your disposal.
 
-Kind regards,
-Finance Team"""
+Quedamos a vuestra disposición para cualquier aclaración adicional.<br><br>
+Saludos cordiales,<br>
+Equipo Finance
+"""
+
+        default_template_en = f"""Dear supplier,<br><br>
+Please find below the correlation between the payment code(s) and the invoices settled. We have included the full breakdown for each payment together with the corresponding invoices:<br><br>
+
+{combined_html}
+
+Should you need any further clarification, we remain at your disposal.<br><br>
+Kind regards,<br>
+Finance Team
+"""
 
         st.subheader("✏️ Edit Email Template")
         st.caption("You can edit everything below including the table HTML. The template will be sent as HTML.")
@@ -374,11 +370,8 @@ Finance Team"""
             key="template_editor"
         )
 
-        # Convert plain text line breaks to HTML <br> but preserve existing HTML tags
         def text_to_html(t):
-            # Replace newlines with <br> but don't double-convert existing <br>
-            result = t.replace("\n", "<br>")
-            return result
+            return t.replace("\n", "<br>")
 
         html_message = text_to_html(template_text)
 
@@ -386,7 +379,6 @@ Finance Team"""
         st.markdown("**👁️ Preview:**")
         st.markdown(html_message, unsafe_allow_html=True)
 
-        # ========= GLPI SEND =========
         if st.button("Send to GLPI"):
             if not str(ticket_id).strip().isdigit():
                 st.error("Invalid or empty Ticket ID.")
