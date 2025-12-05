@@ -1,6 +1,6 @@
 # ==========================================================
-# THE REMITATOR — OLD FINAL HYBRID VERSION (FIXED)
-# OLD FINAL + ADVANCED DEBUG B (✓/✗) + CN GROUPING FIX
+# THE REMITATOR — OLD FINAL HYBRID VERSION
+# OLD FINAL + ADVANCED DEBUG B (✓/✗)
 # ==========================================================
 
 import os, re, requests
@@ -8,7 +8,7 @@ import pandas as pd
 import streamlit as st
 from io import BytesIO
 from openpyxl import Workbook
-from openpyxl.styles import Font
+from openpyxl.styles import Font, Alignment, PatternFill
 from datetime import datetime
 from dotenv import load_dotenv
 
@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 # UI
 # ----------------------------------------------------------
 st.set_page_config(page_title="The Remitator", layout="wide")
-st.title("💀 The Remitator — Old Final Hybrid (CN Fix)")
+st.title("💀 The Remitator — Old Final Hybrid")
 
 # ----------------------------------------------------------
 # ENV
@@ -33,7 +33,6 @@ def parse_amount(v):
     if pd.isna(v): return 0.0
     s = str(v).strip()
     s = re.sub(r"[^\d,.\-]", "", s)
-
     if s.count(",") == 1 and s.count(".") == 1:
         if s.find(",") > s.find("."):
             s = s.replace(".", "").replace(",", ".")
@@ -41,22 +40,18 @@ def parse_amount(v):
             s = s.replace(",", "")
     elif s.count(",") == 1:
         s = s.replace(",", ".")
-
     try:
         return float(s)
     except:
         return 0.0
 
-
 def find_col(df, names):
     for c in df.columns:
-        cc = c.strip().lower().replace(" ", "").replace(".", "")
+        clean = c.strip().lower().replace(" ", "").replace(".", "")
         for n in names:
-            nn = n.strip().lower().replace(" ", "").replace(".", "")
-            if nn in cc:
+            if n.replace(" ", "").replace(".", "").lower() in clean:
                 return c
     return None
-
 
 # ----------------------------------------------------------
 # GLPI BASIC FUNCTIONS
@@ -68,18 +63,15 @@ def glpi_login():
     )
     return r.json().get("session_token")
 
-
 def glpi_update_ticket(token, ticket_id, status=5, category_id=None):
     payload = {"input": {"status": int(status)}}
     if category_id:
         payload["input"]["itilcategories_id"] = int(category_id)
-
     return requests.put(
         f"{GLPI_URL}/Ticket/{ticket_id}",
         json=payload,
         headers={"Session-Token": token, "App-Token": APP_TOKEN}
     )
-
 
 def glpi_add_solution(token, ticket_id, html):
     payload = {
@@ -96,7 +88,6 @@ def glpi_add_solution(token, ticket_id, html):
         json=payload,
         headers={"Session-Token": token, "App-Token": APP_TOKEN}
     )
-
 
 def glpi_add_followup(token, ticket_id, html):
     payload = {
@@ -126,10 +117,10 @@ USER_MAP = {
 # MAIN INPUTS
 # ----------------------------------------------------------
 pay_file = st.file_uploader("Upload Payment Excel", type=["xlsx"])
-cn_file  = st.file_uploader("Upload Credit Notes (optional)", type=["xlsx"])
+cn_file = st.file_uploader("Upload Credit Notes (optional)", type=["xlsx"])
 
 if not pay_file:
-    st.info("Upload Payment Excel to begin.")
+    st.info("Upload Payment Excel to start.")
     st.stop()
 
 df = pd.read_excel(pay_file)
@@ -137,24 +128,25 @@ df.columns = [c.strip() for c in df.columns]
 df = df.loc[:, ~df.columns.duplicated()]
 
 pay_input = st.text_input("Enter Payment Document Codes (comma separated):")
-if not pay_input.strip(): st.stop()
+if not pay_input.strip():
+    st.stop()
 
-selected_codes = [c.strip() for c in pay_input.split(",") if c.strip()]
-if not selected_codes: st.stop()
+selected_codes = [x.strip() for x in pay_input.split(",") if x.strip()]
+if not selected_codes:
+    st.stop()
 
 combined_html = ""
 combined_vendor_names = []
 export_data = {}
-debug_rows_all = []  # for ADVANCED DEBUG B
+debug_rows_all = []   # <--- FOR ADVANCED DEBUG B
 
 # ----------------------------------------------------------
 # PROCESS EACH PAYMENT CODE
 # ----------------------------------------------------------
 for pay_code in selected_codes:
-
-    col = find_col(df, ["paymentdocumentcode", "paymentdocument"])
+    col = find_col(df, ["PaymentDocumentCode", "PaymentDocument"])
     if not col:
-        st.error("Payment Document column not found.")
+        st.error("Cannot find Payment Document Code column.")
         st.stop()
 
     subset = df[df[col].astype(str) == str(pay_code)]
@@ -164,109 +156,92 @@ for pay_code in selected_codes:
     subset["Invoice Value"] = subset["Invoice Value"].apply(parse_amount)
     subset["Payment Value"] = subset["Payment Value"].apply(parse_amount)
 
-    vendor_col = find_col(df, ["vendor", "suppliername", "supplier"])
+    vendor_col = find_col(df, ["Vendor", "SupplierName", "Supplier"])
     vendor = subset[vendor_col].iloc[0] if vendor_col else "Unknown Vendor"
+
     combined_vendor_names.append(vendor)
 
-    summary_df = subset[["Alt. Document", "Invoice Value"]].copy()
+    summary = subset[["Alt. Document", "Invoice Value"]].copy()
 
     cn_rows = []
-    unmatched_rows = []
+    unmatched = []
 
     # ------------------------------------------------------
-    # CN GROUPING FIX — only last correction counts
+    # CREDIT NOTES MATCHING
     # ------------------------------------------------------
-    grouped_cn = None
-    cn_alt = None
-    cn_val_col = None
-
     if cn_file:
         cn = pd.read_excel(cn_file)
         cn.columns = [c.strip() for c in cn.columns]
         cn = cn.loc[:, ~cn.columns.duplicated()]
 
-        cn_alt = find_col(cn, ["altdocument", "alt.document"])
-        cn_val_col = find_col(cn, ["amount", "invoicevalue", "debe", "cargo"])
+        cn_alt = find_col(cn, ["AltDocument", "Alt.Document"])
+        cn_val = find_col(cn, ["Amount", "InvoiceValue", "DEBE", "Cargo"])
 
-        if cn_alt and cn_val_col:
-            cn[cn_val_col] = cn[cn_val_col].apply(parse_amount)
+        if cn_alt and cn_val:
+            cn[cn_val] = cn[cn_val].apply(parse_amount)
+            used = set()
 
-            # 🟩 CRITICAL FIX — keep ONLY last correction per Alt.Document
-            grouped_cn = (
-                cn
-                .sort_values(by=cn.index)
-                .groupby(cn_alt, as_index=False)
-                .last()
-            )
+            for _, row in subset.iterrows():
+                inv = str(row["Alt. Document"])
+                inv_val = row["Invoice Value"]
+                pay_val = row["Payment Value"]
+                diff = round(pay_val - inv_val, 2)
 
-    # ------------------------------------------------------
-    # PROCESS INVOICES (NO GROUPING HERE)
-    # ------------------------------------------------------
-    for _, row in subset.iterrows():
-        inv = str(row["Alt. Document"])
-        inv_val = row["Invoice Value"]
-        pay_val = row["Payment Value"]
-        diff = round(pay_val - inv_val, 2)
+                # Debug storage
+                debug_entry = {
+                    "Payment Code": pay_code,
+                    "Vendor": vendor,
+                    "Alt. Document": inv,
+                    "Invoice Value": inv_val,
+                    "Payment Value": pay_val,
+                    "Difference": diff,
+                    "Matched": "✓" if abs(diff) < 0.01 else "✗"
+                }
 
-        debug_entry = {
-            "Payment Code": pay_code,
-            "Vendor": vendor,
-            "Alt. Document": inv,
-            "Invoice Value": inv_val,
-            "Payment Value": pay_val,
-            "Difference": diff,
-            "Matched": "✓" if abs(diff) < 0.01 else "✗"
-        }
+                # Try match CN
+                matched = False
+                for i, r in cn.iterrows():
+                    if i in used: continue
+                    if round(abs(r[cn_val]),2) == round(abs(diff),2):
+                        cn_rows.append({
+                            "Alt. Document": f"{r[cn_alt]} (CN)",
+                            "Invoice Value": -abs(r[cn_val])
+                        })
+                        used.add(i)
+                        matched = True
+                        break
 
-        matched = False
-
-        # --------------------------------------------------
-        # CN MATCHING (using ONLY grouped CN file)
-        # --------------------------------------------------
-        if grouped_cn is not None:
-            for _, cn_row in grouped_cn.iterrows():
-
-                cn_val = abs(cn_row[cn_val_col])
-                if round(cn_val,2) == round(abs(diff),2):
-
-                    cn_rows.append({
-                        "Alt. Document": f"{cn_row[cn_alt]} (CN)",
-                        "Invoice Value": -cn_val
+                if not matched and abs(diff) > 0.01:
+                    unmatched.append({
+                        "Alt. Document": f"{inv} (Adj. Diff)",
+                        "Invoice Value": diff
                     })
-                    matched = True
-                    break
 
-        if not matched and abs(diff) > 0.01:
-            unmatched_rows.append({
-                "Alt. Document": f"{inv} (Adj. Diff)",
-                "Invoice Value": diff
-            })
-
-        debug_rows_all.append(debug_entry)
+                debug_rows_all.append(debug_entry)
 
     # ------------------------------------------------------
-    # BUILD FINAL TABLE BLOCK
+    # FINAL ROW TABLE
     # ------------------------------------------------------
-    final_df = pd.concat(
-        [summary_df, pd.DataFrame(cn_rows), pd.DataFrame(unmatched_rows)],
-        ignore_index=True
-    )
+    full = pd.concat([
+        summary,
+        pd.DataFrame(cn_rows),
+        pd.DataFrame(unmatched)
+    ], ignore_index=True)
 
-    total_value = final_df["Invoice Value"].sum()
-    final_df.loc[len(final_df)] = ["TOTAL", total_value]
+    total_value = full["Invoice Value"].sum()
+    full.loc[len(full)] = ["TOTAL", total_value]
 
-    export_data[pay_code] = {"vendor": vendor, "rows": final_df.copy()}
+    export_data[pay_code] = {"vendor": vendor, "rows": full.copy()}
 
-    html_df = final_df.copy()
-    html_df["Invoice Value (€)"] = html_df["Invoice Value"].apply(lambda v: f"€{v:,.2f}")
-
-    html_df = html_df[["Alt. Document", "Invoice Value (€)"]]
+    display_df = full.copy()
+    display_df["Invoice Value (€)"] = display_df["Invoice Value"].apply(lambda v: f"€{v:,.2f}")
+    display_df = display_df[["Alt. Document", "Invoice Value (€)"]]
 
     combined_html += f"""
 <b>Payment Code:</b> {pay_code}<br>
 <b>Vendor:</b> {vendor}<br>
 <b>Total Amount:</b> €{total_value:,.2f}<br><br>
-{html_df.to_html(index=False, border=0)}
+{display_df.to_html(index=False, border=0)}
 <br><hr><br>
 """
 
@@ -286,12 +261,12 @@ with tab1:
     st.markdown(combined_html, unsafe_allow_html=True)
 
 # ----------------------------------------------------------
-# TAB 2 — ADVANCED DEBUG (✓ / ✗)
+# TAB 2 — ADVANCED DEBUG (VERSION B)
 # ----------------------------------------------------------
 with tab2:
-    st.subheader("Advanced Debug Breakdown (Unicode ✓ / ✗)")
+    st.subheader("Advanced Debug Breakdown (Unicode Icons ✓ / ✗)")
     dbg_df = pd.DataFrame(debug_rows_all)
-    dbg_df = dbg_df.sort_values(by=["Payment Code", "Vendor", "Alt. Document"])
+    dbg_df = dbg_df.sort_values(by=["Payment Code", "Vendor", "Alt. Document"]).reset_index(drop=True)
     st.dataframe(dbg_df, use_container_width=True)
 
     st.download_button(
@@ -301,33 +276,35 @@ with tab2:
         mime="text/csv"
     )
 
+
 # ----------------------------------------------------------
 # TAB 3 — GLPI
 # ----------------------------------------------------------
 with tab3:
     language = st.radio("Language", ["Spanish", "English"], horizontal=True)
+
     ticket_id = st.text_input("Ticket ID")
     category_id = st.text_input("Category ID")
-    email_assign = st.text_input("Assign To Email")
+    assigned_email = st.text_input("Assign Email (optional)")
 
     if language == "Spanish":
         intro = "Estimado proveedor,<br><br>Adjuntamos las facturas correspondientes a los pagos realizados:<br><br>"
         outro = "<br>Quedamos a su disposición para cualquier aclaración.<br><br>Saludos,<br>Finance"
     else:
-        intro = "Dear supplier,<br><br>Please find below the invoices related to the executed payments:<br><br>"
-        outro = "<br>Should you require any clarification, we remain available.<br><br>Finance Team"
+        intro = "Dear supplier,<br><br>Please find below the invoices corresponding to the executed payments:<br><br>"
+        outro = "<br>Should you need any clarification, we remain available.<br><br>Regards,<br>Finance Team"
 
     html_message = intro + combined_html + outro
     st.markdown(html_message, unsafe_allow_html=True)
 
     if st.button("Send to GLPI"):
         if not ticket_id.isdigit():
-            st.error("Invalid Ticket ID.")
+            st.error("Invalid Ticket ID")
             st.stop()
 
         token = glpi_login()
         if not token:
-            st.error("GLPI Login Failed")
+            st.error("GLPI login error.")
             st.stop()
 
         glpi_update_ticket(token, ticket_id, 5, category_id)
@@ -336,6 +313,6 @@ with tab3:
 
         if resp.status_code == 400 or "already solved" in resp.text.lower():
             glpi_add_followup(token, ticket_id, html_message)
-            st.warning("Ticket was solved — posted as follow-up.")
+            st.warning("Ticket solved already — posted as follow-up.")
         else:
             st.success("Solution added.")
