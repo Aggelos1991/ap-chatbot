@@ -1,5 +1,5 @@
 # ==========================================================
-# The Remitator — FINAL FINAL (Old Debug Logic + Visual Icons + AP Extras Category ID=10)
+# The Remitator — OLD VERSION (Pre-built templates, not editable)
 # ==========================================================
 import os, re, requests
 import pandas as pd
@@ -328,7 +328,7 @@ if pay_file:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
-    # ========== TAB 2 (GLPI) ==========
+    # ========== TAB 2 (GLPI) — OLD VERSION WITH PRE-BUILT TEMPLATES ==========
     with tab2:
         language = st.radio("Language", ["Spanish", "English"], horizontal=True)
 
@@ -337,45 +337,18 @@ if pay_file:
         category_id = c2.text_input("Category ID", value="400")
         assigned_email = c3.text_input("Assign To Email", placeholder="akeramaris@saniikos.com")
 
-        # ========= UPDATED TEMPLATES =========
-        today_date = datetime.now().strftime('%d/%m/%Y')
+        # ========= PRE-BUILT TEMPLATES (NOT EDITABLE) =========
+        st.subheader("📧 Email Preview")
 
-        default_template_es = f"""Estimado proveedor,<br><br>
-Por favor, encontrad a continuación la correlación entre los códigos de pago y las facturas liquidadas. A continuación incluimos el detalle completo de cada pago junto con la relación correspondiente de facturas:<br><br>
+        if language == "Spanish":
+            intro = "Estimado proveedor,<br><br>Por favor, encontrad a continuación las facturas correspondientes a los pagos realizados:<br><br>"
+            outro = "<br>Quedamos a vuestra disposición para cualquier aclaración.<br><br>Saludos cordiales,<br>Equipo Finance"
+        else:
+            intro = "Dear supplier,<br><br>Please find below the invoices corresponding to the completed payments:<br><br>"
+            outro = "<br>Should you require any clarification, we remain at your disposal.<br><br>Kind regards,<br>Finance Team"
 
-{combined_html}
+        html_message = f"{intro}{combined_html}{outro}"
 
-Quedamos a vuestra disposición para cualquier aclaración adicional.<br><br>
-Saludos cordiales,<br>
-Equipo Finance
-"""
-
-        default_template_en = f"""Dear supplier,<br><br>
-Please find below the correlation between the payment code(s) and the invoices settled. We have included the full breakdown for each payment together with the corresponding invoices:<br><br>
-
-{combined_html}
-
-Should you need any further clarification, we remain at your disposal.<br><br>
-Kind regards,<br>
-Finance Team
-"""
-
-        st.subheader("✏️ Edit Email Template")
-        st.caption("You can edit everything below including the table HTML. The template will be sent as HTML.")
-
-        template_text = st.text_area(
-            "Full Template (HTML supported):",
-            value=default_template_es if language == "Spanish" else default_template_en,
-            height=400,
-            key="template_editor"
-        )
-
-        def text_to_html(t):
-            return t.replace("\n", "<br>")
-
-        html_message = text_to_html(template_text)
-
-        st.markdown("---")
         st.markdown("**👁️ Preview:**")
         st.markdown(html_message, unsafe_allow_html=True)
 
