@@ -169,55 +169,76 @@ for pay_code in selected_codes:
     # ------------------------------------------------------
     # CREDIT NOTES MATCHING
     # ------------------------------------------------------
-    if cn_file:
-        cn = pd.read_excel(cn_file)
-        cn.columns = [c.strip() for c in cn.columns]
-        cn = cn.loc[:, ~cn.columns.duplicated()]
+    # ------------------------------------------------------
+# CREDIT NOTES MATCHING — FIXED (NO ZERO CNs, NO ZERO DIFFS)
+# ------------------------------------------------------
+if cn_file:
+    cn = pd.read_excel(cn_file)
+    cn.columns = [c.strip() for c in cn.columns]
+    cn = cn.loc[:, ~cn.columns.duplicated()]
 
-        cn_alt = find_col(cn, ["AltDocument", "Alt.Document"])
-        cn_val = find_col(cn, ["Amount", "InvoiceValue", "DEBE", "Cargo"])
+    cn_alt = find_col(cn, ["AltDocument", "Alt.Document"])
+    cn_val = find_col(cn, ["Amount", "InvoiceValue", "DEBE", "Cargo"])
 
-        if cn_alt and cn_val:
-            cn[cn_val] = cn[cn_val].apply(parse_amount)
-            used = set()
+    if cn_alt and cn_val:
+        cn[cn_val] = cn[cn_val].apply(parse_amount)
+        used = set()
 
-            for _, row in subset.iterrows():
-                inv = str(row["Alt. Document"])
-                inv_val = row["Invoice Value"]
-                pay_val = row["Payment Value"]
-                diff = round(pay_val - inv_val, 2)
+        for _, row in subset.iterrows():
+            inv = str(row["Alt. Document"])
+            inv_val = row["Invoice Value"]
+            pay_val = row["Payment Value"]
+            diff = round(pay_val - inv_val, 2)
 
-                # Debug storage
-                debug_entry = {
-                    "Payment Code": pay_code,
-                    "Vendor": vendor,
-                    "Alt. Document": inv,
-                    "Invoice Value": inv_val,
-                    "Payment Value": pay_val,
-                    "Difference": diff,
-                    "Matched": "✓" if abs(diff) < 0.01 else "✗"
-                }
+            # Debug log entry
+            debug_entry = {
+                "Payment Code": pay_code,
+                "Vendor": vendor,
+                "Alt. Document": inv,
+                "Invoice Value": inv_val,
+                "Payment Value": pay_val,
+                "Difference": diff
+            }
 
-                # Try match CN
-                matched = False
-                for i, r in cn.iterrows():
-                    if i in used: continue
-                    if round(abs(r[cn_val]),2) == round(abs(diff),2):
-                        cn_rows.append({
-                            "Alt. Document": f"{r[cn_alt]} (CN)",
-                            "Invoice Value": -abs(r[cn_val])
-                        })
-                        used.add(i)
-                        matched = True
-                        break
-
-                if not matched and abs(diff) > 0.01:
-                    unmatched.append({
-                        "Alt. Document": f"{inv} (Adj. Diff)",
-                        "Invoice Value": diff
-                    })
-
+            # ----------------------------------------------------------
+            # FIX 1: If difference = 0 → fully matched, skip everything.
+            # NO CN, NO ADJ DIFF, NO ZERO ROWS.
+            # ----------------------------------------------------------
+            if abs(diff) < 0.01:
+                debug_entry["Matched"] = "✓"
                 debug_rows_all.append(debug_entry)
+                continue
+
+            # ----------------------------------------------------------
+            # CN MATCHING ONLY IF DIFF ≠ 0
+            # ----------------------------------------------------------
+            matched = False
+            for i, r in cn.iterrows():
+                if i in used:
+                    continue
+
+                if round(abs(r[cn_val]), 2) == round(abs(diff), 2):
+                    cn_rows.append({
+                        "Alt. Document": f"{r[cn_alt]} (CN)",
+                        "Invoice Value": -abs(r[cn_val])
+                    })
+                    used.add(i)
+                    matched = True
+                    debug_entry["Matched"] = "✓ CN"
+                    break
+
+            # ----------------------------------------------------------
+            # If no CN matches → create Adj. Diff (only for real differences)
+            # ----------------------------------------------------------
+            if not matched:
+                unmatched.append({
+                    "Alt. Document": f"{inv} (Adj. Diff)",
+                    "Invoice Value": diff
+                })
+                debug_entry["Matched"] = "✗ No CN"
+
+            debug_rows_all.append(debug_entry)
+
 
     # ------------------------------------------------------
     # FINAL ROW TABLE
