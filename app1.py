@@ -116,63 +116,59 @@ def extract_with_gpt(lines):
         text_block = "\n".join(batch)
 
         prompt = f"""
-You are a financial data extractor specialized in Spanish and Greek vendor statements.
+You are a financial data extractor for Spanish "Libro Mayor" (General Ledger) statements.
 
-Extract from each line:
-- Fecha (Date)
-- Referencia (Reference/Document number from "Referencia" column - THIS IS KEY)
-- Concepto / Descripción (description)
-- DEBE = Debit column (put in "Debit" field)
-- HABER = Credit column (put in "Credit" field)
+THE EXACT COLUMN ORDER IN THIS DOCUMENT IS:
+Fecha | Asiento | Documento | Libro | Descripción | Referencia | F. valor | Debe | Haber | Saldo
 
-⚠️ CRITICAL RULES:
-1. DEBE goes to Debit field. HABER goes to Credit field. DO NOT MIX THEM!
-2. Look specifically for the "Referencia" column/field for document numbers.
-3. If a line has NO Referencia value, leave "Referencia" as empty string "".
-4. COMPLETELY IGNORE 'Saldo' column - it is NOT Credit and NOT Debit!
-5. SALDO is the running balance - NEVER extract it as Credit or Debit.
-6. Only extract ACTUAL DEBE (Debit) and HABER (Credit) values.
-7. If a line only has a Saldo value and no real DEBE/HABER, leave both Debit and Credit EMPTY.
-8. Ignore lines with 'Asiento', 'IVA', or 'Total Saldo'.
-9. Output strictly JSON array only, no explanations.
+⚠️ CRITICAL - COLUMN POSITIONS:
+- Column 8 = DEBE (Debit) - extract to "Debit" field
+- Column 9 = HABER (Credit) - extract to "Credit" field  
+- Column 10 = SALDO (Balance) - IGNORE THIS COMPLETELY!
 
-⚠️ COLUMN MAPPING - VERY IMPORTANT:
-- DEBE → put in "Debit" (these are invoices)
-- HABER → put in "Credit" (these are payments or credit notes)
-- SALDO → IGNORE completely (this is just running balance)
+The numbers appear in this order: DEBE | HABER | SALDO
+- If a row has ONE number before Saldo → determine if it's in Debe or Haber position
+- If a row has TWO numbers before Saldo → first is Debe, second is Haber
+- The LAST number on each line is almost always SALDO - DO NOT USE IT!
 
-⚠️ SALDO WARNING:
-- Typical column order: DEBE | HABER | SALDO
-- The LAST number on a line is usually SALDO (running balance) - DO NOT USE IT!
-- Only use numbers that are clearly in DEBE or HABER columns.
+EXTRACT THESE FIELDS:
+- Referencia: The reference number (column 6) - may be empty!
+- Descripción: The description text
+- F. valor: The value date (column 7)
+- Debe: Amount from DEBE column ONLY
+- Haber: Amount from HABER column ONLY
 
-OUTPUT FORMAT:
+⚠️ RULES:
+1. If Referencia column is EMPTY, leave "Referencia" as ""
+2. DEBE values → put in "Debit" field
+3. HABER values → put in "Credit" field
+4. NEVER use SALDO values - they are just running totals!
+5. If only one amount exists and no clear column indicator, check the SALDO: if the Saldo INCREASES, the value is DEBE; if Saldo DECREASES, the value is HABER
+6. Skip header rows and total rows
+
+OUTPUT FORMAT (strict JSON array):
 [
   {{
-    "Referencia": "string (from Referencia column, empty if none)",
-    "Concepto": "description text",
-    "Date": "dd/mm/yy or yyyy-mm-dd",
-    "Debit": "DEBE amount ONLY (not Saldo!), empty if none",
-    "Credit": "HABER amount ONLY (not Saldo!), empty if none"
+    "Referencia": "reference number or empty string",
+    "Descripcion": "description text",
+    "Date": "dd/mm/yyyy",
+    "Debit": "DEBE amount or empty",
+    "Credit": "HABER amount or empty"
   }}
 ]
 
-Examples:
-Line with DEBE (Invoice): "15/03/25 REF-123 Factura servicios 1.234,56 5.000,00"
-(DEBE=1.234,56, SALDO=5.000,00 - ignore Saldo!)
-→ {{"Referencia": "REF-123", "Concepto": "Factura servicios", "Date": "15/03/25", "Debit": "1.234,56", "Credit": ""}}
+EXAMPLES FROM THIS DOCUMENT:
+Line: "01/01/2023 VEN / 6887 183 /383005976 V 230101183005951 FP 010123 F 230101183005951 01/01/2023 6.171,48 7.488,96"
+→ Referencia=230101183005951, Debe=6.171,48, Saldo=7.488,96 (ignore saldo)
+→ {{"Referencia": "230101183005951", "Descripcion": "230101183005951 FP 010123 F", "Date": "01/01/2023", "Debit": "6.171,48", "Credit": ""}}
 
-Line with HABER (Payment, no ref): "20/03/25 Transferencia bancaria 500,00 4.500,00"
-(HABER=500,00, SALDO=4.500,00 - ignore Saldo!)
-→ {{"Referencia": "", "Concepto": "Transferencia bancaria", "Date": "20/03/25", "Debit": "", "Credit": "500,00"}}
+Line: "02/01/2023 GRL / 16811 GRL /0 V 221207183000015 IR VARIOS 2 02/01/2023 840,95 6.648,01"
+→ Referencia=EMPTY (no ref number), Haber=840,95, Saldo=6.648,01 (ignore saldo)
+→ {{"Referencia": "", "Descripcion": "221207183000015 IR VARIOS 2", "Date": "02/01/2023", "Debit": "", "Credit": "840,95"}}
 
-Line with HABER + Referencia (Credit Note): "22/03/25 NC-456 Nota de crédito 200,00 4.300,00"
-(HABER=200,00, SALDO=4.300,00 - ignore Saldo!)
-→ {{"Referencia": "NC-456", "Concepto": "Nota de crédito", "Date": "22/03/25", "Debit": "", "Credit": "200,00"}}
-
-Line with only SALDO (skip): "25/03/25 Ajuste contable 4.500,00"
-(Only SALDO shown, no DEBE/HABER - leave both empty!)
-→ {{"Referencia": "", "Concepto": "Ajuste contable", "Date": "25/03/25", "Debit": "", "Credit": ""}}
+Line: "26/01/2023 VEN / 22339 938 /338000858 V 2294126 230126938000024 FP 230126938000024 26/01/2023 580,00 -580,00"
+→ Referencia=230126938000024, Haber=580,00 (because Saldo went negative/decreased)
+→ {{"Referencia": "230126938000024", "Descripcion": "2294126 230126938000024 FP", "Date": "26/01/2023", "Debit": "", "Credit": "580,00"}}
 
 Text to analyze:
 {text_block}
@@ -203,7 +199,7 @@ Text to analyze:
             referencia = str(row.get("Referencia", "")).strip()
             debit_val = normalize_number(row.get("Debit", ""))
             credit_val = normalize_number(row.get("Credit", ""))
-            concepto = str(row.get("Concepto", "")).strip()
+            descripcion = str(row.get("Descripcion", "") or row.get("Concepto", "")).strip()
             date_val = str(row.get("Date", "")).strip()
 
             # Skip if no financial values
@@ -211,20 +207,16 @@ Text to analyze:
                 continue
 
             # Skip unwanted lines
-            if re.search(r"(asiento|saldo|iva|total\s+saldo)", referencia, re.IGNORECASE):
-                continue
-            if re.search(r"codigo\s*ic\s*n", referencia, re.IGNORECASE):
+            if re.search(r"(total\s+saldo|total\s+debe|total\s+haber)", descripcion, re.IGNORECASE):
                 continue
 
-            # === SIMPLIFIED CLASSIFICATION RULES ===
-            # DEBE = Debit column (Invoices)
-            # HABER = Credit column (Payments or Credit Notes)
-            # Rule 1: No Referencia → Payment
-            # Rule 2: Referencia + DEBE (Debit) → Invoice
-            # Rule 3: Referencia + HABER (Credit) → Credit Note
+            # === CLASSIFICATION RULES ===
+            # Rule 1: No Referencia → Payment (value in Credit/Haber)
+            # Rule 2: Referencia + Debit (DEBE) → Invoice
+            # Rule 3: Referencia + Credit (HABER) → Credit Note
 
             if referencia == "":
-                # No referencia = Payment (should have Credit/HABER value)
+                # No referencia = Payment
                 reason = "Payment"
             elif debit_val and not credit_val:
                 # Has referencia + Debit (DEBE) = Invoice
@@ -233,19 +225,17 @@ Text to analyze:
                 # Has referencia + Credit (HABER) = Credit Note
                 reason = "Credit Note"
             elif debit_val and credit_val:
-                # Both values present - keep both, classify by the larger
+                # Both values present - classify by which is larger
                 if float(debit_val) >= float(credit_val):
                     reason = "Invoice"
                 else:
                     reason = "Credit Note"
             else:
                 continue
-            
-            # DON'T move values between columns - DEBE stays Debit, HABER stays Credit
 
             all_records.append({
                 "Referencia": referencia,
-                "Concepto": concepto,
+                "Descripcion": descripcion,
                 "Date": date_val,
                 "Reason": reason,
                 "Debit": debit_val,
@@ -283,7 +273,7 @@ if uploaded_pdf:
         if data:
             df = pd.DataFrame(data)
             st.success(f"✅ Extraction complete — {len(df)} valid records found!")
-            st.dataframe(df[["Referencia", "Date", "Concepto", "Reason", "Debit", "Credit"]], use_container_width=True, hide_index=True)
+            st.dataframe(df[["Referencia", "Date", "Descripcion", "Reason", "Debit", "Credit"]], use_container_width=True, hide_index=True)
 
             try:
                 total_debit = df["Debit"].apply(pd.to_numeric, errors="coerce").sum()
