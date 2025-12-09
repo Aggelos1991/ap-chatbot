@@ -4,8 +4,6 @@ import pandas as pd
 import streamlit as st
 from io import BytesIO
 from openai import OpenAI
-from pdf2image import convert_from_bytes
-import pytesseract
 
 # ==========================================================
 # CONFIGURATION
@@ -50,47 +48,29 @@ def normalize_number(value):
         return ""
 
 # ==========================================================
-# PDF + OCR EXTRACTION
+# PDF EXTRACTION (NO OCR)
 # ==========================================================
 def extract_raw_lines(uploaded_pdf):
     all_lines = []
     pdf_bytes = uploaded_pdf.read()
     uploaded_pdf.seek(0)
 
-    ocr_pages = []
-
     with pdfplumber.open(BytesIO(pdf_bytes)) as pdf:
-        for i, page in enumerate(pdf.pages, start=1):
+        for page in pdf.pages:
 
             text = page.extract_text()
-            if text and len(text.strip()) > 10:
-                for line in text.split("\n"):
-                    clean_line = " ".join(line.split())
+            if not text:
+                continue
 
-                    if not clean_line.strip():
-                        continue
-                    if re.search(r"\bsaldo\b", clean_line, re.IGNORECASE):
-                        continue
+            for line in text.split("\n"):
+                clean_line = " ".join(line.split())
 
-                    all_lines.append(clean_line)
+                if not clean_line.strip():
+                    continue
+                if re.search(r"\bsaldo\b", clean_line, re.IGNORECASE):
+                    continue
 
-            else:
-                ocr_pages.append(i)
-                try:
-                    images = convert_from_bytes(pdf_bytes, dpi=250, first_page=i, last_page=i)
-                    ocr_text = pytesseract.image_to_string(images[0], lang="spa+eng+ell")
-                    for line in ocr_text.split("\n"):
-                        clean_line = " ".join(line.split())
-                        if not clean_line.strip():
-                            continue
-                        if re.search(r"\bsaldo\b", clean_line, re.IGNORECASE):
-                            continue
-                        all_lines.append(clean_line)
-                except Exception as e:
-                    st.warning(f"OCR skipped for page {i}: {e}")
-
-    if ocr_pages:
-        st.info(f"OCR applied on pages: {', '.join(map(str, ocr_pages))}")
+                all_lines.append(clean_line)
 
     return all_lines
 
@@ -118,33 +98,22 @@ def extract_with_gpt(lines):
         prompt = f"""
 Extract structured records from Spanish/Greek vendor statements.
 
-IMPORTANT ABSOLUTE RULES:
-- Document number = ONLY the value from the field "Referencia".
-- Do NOT extract invoice numbers from description, Concepto or anywhere else.
-- If Referencia is empty → reason = Payment.
-- If Referencia has DEBE → Invoice.
-- If Referencia has HABER → Credit Note.
+IMPORTANT RULES:
+- Document number = ONLY "Referencia".
+- Do NOT extract invoice numbers from description.
+- If Referencia empty → Payment.
+- If Referencia has DEBE > 0 → Invoice.
+- If Referencia has HABER > 0 → Credit Note.
 
 Extract:
 - Fecha
 - Referencia
 - Asiento
-- Concepto / Descripción
+- Concepto
 - DEBE
 - HABER
 
-Output JSON array:
-[
-  {{
-    "Fecha": "",
-    "Referencia": "",
-    "Asiento": "",
-    "Concepto": "",
-    "Debit": "",
-    "Credit": ""
-  }}
-]
-
+Output JSON array.
 Text:
 {text_block}
 """
@@ -154,8 +123,9 @@ Text:
             try:
                 response = client.chat.completions.create(
                     model=model,
-                    messages=[{"role": "user", "content": prompt}],
+                    messages=[{"role": "user", "content": prompt}]
                 )
+
                 content = response.choices[0].message.content.strip()
                 data = parse_gpt_response(content, i // BATCH_SIZE + 1)
                 if data:
@@ -167,27 +137,19 @@ Text:
             continue
 
         # =====================================================
-        # FINAL CLASSIFICATION — EXACTLY YOUR RULES
+        # FINAL CLASSIFICATION — YOUR RULES
         # =====================================================
         for row in data:
             referencia = str(row.get("Referencia", "")).strip()
-
             debit_val = normalize_number(row.get("Debit", ""))
             credit_val = normalize_number(row.get("Credit", ""))
 
-            # 1️⃣ Referencia empty → Payment
             if referencia == "":
                 reason = "Payment"
-
-            # 2️⃣ Referencia exists + DEBE > 0 → Invoice
             elif debit_val not in ("", 0) and float(debit_val) > 0:
                 reason = "Invoice"
-
-            # 3️⃣ Referencia exists + HABER > 0 → Credit Note
             elif credit_val not in ("", 0) and float(credit_val) > 0:
                 reason = "Credit Note"
-
-            # 4️⃣ Fallback
             else:
                 reason = "Payment"
 
@@ -219,7 +181,7 @@ def to_excel_bytes(records):
 uploaded_pdf = st.file_uploader("📂 Upload Vendor Statement (PDF)", type=["pdf"])
 
 if uploaded_pdf:
-    with st.spinner("Extracting text (OCR fallback)…"):
+    with st.spinner("Extracting text… (NO OCR)"):
         lines = extract_raw_lines(uploaded_pdf)
 
     st.success(f"Found {len(lines)} lines.")
