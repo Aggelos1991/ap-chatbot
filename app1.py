@@ -26,8 +26,8 @@ if not api_key:
 
 client = OpenAI(api_key=api_key)
 
-PRIMARY_MODEL = "gpt-4o-mini"
-BACKUP_MODEL = "gpt-4o"
+PRIMARY_MODEL = "gpt-5-mini"
+BACKUP_MODEL = "gpt-5.1"
 
 # ==========================================================
 # HELPERS
