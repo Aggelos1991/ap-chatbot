@@ -105,7 +105,7 @@ def parse_gpt_response(content, batch_num):
         return []
 
 # ==========================================================
-# GPT EXTRACTOR (REFERENCIA ONLY)
+# GPT EXTRACTOR
 # ==========================================================
 def extract_with_gpt(lines):
     BATCH_SIZE = 60
@@ -122,12 +122,12 @@ IMPORTANT ABSOLUTE RULES:
 - Document number = ONLY the value from the field "Referencia".
 - Do NOT extract invoice numbers from description, Concepto or anywhere else.
 - If Referencia is empty → reason = Payment.
-- If Asiento = VEN AND HABER > 0 → reason = Credit Note.
-- Everything else → reason = Invoice.
+- If Referencia has DEBE → Invoice.
+- If Referencia has HABER → Credit Note.
 
 Extract:
 - Fecha
-- Referencia (strictly the document number)
+- Referencia
 - Asiento
 - Concepto / Descripción
 - DEBE
@@ -166,32 +166,35 @@ Text:
         if not data:
             continue
 
-        # ===============================
-        # NEW CLASSIFICATION LOGIC (FINAL)
-        # ===============================
+        # =====================================================
+        # FINAL CLASSIFICATION — EXACTLY YOUR RULES
+        # =====================================================
         for row in data:
             referencia = str(row.get("Referencia", "")).strip()
-            asiento = str(row.get("Asiento", "")).strip().upper()
 
             debit_val = normalize_number(row.get("Debit", ""))
             credit_val = normalize_number(row.get("Credit", ""))
 
-            # 1️⃣ REFERENCIA empty → Payment
+            # 1️⃣ Referencia empty → Payment
             if referencia == "":
                 reason = "Payment"
 
-            # 2️⃣ Asiento VEN + Credit > 0 → Credit Note
-            elif asiento == "VEN" and credit_val not in ("", 0) and float(credit_val) > 0:
+            # 2️⃣ Referencia exists + DEBE > 0 → Invoice
+            elif debit_val not in ("", 0) and float(debit_val) > 0:
+                reason = "Invoice"
+
+            # 3️⃣ Referencia exists + HABER > 0 → Credit Note
+            elif credit_val not in ("", 0) and float(credit_val) > 0:
                 reason = "Credit Note"
 
-            # 3️⃣ everything else → Invoice
+            # 4️⃣ Fallback
             else:
-                reason = "Invoice"
+                reason = "Payment"
 
             all_records.append({
                 "Document": referencia,
                 "Date": str(row.get("Fecha", "")),
-                "Asiento": asiento,
+                "Asiento": str(row.get("Asiento", "")),
                 "Concepto": str(row.get("Concepto", "")),
                 "Reason": reason,
                 "Debit": debit_val,
