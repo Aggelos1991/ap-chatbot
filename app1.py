@@ -151,7 +151,6 @@ Text to analyze:
                 response = client.chat.completions.create(
                     model=model,
                     messages=[{"role": "user", "content": prompt}],
-                    temperature=0.0
                 )
                 content = response.choices[0].message.content.strip()
                 if i == 0:
