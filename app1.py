@@ -50,44 +50,105 @@ def normalize_number(value):
         return ""
 
 # ==========================================================
-# PDF + OCR EXTRACTION
+# PDF TABLE EXTRACTION - Direct column parsing
 # ==========================================================
-def extract_raw_lines(uploaded_pdf):
-    """Extract ALL text lines from every page of the PDF (excluding Saldo lines), using OCR fallback."""
-    all_lines = []
+def extract_table_data(uploaded_pdf):
+    """Extract table data directly using pdfplumber's table extraction."""
+    all_records = []
     pdf_bytes = uploaded_pdf.read()
     uploaded_pdf.seek(0)
-    ocr_pages = []
-
+    
     with pdfplumber.open(BytesIO(pdf_bytes)) as pdf:
-        for i, page in enumerate(pdf.pages, start=1):
-            text = page.extract_text()
-            if text and len(text.strip()) > 10:
-                for line in text.split("\n"):
-                    clean_line = " ".join(line.split())
-                    if not clean_line.strip():
-                        continue
-                    if re.search(r"\bsaldo\b", clean_line, re.IGNORECASE):
-                        continue
-                    all_lines.append(clean_line)
+        for page_num, page in enumerate(pdf.pages, start=1):
+            # Try to extract tables
+            tables = page.extract_tables()
+            
+            if tables:
+                for table in tables:
+                    for row in table:
+                        if not row or len(row) < 5:
+                            continue
+                        # Skip header rows
+                        row_text = " ".join(str(cell or "") for cell in row).lower()
+                        if "fecha" in row_text or "debe" in row_text or "haber" in row_text:
+                            continue
+                        if "total" in row_text or "saldo anterior" in row_text:
+                            continue
+                        
+                        all_records.append(row)
             else:
-                ocr_pages.append(i)
-                try:
-                    images = convert_from_bytes(pdf_bytes, dpi=250, first_page=i, last_page=i)
-                    ocr_text = pytesseract.image_to_string(images[0], lang="spa+eng+ell")
-                    for line in ocr_text.split("\n"):
+                # Fallback: extract text and parse manually
+                text = page.extract_text()
+                if text:
+                    for line in text.split("\n"):
                         clean_line = " ".join(line.split())
-                        if not clean_line.strip():
-                            continue
-                        if re.search(r"\bsaldo\b", clean_line, re.IGNORECASE):
-                            continue
-                        all_lines.append(clean_line)
-                except Exception as e:
-                    st.warning(f"OCR skipped for page {i}: {e}")
+                        if clean_line:
+                            all_records.append(clean_line)
+    
+    return all_records
 
-    if ocr_pages:
-        st.info(f"OCR applied on pages: {', '.join(map(str, ocr_pages))}")
-    return all_lines
+
+def parse_libro_mayor_row(row):
+    """
+    Parse a row from Libro Mayor table.
+    Expected columns: Fecha | Asiento | Documento | Libro | Descripción | Referencia | F. valor | Debe | Haber | Saldo
+    """
+    if isinstance(row, str):
+        return None  # Skip text lines, handle separately
+    
+    if len(row) < 10:
+        return None
+    
+    # Column indices (0-based)
+    # 0=Fecha, 1=Asiento, 2=Documento, 3=Libro, 4=Descripción, 5=Referencia, 6=F.valor, 7=Debe, 8=Haber, 9=Saldo
+    
+    fecha = str(row[0] or "").strip()
+    descripcion = str(row[4] or "").strip()
+    referencia = str(row[5] or "").strip()
+    f_valor = str(row[6] or "").strip()
+    debe_raw = str(row[7] or "").strip()
+    haber_raw = str(row[8] or "").strip()
+    
+    # Skip if no date (header or invalid row)
+    if not fecha or not re.match(r"\d{2}/\d{2}/\d{4}", fecha):
+        return None
+    
+    # Normalize amounts
+    debe = normalize_number(debe_raw) if debe_raw else ""
+    haber = normalize_number(haber_raw) if haber_raw else ""
+    
+    # Skip if no financial values
+    if debe == "" and haber == "":
+        return None
+    
+    # Classification based on your rules:
+    # - No Referencia → Payment
+    # - Referencia + Debe → Invoice  
+    # - Referencia + Haber → Credit Note
+    
+    if referencia == "" or referencia == "0" or referencia.lower() == "null":
+        referencia = ""
+        reason = "Payment"
+    elif debe and not haber:
+        reason = "Invoice"
+    elif haber and not debe:
+        reason = "Credit Note"
+    elif debe and haber:
+        if float(debe) >= float(haber):
+            reason = "Invoice"
+        else:
+            reason = "Credit Note"
+    else:
+        return None
+    
+    return {
+        "Referencia": referencia,
+        "Descripcion": descripcion,
+        "Date": f_valor if f_valor else fecha,
+        "Reason": reason,
+        "Debit": debe,
+        "Credit": haber
+    }
 
 
 def parse_gpt_response(content, batch_num):
@@ -104,10 +165,10 @@ def parse_gpt_response(content, batch_num):
         return []
 
 # ==========================================================
-# GPT EXTRACTOR — Simplified Referencia-based Classification
+# GPT EXTRACTOR — Fallback for non-table PDFs
 # ==========================================================
 def extract_with_gpt(lines):
-    """Use GPT to extract data with Referencia-based classification."""
+    """Use GPT to extract data when table structure is not detected."""
     BATCH_SIZE = 60
     all_records = []
 
@@ -116,35 +177,16 @@ def extract_with_gpt(lines):
         text_block = "\n".join(batch)
 
         prompt = f"""
-You are a financial data extractor for Spanish "Libro Mayor" (General Ledger) statements.
+You are a financial data extractor for Spanish vendor statements.
 
-THE EXACT COLUMN ORDER IN THIS DOCUMENT IS:
-Fecha | Asiento | Documento | Libro | Descripción | Referencia | F. valor | Debe | Haber | Saldo
+Extract from each line:
+- Referencia: Document/reference number (if present, otherwise empty "")
+- Descripcion: Description text
+- Date: Transaction date
+- Debit: DEBE amount (invoices)
+- Credit: HABER amount (payments/credits)
 
-⚠️ CRITICAL - COLUMN POSITIONS:
-- Column 8 = DEBE (Debit) - extract to "Debit" field
-- Column 9 = HABER (Credit) - extract to "Credit" field  
-- Column 10 = SALDO (Balance) - IGNORE THIS COMPLETELY!
-
-The numbers appear in this order: DEBE | HABER | SALDO
-- If a row has ONE number before Saldo → determine if it's in Debe or Haber position
-- If a row has TWO numbers before Saldo → first is Debe, second is Haber
-- The LAST number on each line is almost always SALDO - DO NOT USE IT!
-
-EXTRACT THESE FIELDS:
-- Referencia: The reference number (column 6) - may be empty!
-- Descripción: The description text
-- F. valor: The value date (column 7)
-- Debe: Amount from DEBE column ONLY
-- Haber: Amount from HABER column ONLY
-
-⚠️ RULES:
-1. If Referencia column is EMPTY, leave "Referencia" as ""
-2. DEBE values → put in "Debit" field
-3. HABER values → put in "Credit" field
-4. NEVER use SALDO values - they are just running totals!
-5. If only one amount exists and no clear column indicator, check the SALDO: if the Saldo INCREASES, the value is DEBE; if Saldo DECREASES, the value is HABER
-6. Skip header rows and total rows
+IGNORE the SALDO column (running balance) - it's usually the LAST number on each line.
 
 OUTPUT FORMAT (strict JSON array):
 [
@@ -152,23 +194,10 @@ OUTPUT FORMAT (strict JSON array):
     "Referencia": "reference number or empty string",
     "Descripcion": "description text",
     "Date": "dd/mm/yyyy",
-    "Debit": "DEBE amount or empty",
-    "Credit": "HABER amount or empty"
+    "Debit": "amount or empty",
+    "Credit": "amount or empty"
   }}
 ]
-
-EXAMPLES FROM THIS DOCUMENT:
-Line: "01/01/2023 VEN / 6887 183 /383005976 V 230101183005951 FP 010123 F 230101183005951 01/01/2023 6.171,48 7.488,96"
-→ Referencia=230101183005951, Debe=6.171,48, Saldo=7.488,96 (ignore saldo)
-→ {{"Referencia": "230101183005951", "Descripcion": "230101183005951 FP 010123 F", "Date": "01/01/2023", "Debit": "6.171,48", "Credit": ""}}
-
-Line: "02/01/2023 GRL / 16811 GRL /0 V 221207183000015 IR VARIOS 2 02/01/2023 840,95 6.648,01"
-→ Referencia=EMPTY (no ref number), Haber=840,95, Saldo=6.648,01 (ignore saldo)
-→ {{"Referencia": "", "Descripcion": "221207183000015 IR VARIOS 2", "Date": "02/01/2023", "Debit": "", "Credit": "840,95"}}
-
-Line: "26/01/2023 VEN / 22339 938 /338000858 V 2294126 230126938000024 FP 230126938000024 26/01/2023 580,00 -580,00"
-→ Referencia=230126938000024, Haber=580,00 (because Saldo went negative/decreased)
-→ {{"Referencia": "230126938000024", "Descripcion": "2294126 230126938000024 FP", "Date": "26/01/2023", "Debit": "", "Credit": "580,00"}}
 
 Text to analyze:
 {text_block}
@@ -194,44 +223,25 @@ Text to analyze:
         if not data:
             continue
 
-        # === Post-process with SIMPLIFIED RULES ===
         for row in data:
             referencia = str(row.get("Referencia", "")).strip()
             debit_val = normalize_number(row.get("Debit", ""))
             credit_val = normalize_number(row.get("Credit", ""))
-            descripcion = str(row.get("Descripcion", "") or row.get("Concepto", "")).strip()
+            descripcion = str(row.get("Descripcion", "")).strip()
             date_val = str(row.get("Date", "")).strip()
 
-            # Skip if no financial values
             if debit_val == "" and credit_val == "":
                 continue
 
-            # Skip unwanted lines
-            if re.search(r"(total\s+saldo|total\s+debe|total\s+haber)", descripcion, re.IGNORECASE):
-                continue
-
-            # === CLASSIFICATION RULES ===
-            # Rule 1: No Referencia → Payment (value in Credit/Haber)
-            # Rule 2: Referencia + Debit (DEBE) → Invoice
-            # Rule 3: Referencia + Credit (HABER) → Credit Note
-
+            # Classification
             if referencia == "":
-                # No referencia = Payment
                 reason = "Payment"
             elif debit_val and not credit_val:
-                # Has referencia + Debit (DEBE) = Invoice
                 reason = "Invoice"
             elif credit_val and not debit_val:
-                # Has referencia + Credit (HABER) = Credit Note
                 reason = "Credit Note"
-            elif debit_val and credit_val:
-                # Both values present - classify by which is larger
-                if float(debit_val) >= float(credit_val):
-                    reason = "Invoice"
-                else:
-                    reason = "Credit Note"
             else:
-                continue
+                reason = "Invoice" if float(debit_val or 0) >= float(credit_val or 0) else "Credit Note"
 
             all_records.append({
                 "Referencia": referencia,
@@ -260,39 +270,80 @@ def to_excel_bytes(records):
 uploaded_pdf = st.file_uploader("📂 Upload Vendor Statement (PDF)", type=["pdf"])
 
 if uploaded_pdf:
-    with st.spinner("📄 Extracting text from all pages (with OCR fallback)..."):
-        lines = extract_raw_lines(uploaded_pdf)
+    with st.spinner("📄 Extracting table data from PDF..."):
+        raw_data = extract_table_data(uploaded_pdf)
+    
+    st.success(f"✅ Found {len(raw_data)} rows in PDF.")
+    
+    # Check if we got table data or text lines
+    has_tables = any(isinstance(row, list) for row in raw_data)
+    
+    if has_tables:
+        st.info("📊 Table structure detected - using direct column extraction")
+        
+        if st.button("🔍 Extract Data", type="primary"):
+            records = []
+            for row in raw_data:
+                parsed = parse_libro_mayor_row(row)
+                if parsed:
+                    records.append(parsed)
+            
+            if records:
+                df = pd.DataFrame(records)
+                st.success(f"✅ Extraction complete — {len(df)} valid records found!")
+                st.dataframe(df[["Referencia", "Date", "Descripcion", "Reason", "Debit", "Credit"]], use_container_width=True, hide_index=True)
 
-    st.success(f"✅ Found {len(lines)} lines of text (Saldo lines removed).")
-    st.text_area("📄 Preview (first 30 lines):", "\n".join(lines[:30]), height=300)
+                try:
+                    total_debit = df["Debit"].apply(pd.to_numeric, errors="coerce").sum()
+                    total_credit = df["Credit"].apply(pd.to_numeric, errors="coerce").sum()
+                    net = round(total_debit - total_credit, 2)
+                    col1, col2, col3 = st.columns(3)
+                    col1.metric("💰 Total Debit (Invoices)", f"{total_debit:,.2f}")
+                    col2.metric("💳 Total Credit (Payments + CN)", f"{total_credit:,.2f}")
+                    col3.metric("⚖️ Net Balance", f"{net:,.2f}")
+                except Exception as e:
+                    st.error(f"Totals error: {e}")
 
-    if st.button("🤖 Run Hybrid Extraction", type="primary"):
-        with st.spinner("Analyzing with GPT models..."):
-            data = extract_with_gpt(lines)
+                st.download_button(
+                    "⬇️ Download Excel",
+                    data=to_excel_bytes(records),
+                    file_name=f"vendor_statement_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+            else:
+                st.warning("⚠️ No valid records found in table.")
+    else:
+        st.info("📝 No table structure found - will use GPT extraction")
+        lines = [row for row in raw_data if isinstance(row, str)]
+        st.text_area("📄 Preview (first 30 lines):", "\n".join(lines[:30]), height=300)
+        
+        if st.button("🤖 Run GPT Extraction", type="primary"):
+            with st.spinner("Analyzing with GPT models..."):
+                data = extract_with_gpt(lines)
 
-        if data:
-            df = pd.DataFrame(data)
-            st.success(f"✅ Extraction complete — {len(df)} valid records found!")
-            st.dataframe(df[["Referencia", "Date", "Descripcion", "Reason", "Debit", "Credit"]], use_container_width=True, hide_index=True)
+            if data:
+                df = pd.DataFrame(data)
+                st.success(f"✅ Extraction complete — {len(df)} valid records found!")
+                st.dataframe(df[["Referencia", "Date", "Descripcion", "Reason", "Debit", "Credit"]], use_container_width=True, hide_index=True)
 
-            try:
-                total_debit = df["Debit"].apply(pd.to_numeric, errors="coerce").sum()
-                total_credit = df["Credit"].apply(pd.to_numeric, errors="coerce").sum()
-                net = round(total_debit - total_credit, 2)
-                col1, col2, col3 = st.columns(3)
-                col1.metric("💰 Total Debit (Invoices)", f"{total_debit:,.2f}")
-                col2.metric("💳 Total Credit (Payments + CN)", f"{total_credit:,.2f}")
-                col3.metric("⚖️ Net Balance", f"{net:,.2f}")
-            except Exception as e:
-                st.error(f"Totals error: {e}")
+                try:
+                    total_debit = df["Debit"].apply(pd.to_numeric, errors="coerce").sum()
+                    total_credit = df["Credit"].apply(pd.to_numeric, errors="coerce").sum()
+                    net = round(total_debit - total_credit, 2)
+                    col1, col2, col3 = st.columns(3)
+                    col1.metric("💰 Total Debit (Invoices)", f"{total_debit:,.2f}")
+                    col2.metric("💳 Total Credit (Payments + CN)", f"{total_credit:,.2f}")
+                    col3.metric("⚖️ Net Balance", f"{net:,.2f}")
+                except Exception as e:
+                    st.error(f"Totals error: {e}")
 
-            st.download_button(
-                "⬇️ Download Excel",
-                data=to_excel_bytes(data),
-                file_name=f"vendor_statement_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            )
-        else:
-            st.warning("⚠️ No structured data detected. Check GPT response above.")
+                st.download_button(
+                    "⬇️ Download Excel",
+                    data=to_excel_bytes(data),
+                    file_name=f"vendor_statement_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+            else:
+                st.warning("⚠️ No structured data detected. Check GPT response above.")
 else:
     st.info("Please upload a vendor statement PDF to begin.")
