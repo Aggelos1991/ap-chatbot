@@ -128,11 +128,19 @@ Extract from each line:
 ⚠️ CRITICAL RULES:
 1. Look specifically for the "Referencia" column/field for document numbers.
 2. If a line has NO Referencia value, leave "Referencia" as empty string "".
-3. Ignore lines with 'Asiento', 'Saldo', 'IVA', or 'Total Saldo'.
-4. DEBE values go in Debit field.
-5. HABER values go in Credit field.
-6. If TOTAL/TOTALES appears without DEBE/HABER, treat as Debit.
-7. Output strictly JSON array only, no explanations.
+3. COMPLETELY IGNORE 'Saldo' column - it is NOT Credit and NOT Debit!
+4. SALDO is the running balance - NEVER extract it as Credit or Debit.
+5. Only extract ACTUAL DEBE (Debit) and HABER (Credit) values.
+6. If a line only has a Saldo value and no real DEBE/HABER, leave both Debit and Credit EMPTY.
+7. Ignore lines with 'Asiento', 'IVA', or 'Total Saldo'.
+8. DEBE values go in Debit field.
+9. HABER values go in Credit field.
+10. Output strictly JSON array only, no explanations.
+
+⚠️ SALDO WARNING:
+- Typical column order: DEBE | HABER | SALDO
+- The LAST number on a line is usually SALDO (running balance) - DO NOT USE IT!
+- Only use numbers that are clearly in DEBE or HABER columns.
 
 OUTPUT FORMAT:
 [
@@ -140,17 +148,23 @@ OUTPUT FORMAT:
     "Referencia": "string (from Referencia column, empty if none)",
     "Concepto": "description text",
     "Date": "dd/mm/yy or yyyy-mm-dd",
-    "Debit": "DEBE amount or empty",
-    "Credit": "HABER amount or empty"
+    "Debit": "DEBE amount ONLY (not Saldo!), empty if none",
+    "Credit": "HABER amount ONLY (not Saldo!), empty if none"
   }}
 ]
 
 Examples:
-Line with Referencia: "15/03/25 REF-123 Factura servicios 1.234,56"
+Line: "15/03/25 REF-123 Factura servicios 1.234,56 5.000,00"
+(1.234,56 is DEBE, 5.000,00 is SALDO - ignore Saldo!)
 → {{"Referencia": "REF-123", "Concepto": "Factura servicios", "Date": "15/03/25", "Debit": "1.234,56", "Credit": ""}}
 
-Line without Referencia (payment): "20/03/25 Transferencia bancaria 500,00"
+Line: "20/03/25 Transferencia bancaria 500,00 4.500,00"
+(500,00 is HABER, 4.500,00 is SALDO - ignore Saldo!)
 → {{"Referencia": "", "Concepto": "Transferencia bancaria", "Date": "20/03/25", "Debit": "", "Credit": "500,00"}}
+
+Line: "25/03/25 Ajuste contable 4.500,00"
+(Only SALDO shown, no DEBE/HABER - leave both empty!)
+→ {{"Referencia": "", "Concepto": "Ajuste contable", "Date": "25/03/25", "Debit": "", "Credit": ""}}
 
 Text to analyze:
 {text_block}
