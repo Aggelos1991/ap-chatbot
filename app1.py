@@ -1,20 +1,36 @@
-import os, re
+import os, re, json
 import pdfplumber
 import pandas as pd
 import streamlit as st
 from io import BytesIO
+from openai import OpenAI
 from pdf2image import convert_from_bytes
 import pytesseract
 
 # ==========================================================
-# CONFIGURATION
+# CONFIG
 # ==========================================================
-st.set_page_config(page_title="🦅 DataFalcon Pro — FINAL STRICT VERSION", layout="wide")
-st.title("🦅 DataFalcon Pro — FINAL STRICT REFERENCIA EXTRACTOR (NO GPT)")
+st.set_page_config(page_title="🦅 DataFalcon Pro — GPT Strict Referencia", layout="wide")
+st.title("🦅 DataFalcon Pro — GPT Extractor (STRICT REFERENCIA MODE)")
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except:
+    pass
+
+api_key = os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY")
+if not api_key:
+    st.error("❌ Missing OPENAI API key.")
+    st.stop()
+
+client = OpenAI(api_key=api_key)
+
+MODEL = "gpt-4o-mini"
 
 
 # ==========================================================
-# PDF TEXT EXTRACTION (OCR FALLBACK)
+# PDF extraction
 # ==========================================================
 def extract_raw_lines(uploaded_pdf):
     all_lines = []
@@ -24,24 +40,19 @@ def extract_raw_lines(uploaded_pdf):
     with pdfplumber.open(BytesIO(pdf_bytes)) as pdf:
         for idx, page in enumerate(pdf.pages, start=1):
             text = page.extract_text()
-
-            # If PDF text layer exists
             if text:
                 for line in text.split("\n"):
                     clean = " ".join(line.split())
-                    if clean and "saldo" not in clean.lower():
+                    if clean:
                         all_lines.append(clean)
             else:
-                # OCR fallback
                 try:
-                    images = convert_from_bytes(pdf_bytes, dpi=250,
+                    images = convert_from_bytes(pdf_bytes, dpi=260,
                                                 first_page=idx, last_page=idx)
-                    ocr_text = pytesseract.image_to_string(
-                        images[0], lang="spa+eng+ell"
-                    )
+                    ocr_text = pytesseract.image_to_string(images[0], lang="spa+eng+ell")
                     for line in ocr_text.split("\n"):
                         clean = " ".join(line.split())
-                        if clean and "saldo" not in clean.lower():
+                        if clean:
                             all_lines.append(clean)
                 except:
                     pass
@@ -50,109 +61,126 @@ def extract_raw_lines(uploaded_pdf):
 
 
 # ==========================================================
-# STRICT REFERENCIA EXTRACTION
+# STRICT reference extraction
 # ==========================================================
 def extract_referencia(line):
-    """
-    The ONLY acceptable reference is a 12–18 digit number.
-    If it's missing → empty cell (payment row).
-    """
     matches = re.findall(r"\b\d{12,18}\b", line)
     return matches[0] if matches else ""
 
 
 # ==========================================================
-# NORMALIZE AMOUNTS
+# GPT parse → ONLY Concepto, Date, Debit, Credit
 # ==========================================================
-def normalize_amount(v):
+def gpt_extract(lines):
+    BATCH = 40
+    output = []
+
+    for i in range(0, len(lines), BATCH):
+        batch = lines[i:i + BATCH]
+        text_block = "\n".join(batch)
+
+        prompt = f"""
+Extract ledger rows. Return ONLY:
+
+- Concepto
+- Date
+- Debit (DEBE)
+- Credit (HABER)
+
+❌ Do NOT extract or guess invoice numbers.
+❌ Do NOT infer FP/IR.
+❌ Do NOT use description tokens as reference.
+❌ Do NOT return saldo.
+
+Strict JSON array, no explanation.
+
+Text:
+{text_block}
+"""
+
+        try:
+            resp = client.chat.completions.create(
+                model=MODEL,
+                messages=[{"role":"user","content":prompt}],
+                temperature=0
+            )
+            content = resp.choices[0].message.content
+        except Exception as e:
+            st.error(f"GPT error: {e}")
+            return []
+
+        # Extract JSON
+        m = re.search(r"\[.*\]", content, re.DOTALL)
+        if not m:
+            continue
+
+        try:
+            data = json.loads(m.group(0))
+            output.extend(data)
+        except:
+            continue
+
+    return output
+
+
+# ==========================================================
+# Merge GPT + Referencia
+# ==========================================================
+def merge_rows(lines, gpt_rows):
+    final = []
+
+    limit = min(len(lines), len(gpt_rows))
+
+    for i in range(limit):
+        raw   = lines[i]
+        row   = gpt_rows[i]
+
+        ref = extract_referencia(raw)
+        concepto = row.get("Concepto", "")
+        fecha    = row.get("Date", "")
+        debit    = normalize(row.get("Debit", ""))
+        credit   = normalize(row.get("Credit", ""))
+
+        # Classification
+        if ref and debit:
+            reason = "Invoice"
+        elif ref and credit:
+            reason = "Credit Note"
+        elif not ref and credit:
+            reason = "Payment"
+        else:
+            continue
+
+        final.append({
+            "Referencia": ref,
+            "Concepto": concepto,
+            "Date": fecha,
+            "Reason": reason,
+            "Debit": debit,
+            "Credit": credit
+        })
+
+    return final
+
+
+# ==========================================================
+# Normalize amounts
+# ==========================================================
+def normalize(v):
     if not v:
         return ""
-    v = v.replace(".", "").replace(",", ".")
-    v = re.sub(r"[^\d\.\-]", "", v)
+    s = str(v).replace(".", "").replace(",", ".")
+    s = re.sub(r"[^\d\.\-]", "", s)
     try:
-        return round(float(v), 2)
+        return round(float(s), 2)
     except:
         return ""
 
 
 # ==========================================================
-# PARSE LEDGER ROW
+# EXPORT
 # ==========================================================
-def parse_ledger_line(line):
-    parts = line.split()
-    if len(parts) < 6:
-        return None
-
-    fecha = parts[0]
-
-    # get referencia
-    referencia = extract_referencia(line)
-
-    # If no referencia → PAYMENT ROW
-    if not referencia:
-        # Credit amount is the second-to-last number
-        amounts = re.findall(r"[-\d\.,]+", line)
-        credit = normalize_amount(amounts[-2]) if len(amounts) >= 2 else ""
-        concepto = " ".join(parts[4:])
-        return {
-            "Referencia": "",
-            "Concepto": concepto,
-            "Date": fecha,
-            "Reason": "Payment",
-            "Debit": "",
-            "Credit": credit
-        }
-
-    # REFERENCIA EXISTS → INVOICE OR CREDIT NOTE
-    # find index of referencia
-    idx = parts.index(referencia)
-
-    # concepto = between column 4 and referencia
-    concepto = " ".join(parts[4:idx])
-
-    # tail after referencia: [F.Valor, Debe, Haber, Saldo]
-    tail = parts[idx + 1:]
-    if len(tail) < 3:
-        return None
-
-    debe = normalize_amount(tail[-3])
-    haber = normalize_amount(tail[-2])
-    # saldo = tail[-1]  # NOT USED
-
-    # classification
-    if debe:
-        reason = "Invoice"
-    elif haber:
-        reason = "Credit Note"
-    else:
-        return None
-
-    return {
-        "Referencia": referencia,
-        "Concepto": concepto,
-        "Date": fecha,
-        "Reason": reason,
-        "Debit": debe,
-        "Credit": haber
-    }
-
-
-# ==========================================================
-# PROCESS FULL STATEMENT
-# ==========================================================
-def extract_records(lines):
-    records = []
-    for line in lines:
-        parsed = parse_ledger_line(line)
-        if parsed:
-            records.append(parsed)
-    return records
-
-
-# ==========================================================
-# EXPORT TO EXCEL
-# ==========================================================
-def to_excel_bytes(records):
+def to_excel(records):
     df = pd.DataFrame(records)
     buff = BytesIO()
     df.to_excel(buff, index=False)
@@ -163,32 +191,33 @@ def to_excel_bytes(records):
 # ==========================================================
 # UI
 # ==========================================================
-uploaded_pdf = st.file_uploader("📂 Upload Vendor Statement (PDF)", type=["pdf"])
+uploaded_pdf = st.file_uploader("📂 Upload PDF", type=["pdf"])
 
 if uploaded_pdf:
     lines = extract_raw_lines(uploaded_pdf)
-    st.text_area("📄 Preview (first 30 lines)", "\n".join(lines[:30]), height=280)
+
+    st.text_area("📄 Raw Preview", "\n".join(lines[:30]), height=260)
 
     if st.button("🚀 Extract"):
-        records = extract_records(lines)
-        df = pd.DataFrame(records)
+        gpt_rows = gpt_extract(lines)
+        final = merge_rows(lines, gpt_rows)
 
-        st.success(f"Extracted {len(df)} valid rows.")
+        df = pd.DataFrame(final)
         st.dataframe(df, use_container_width=True, hide_index=True)
 
         if not df.empty:
-            total_debit = df["Debit"].apply(pd.to_numeric, errors="coerce").sum()
+            total_debit  = df["Debit"].apply(pd.to_numeric, errors="coerce").sum()
             total_credit = df["Credit"].apply(pd.to_numeric, errors="coerce").sum()
             net = total_debit - total_credit
 
             c1, c2, c3 = st.columns(3)
-            c1.metric("Total Debit", f"{total_debit:,.2f}")
-            c2.metric("Total Credit", f"{total_credit:,.2f}")
+            c1.metric("Debit", f"{total_debit:,.2f}")
+            c2.metric("Credit", f"{total_credit:,.2f}")
             c3.metric("Net", f"{net:,.2f}")
 
             st.download_button(
                 "⬇️ Download Excel",
-                to_excel_bytes(records),
+                to_excel(final),
                 "statement.xlsx"
             )
 
