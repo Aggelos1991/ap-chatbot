@@ -1,12 +1,10 @@
 # ==========================================================
-# 🦅 DataFalcon Pro v2 — ULTRA FAST EDITION (FINAL)
+# 🦅 DataFalcon Pro v3 — Ultra Fast (NO OCR, FINAL RULES)
 # ==========================================================
 
 import streamlit as st
 import pandas as pd
 import pdfplumber
-from pdf2image import convert_from_bytes
-import pytesseract
 from io import BytesIO
 import re
 
@@ -14,8 +12,8 @@ import re
 # PAGE CONFIG
 # ==========================================================
 
-st.set_page_config(page_title="🦅 DataFalcon Pro v2 — Ultra Fast", layout="wide")
-st.title("🦅 DataFalcon Pro v2 — Ultra Fast Edition (FINAL)")
+st.set_page_config(page_title="🦅 DataFalcon Pro v3 — Ultra Fast", layout="wide")
+st.title("🦅 DataFalcon Pro v3 — Ultra Fast Edition (FINAL)")
 
 
 # ==========================================================
@@ -23,12 +21,11 @@ st.title("🦅 DataFalcon Pro v2 — Ultra Fast Edition (FINAL)")
 # ==========================================================
 
 def clean_amount(v):
-    """Normalize amounts: remove symbols, convert EU format."""
+    """Normalize numbers — EU format support."""
     if v is None or v == "":
         return None
     s = str(v).strip()
 
-    # Remove everything except digits, dot, comma, minus
     s = re.sub(r"[^\d,.\-]", "", s)
 
     # Convert EU format 1.234,56 → 1234.56
@@ -45,56 +42,35 @@ def clean_amount(v):
 
 
 def extract_table_from_pdf(file_bytes):
-    """
-    Try structured extraction via pdfplumber.
-    If no tables, fallback to OCR.
-    """
+    """Extract table using only pdfplumber (NO OCR)."""
     records = []
 
-    try:
-        with pdfplumber.open(BytesIO(file_bytes)) as pdf:
-            for page in pdf.pages:
-                table = page.extract_table()
-                if table:
-                    header = table[0]
-                    for row in table[1:]:
-                        record = dict(zip(header, row))
-                        records.append(record)
+    with pdfplumber.open(BytesIO(file_bytes)) as pdf:
+        for page in pdf.pages:
+            table = page.extract_table()
+            if table:
+                header = table[0]
+                for row in table[1:]:
+                    records.append(dict(zip(header, row)))
 
-        if len(records) > 0:
-            return pd.DataFrame(records)
-
-    except:
-        pass
-
-    # =========== FALLBACK OCR =============
-    images = convert_from_bytes(file_bytes)
-    text = "\n".join([pytesseract.image_to_string(img) for img in images])
-
-    rows = []
-    for line in text.split("\n"):
-        cols = re.split(r"\s{2,}", line.strip())
-        if len(cols) >= 4:
-            rows.append(cols[:4])
-
-    if len(rows) == 0:
+    if len(records) == 0:
         return pd.DataFrame()
 
-    df = pd.DataFrame(rows)
-    df.columns = [f"col_{i}" for i in range(df.shape[1])]
-    return df
+    return pd.DataFrame(records)
 
 
 # ==========================================================
-# CLASSIFICATION LOGIC (FINAL)
+# FINAL CLASSIFICATION RULES
 # ==========================================================
 
 def classify_entry(row):
     referencia = str(row.get("Referencia", "")).strip()
+
     debit = clean_amount(row.get("Debit"))
     credit = clean_amount(row.get("Credit"))
 
-    if referencia in ["", None, "None"]:
+    # RULE 1 → Payment (NO referencia)
+    if referencia == "" or referencia.lower() == "none":
         amount = debit if debit is not None else credit
         return {
             "Document": "",
@@ -102,6 +78,7 @@ def classify_entry(row):
             "Amount": amount
         }
 
+    # RULE 2 → Invoice (Referencia + Debit)
     if debit is not None:
         return {
             "Document": referencia,
@@ -109,6 +86,7 @@ def classify_entry(row):
             "Amount": debit
         }
 
+    # RULE 3 → Credit Note (Referencia + Credit)
     if credit is not None:
         return {
             "Document": referencia,
@@ -130,41 +108,38 @@ def classify_entry(row):
 uploaded = st.file_uploader("Upload PDF", type=["pdf"])
 
 if uploaded:
-    st.success("📄 PDF uploaded — extracting...")
+    st.success("📄 PDF uploaded — extracting table...")
 
     file_bytes = uploaded.read()
 
     df_raw = extract_table_from_pdf(file_bytes)
 
     if df_raw.empty:
-        st.error("❌ No data extracted from PDF.")
+        st.error("❌ No table found in PDF (and OCR is disabled).")
         st.stop()
 
     st.write("### Extracted Raw Table")
     st.dataframe(df_raw, use_container_width=True)
 
-    # ---- CLEAN HEADERS ----
+    # Clean headers
     df = df_raw.rename(columns=lambda x: x.strip().replace(" ", "_"))
 
-    # Ensure required columns exist
-    required = ["Referencia", "Debit", "Credit"]
-    for col in required:
+    # Ensure required fields
+    for col in ["Referencia", "Debit", "Credit"]:
         if col not in df.columns:
             df[col] = ""
 
-    # ---- CLASSIFICATION ----
-    results = []
-    for _, row in df.iterrows():
-        results.append(classify_entry(row))
-
+    # --- Classification ---
+    results = [classify_entry(row) for _, row in df.iterrows()]
     final_df = pd.DataFrame(results)
 
     st.write("### 🧠 Classified Results (FINAL)")
     st.dataframe(final_df, use_container_width=True)
 
-    # ---- DOWNLOAD ----
+    # --- Download ---
     output = BytesIO()
     final_df.to_excel(output, index=False)
+
     st.download_button(
         label="⬇️ Download Excel",
         data=output.getvalue(),
