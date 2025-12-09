@@ -36,7 +36,6 @@ def extract_raw_lines(uploaded_pdf):
     all_lines = []
     pdf_bytes = uploaded_pdf.read()
     uploaded_pdf.seek(0)
-    ocr_pages = []
 
     with pdfplumber.open(BytesIO(pdf_bytes)) as pdf:
         for idx, page in enumerate(pdf.pages, start=1):
@@ -48,7 +47,6 @@ def extract_raw_lines(uploaded_pdf):
                     if clean and "saldo" not in clean.lower():
                         all_lines.append(clean)
             else:
-                ocr_pages.append(idx)
                 try:
                     images = convert_from_bytes(pdf_bytes, dpi=260, first_page=idx, last_page=idx)
                     ocr_text = pytesseract.image_to_string(images[0], lang="spa+eng+ell")
@@ -76,9 +74,7 @@ def parse_gpt_response(content):
 
 
 # ==========================================================
-# GPT EXTRACTOR – NOW RETURNS ONLY:
-# Concepto, Date, Debit, Credit
-# WE ADD Referencia OURSELVES
+# GPT EXTRACTOR (Concepto + Date + Debit + Credit ONLY)
 # ==========================================================
 def extract_with_gpt(lines):
 
@@ -93,19 +89,17 @@ def extract_with_gpt(lines):
 Extract accounting entries.
 
 Return ONLY:
-- Concepto (description text)
-- Date (any date found)
+- Concepto (string description)
+- Date (if present)
 - Debit (DEBE)
 - Credit (HABER)
 
 IMPORTANT:
-❌ DO NOT extract or guess invoice/document numbers.
-❌ DO NOT return references like FP, IR, VARIOS, CA000194.
-❌ DO NOT create invoice-like codes.
+❌ Do NOT extract invoice numbers.
+❌ Do NOT infer document codes.
+❌ Do NOT generate FP/IR/VARIOS/CA000194 codes.
 
-ONLY return the 4 required fields.
-
-Strict JSON array, no explanation.
+Return strict JSON array.
 
 Text:
 {text_block}
@@ -120,17 +114,16 @@ Text:
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0
                 )
-                content = resp.choices[0].message.content.strip()
-                parsed = parse_gpt_response(content)
+                parsed = parse_gpt_response(resp.choices[0].message.content.strip())
                 if parsed:
                     break
             except Exception as e:
-                st.warning(f"GPT error on model {model}: {e}")
+                st.warning(f"GPT error on {model}: {e}")
+                parsed = []
 
         if not parsed:
             continue
 
-        # CLEAN RECORDS
         for row in parsed:
             concepto = str(row.get("Concepto", "")).strip()
             date = str(row.get("Date", "")).strip()
@@ -166,16 +159,14 @@ def normalize(v):
 
 
 # ==========================================================
-# REFERENCIA EXTRACTOR (OUR RULE)
+# REFERENCIA EXTRACTOR (OFFICIAL)
 # ==========================================================
 def extract_referencia_from_line(line):
     """
-    Extract ONLY the official Referencia.
-    Pattern is always a long numeric chain:
-
-    Example: 230101183005951
-             230126151000009
-             230101183005531
+    Extract ONLY the official Referencia: long numeric chain.
+    Example:
+    - 230101183005951
+    - 230126151000009
     """
     matches = re.findall(r"\b\d{12,18}\b", line)
     if matches:
@@ -184,31 +175,27 @@ def extract_referencia_from_line(line):
 
 
 # ==========================================================
-# MERGE GPT OUTPUT + REFERENCIA
+# MERGE GPT OUTPUT + REFERENCIA (1:1 row mapping)
 # ==========================================================
 def merge_with_referencia(lines, gpt_rows):
     final = []
+    limit = min(len(lines), len(gpt_rows))
 
-    for row in gpt_rows:
+    for i in range(limit):
+        row = gpt_rows[i]
+        pdf_line = lines[i]  # 💙 DIRECT LINE MATCHING
 
+        ref = extract_referencia_from_line(pdf_line)
         concepto = row["Concepto"]
-
-        # FIND the original PDF line that matches this concepto (best-effort)
-        ref = ""
-        for line in lines:
-            if concepto[:20] in line:
-                ref = extract_referencia_from_line(line)
-                break
-
+        date = row["Date"]
         debit = row["Debit"]
         credit = row["Credit"]
 
-        # CLASSIFY
+        # CLASSIFICATION
         if debit:
             reason = "Invoice"
         elif credit:
-            # Payment or credit note?
-            if re.search(r"pago|cobro|transfer", concepto, re.IGNORECASE):
+            if re.search(r"pago|cobro|transfer", pdf_line, re.IGNORECASE):
                 reason = "Payment"
             else:
                 reason = "Credit Note"
@@ -218,7 +205,7 @@ def merge_with_referencia(lines, gpt_rows):
         final.append({
             "Referencia": ref,
             "Concepto": concepto,
-            "Date": row["Date"],
+            "Date": date,
             "Reason": reason,
             "Debit": debit,
             "Credit": credit
@@ -245,7 +232,7 @@ uploaded_pdf = st.file_uploader("📂 Upload Vendor Statement (PDF)", type=["pdf
 
 if uploaded_pdf:
     lines = extract_raw_lines(uploaded_pdf)
-    st.text_area("Preview", "\n".join(lines[:25]), height=250)
+    st.text_area("Preview (first 25 lines)", "\n".join(lines[:25]), height=250)
 
     if st.button("🚀 Extract"):
         gpt_rows = extract_with_gpt(lines)
@@ -259,14 +246,14 @@ if uploaded_pdf:
             total_credit = df["Credit"].apply(pd.to_numeric, errors="coerce").sum()
 
             c1, c2, c3 = st.columns(3)
-            c1.metric("Debit", f"{total_debit:,.2f}")
-            c2.metric("Credit", f"{total_credit:,.2f}")
+            c1.metric("Total Debit", f"{total_debit:,.2f}")
+            c2.metric("Total Credit", f"{total_credit:,.2f}")
             c3.metric("Net", f"{total_debit-total_credit:,.2f}")
 
             st.download_button(
                 "⬇️ Download Excel",
                 to_excel_bytes(final),
-                "statement.xlsx"
+                file_name="statement.xlsx"
             )
 else:
     st.info("Upload a PDF to begin.")
