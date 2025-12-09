@@ -9,7 +9,7 @@ from openai import OpenAI
 # CONFIGURATION
 # ==========================================================
 st.set_page_config(page_title="🦅 DataFalcon Pro — Hybrid GPT Extractor", layout="wide")
-st.title("🦅 DataFalcon Pro")
+st.title("🦅 DataFalcon Pro — FINAL 2025 VERSION")
 
 try:
     from dotenv import load_dotenv
@@ -48,7 +48,7 @@ def normalize_number(value):
         return ""
 
 # ==========================================================
-# PDF EXTRACTION (NO OCR)
+# PDF EXTRACTION (NO OCR — NEVER HANGS)
 # ==========================================================
 def extract_raw_lines(uploaded_pdf):
     all_lines = []
@@ -57,15 +57,14 @@ def extract_raw_lines(uploaded_pdf):
 
     with pdfplumber.open(BytesIO(pdf_bytes)) as pdf:
         for page in pdf.pages:
-
             text = page.extract_text()
             if not text:
                 continue
 
             for line in text.split("\n"):
-                clean_line = " ".join(line.split())
+                clean_line = " ".join(line.split()).strip()
 
-                if not clean_line.strip():
+                if not clean_line:
                     continue
                 if re.search(r"\bsaldo\b", clean_line, re.IGNORECASE):
                     continue
@@ -74,18 +73,21 @@ def extract_raw_lines(uploaded_pdf):
 
     return all_lines
 
-def parse_gpt_response(content, batch_num):
-    json_match = re.search(r'\[.*\]', content, re.DOTALL)
-    if not json_match:
-        st.warning(f"⚠️ Batch {batch_num}: No JSON found.")
-        return []
+
+# ==========================================================
+# JSON PARSER
+# ==========================================================
+def parse_gpt_json(content):
     try:
-        return json.loads(json_match.group(0))
+        start = content.find("[")
+        end = content.rfind("]") + 1
+        return json.loads(content[start:end])
     except:
         return []
 
+
 # ==========================================================
-# GPT EXTRACTOR
+# GPT EXTRACTION (NEW API — REQUIRED)
 # ==========================================================
 def extract_with_gpt(lines):
     BATCH_SIZE = 60
@@ -93,77 +95,82 @@ def extract_with_gpt(lines):
 
     for i in range(0, len(lines), BATCH_SIZE):
         batch = lines[i:i + BATCH_SIZE]
-        text_block = "\n".join(batch)
 
         prompt = f"""
 Extract structured records from Spanish/Greek vendor statements.
 
-IMPORTANT RULES:
-- Document number = ONLY "Referencia".
-- Do NOT extract invoice numbers from description.
-- If Referencia empty → Payment.
+RULES:
+- Document number = ONLY the field "Referencia".
+- Never take numbers from description.
+- If Referencia is empty → Payment.
 - If Referencia has DEBE > 0 → Invoice.
 - If Referencia has HABER > 0 → Credit Note.
 
-Extract:
-- Fecha
-- Referencia
-- Asiento
-- Concepto
-- DEBE
-- HABER
+Return ONLY JSON array in this format:
+[
+  {{
+    "Fecha": "",
+    "Referencia": "",
+    "Asiento": "",
+    "Concepto": "",
+    "Debit": "",
+    "Credit": ""
+  }}
+]
 
-Output JSON array.
 Text:
-{text_block}
+{"\n".join(batch)}
 """
 
         data = []
+
         for model in [PRIMARY_MODEL, BACKUP_MODEL]:
             try:
-                response = client.chat.completions.create(
+                response = client.responses.create(
                     model=model,
-                    messages=[{"role": "user", "content": prompt}]
+                    input=prompt
                 )
+                content = response.output_text
+                data = parse_gpt_json(content)
 
-                content = response.choices[0].message.content.strip()
-                data = parse_gpt_response(content, i // BATCH_SIZE + 1)
                 if data:
                     break
+
             except Exception as e:
-                st.warning(f"GPT error ({model}): {e}")
+                st.warning(f"⚠️ GPT error ({model}): {e}")
 
         if not data:
             continue
 
         # =====================================================
-        # FINAL CLASSIFICATION — YOUR RULES
+        # FINAL CLASSIFICATION — YOUR EXACT RULES
         # =====================================================
         for row in data:
             referencia = str(row.get("Referencia", "")).strip()
-            debit_val = normalize_number(row.get("Debit", ""))
-            credit_val = normalize_number(row.get("Credit", ""))
+            debit = normalize_number(row.get("Debit", ""))
+            credit = normalize_number(row.get("Credit", ""))
 
             if referencia == "":
                 reason = "Payment"
-            elif debit_val not in ("", 0) and float(debit_val) > 0:
+            elif debit not in ("", 0) and float(debit) > 0:
                 reason = "Invoice"
-            elif credit_val not in ("", 0) and float(credit_val) > 0:
+            elif credit not in ("", 0) and float(credit) > 0:
                 reason = "Credit Note"
             else:
                 reason = "Payment"
 
             all_records.append({
                 "Document": referencia,
-                "Date": str(row.get("Fecha", "")),
-                "Asiento": str(row.get("Asiento", "")),
-                "Concepto": str(row.get("Concepto", "")),
+                "Date": row.get("Fecha", ""),
+                "Asiento": row.get("Asiento", ""),
+                "Concepto": row.get("Concepto", ""),
                 "Reason": reason,
-                "Debit": debit_val,
-                "Credit": credit_val
+                "Debit": debit,
+                "Credit": credit,
             })
 
     return all_records
+
 
 # ==========================================================
 # EXPORT
@@ -175,6 +182,7 @@ def to_excel_bytes(records):
     buf.seek(0)
     return buf
 
+
 # ==========================================================
 # STREAMLIT UI
 # ==========================================================
@@ -184,26 +192,25 @@ if uploaded_pdf:
     with st.spinner("Extracting text… (NO OCR)"):
         lines = extract_raw_lines(uploaded_pdf)
 
-    st.success(f"Found {len(lines)} lines.")
-    st.text_area("Preview (first 30 lines):", "\n".join(lines[:30]), height=300)
+    st.success(f"📄 Extracted {len(lines)} text lines from PDF.")
+    st.text_area("Preview (first 30 lines)", "\n".join(lines[:30]), height=300)
 
-    if st.button("🤖 Run Extraction", type="primary"):
-
+    if st.button("🤖 Run GPT Extraction", type="primary"):
         with st.spinner("Running GPT extractor…"):
             data = extract_with_gpt(lines)
 
         if data:
             df = pd.DataFrame(data)
-            st.success(f"{len(df)} records extracted!")
+            st.success(f"✅ Extracted {len(df)} records!")
             st.dataframe(df, use_container_width=True, hide_index=True)
 
             st.download_button(
-                "⬇️ Download Excel",
+                "⬇️ Download Excel File",
                 data=to_excel_bytes(data),
                 file_name="datafalcon_extracted.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
         else:
-            st.warning("No data extracted.")
+            st.warning("⚠️ No records extracted. Check the PDF formatting.")
 else:
-    st.info("Upload a PDF to start.")
+    st.info("📥 Upload a PDF to begin.")
