@@ -642,7 +642,13 @@ if uploaded_erp and uploaded_vendor:
             if not miss_erp.empty:
                 miss_erp = miss_erp[~miss_erp["Invoice"].astype(str).apply(clean_invoice_code).isin(used_erp_inv)]
             if not miss_ven.empty:
-                miss_ven = miss_ven[~miss_ven["Invoice"].astype(str).apply(clean_invoice_code).isin(used_ven_inv)]
+                miss_ven = miss_ven[
+                            ~(
+                                miss_ven["Invoice"].apply(clean_invoice_code).isin(used_ven_inv)
+                                & miss_ven["Amount"].round(2).isin(tier1["Vendor Amount"].round(2))
+                            )
+                        ]
+
 
             # Tier-2
             tier2, _, _, miss_erp2, miss_ven2 = tier2_match(miss_erp, miss_ven)
