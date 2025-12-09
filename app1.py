@@ -1,216 +1,173 @@
-import os, re, json
-import pdfplumber
-import pandas as pd
+# ==========================================================
+# 🦅 DataFalcon Pro v2 — ULTRA FAST EDITION (FINAL)
+# ==========================================================
+
 import streamlit as st
+import pandas as pd
+import pdfplumber
+from pdf2image import convert_from_bytes
+import pytesseract
 from io import BytesIO
-from openai import OpenAI
+import re
 
 # ==========================================================
-# CONFIGURATION
+# PAGE CONFIG
 # ==========================================================
-st.set_page_config(page_title="🦅 DataFalcon Pro — Hybrid GPT Extractor", layout="wide")
-st.title("🦅 DataFalcon Pro — FINAL 2025 VERSION")
 
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except:
-    pass
+st.set_page_config(page_title="🦅 DataFalcon Pro v2 — Ultra Fast", layout="wide")
+st.title("🦅 DataFalcon Pro v2 — Ultra Fast Edition (FINAL)")
 
-api_key = os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY")
-if not api_key:
-    st.error("❌ No OpenAI API key found. Add it to .env or Streamlit Secrets.")
-    st.stop()
-
-client = OpenAI(api_key=api_key)
-
-PRIMARY_MODEL = "gpt-4.1-mini"
-BACKUP_MODEL = "gpt-4.1"
 
 # ==========================================================
 # HELPERS
 # ==========================================================
-def normalize_number(value):
-    if not value:
-        return ""
-    s = str(value).strip().replace(" ", "")
+
+def clean_amount(v):
+    """Normalize amounts: remove symbols, convert EU format."""
+    if v is None or v == "":
+        return None
+    s = str(v).strip()
+
+    # Remove everything except digits, dot, comma, minus
+    s = re.sub(r"[^\d,.\-]", "", s)
+
+    # Convert EU format 1.234,56 → 1234.56
     if "," in s and "." in s:
-        if s.rfind(",") > s.rfind("."):
+        if s.find(".") < s.find(","):
             s = s.replace(".", "").replace(",", ".")
-        else:
-            s = s.replace(",", "")
     elif "," in s:
         s = s.replace(",", ".")
-    s = re.sub(r"[^\d.\-]", "", s)
+
     try:
-        return round(float(s), 2)
+        return float(s)
     except:
-        return ""
-
-# ==========================================================
-# PDF EXTRACTION (NO OCR — NEVER HANGS)
-# ==========================================================
-def extract_raw_lines(uploaded_pdf):
-    all_lines = []
-    pdf_bytes = uploaded_pdf.read()
-    uploaded_pdf.seek(0)
-
-    with pdfplumber.open(BytesIO(pdf_bytes)) as pdf:
-        for page in pdf.pages:
-            text = page.extract_text()
-            if not text:
-                continue
-
-            for line in text.split("\n"):
-                clean_line = " ".join(line.split()).strip()
-
-                if not clean_line:
-                    continue
-                if re.search(r"\bsaldo\b", clean_line, re.IGNORECASE):
-                    continue
-
-                all_lines.append(clean_line)
-
-    return all_lines
+        return None
 
 
-# ==========================================================
-# JSON PARSER
-# ==========================================================
-def parse_gpt_json(content):
+def extract_table_from_pdf(file_bytes):
+    """
+    Try structured extraction via pdfplumber.
+    If no tables, fallback to OCR.
+    """
+    records = []
+
     try:
-        start = content.find("[")
-        end = content.rfind("]") + 1
-        return json.loads(content[start:end])
+        with pdfplumber.open(BytesIO(file_bytes)) as pdf:
+            for page in pdf.pages:
+                table = page.extract_table()
+                if table:
+                    header = table[0]
+                    for row in table[1:]:
+                        record = dict(zip(header, row))
+                        records.append(record)
+
+        if len(records) > 0:
+            return pd.DataFrame(records)
+
     except:
-        return []
+        pass
+
+    # =========== FALLBACK OCR =============
+    images = convert_from_bytes(file_bytes)
+    text = "\n".join([pytesseract.image_to_string(img) for img in images])
+
+    rows = []
+    for line in text.split("\n"):
+        cols = re.split(r"\s{2,}", line.strip())
+        if len(cols) >= 4:
+            rows.append(cols[:4])
+
+    if len(rows) == 0:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(rows)
+    df.columns = [f"col_{i}" for i in range(df.shape[1])]
+    return df
 
 
 # ==========================================================
-# GPT EXTRACTION (NEW API — REQUIRED)
+# CLASSIFICATION LOGIC (FINAL)
 # ==========================================================
-def extract_with_gpt(lines):
-    BATCH_SIZE = 60
-    all_records = []
 
-    for i in range(0, len(lines), BATCH_SIZE):
-        batch = lines[i:i + BATCH_SIZE]
+def classify_entry(row):
+    referencia = str(row.get("Referencia", "")).strip()
+    debit = clean_amount(row.get("Debit"))
+    credit = clean_amount(row.get("Credit"))
 
-        prompt = f"""
-Extract structured records from Spanish/Greek vendor statements.
+    if referencia in ["", None, "None"]:
+        amount = debit if debit is not None else credit
+        return {
+            "Document": "",
+            "Reason": "Payment",
+            "Amount": amount
+        }
 
-RULES:
-- Document number = ONLY the field "Referencia".
-- Never take numbers from description.
-- If Referencia is empty → Payment.
-- If Referencia has DEBE > 0 → Invoice.
-- If Referencia has HABER > 0 → Credit Note.
+    if debit is not None:
+        return {
+            "Document": referencia,
+            "Reason": "Invoice",
+            "Amount": debit
+        }
 
-Return ONLY JSON array in this format:
-[
-  {{
-    "Fecha": "",
-    "Referencia": "",
-    "Asiento": "",
-    "Concepto": "",
-    "Debit": "",
-    "Credit": ""
-  }}
-]
+    if credit is not None:
+        return {
+            "Document": referencia,
+            "Reason": "Credit Note",
+            "Amount": credit
+        }
 
-Text:
-{"\n".join(batch)}
-"""
-
-        data = []
-
-        for model in [PRIMARY_MODEL, BACKUP_MODEL]:
-            try:
-                response = client.responses.create(
-                    model=model,
-                    input=prompt
-                )
-                content = response.output_text
-                data = parse_gpt_json(content)
-
-                if data:
-                    break
-
-            except Exception as e:
-                st.warning(f"⚠️ GPT error ({model}): {e}")
-
-        if not data:
-            continue
-
-        # =====================================================
-        # FINAL CLASSIFICATION — YOUR EXACT RULES
-        # =====================================================
-        for row in data:
-            referencia = str(row.get("Referencia", "")).strip()
-            debit = normalize_number(row.get("Debit", ""))
-            credit = normalize_number(row.get("Credit", ""))
-
-            if referencia == "":
-                reason = "Payment"
-            elif debit not in ("", 0) and float(debit) > 0:
-                reason = "Invoice"
-            elif credit not in ("", 0) and float(credit) > 0:
-                reason = "Credit Note"
-            else:
-                reason = "Payment"
-
-            all_records.append({
-                "Document": referencia,
-                "Date": row.get("Fecha", ""),
-                "Asiento": row.get("Asiento", ""),
-                "Concepto": row.get("Concepto", ""),
-                "Reason": reason,
-                "Debit": debit,
-                "Credit": credit,
-            })
-
-    return all_records
+    return {
+        "Document": referencia,
+        "Reason": "Unknown",
+        "Amount": None
+    }
 
 
 # ==========================================================
-# EXPORT
+# UI
 # ==========================================================
-def to_excel_bytes(records):
-    df = pd.DataFrame(records)
-    buf = BytesIO()
-    df.to_excel(buf, index=False)
-    buf.seek(0)
-    return buf
 
+uploaded = st.file_uploader("Upload PDF", type=["pdf"])
 
-# ==========================================================
-# STREAMLIT UI
-# ==========================================================
-uploaded_pdf = st.file_uploader("📂 Upload Vendor Statement (PDF)", type=["pdf"])
+if uploaded:
+    st.success("📄 PDF uploaded — extracting...")
 
-if uploaded_pdf:
-    with st.spinner("Extracting text… (NO OCR)"):
-        lines = extract_raw_lines(uploaded_pdf)
+    file_bytes = uploaded.read()
 
-    st.success(f"📄 Extracted {len(lines)} text lines from PDF.")
-    st.text_area("Preview (first 30 lines)", "\n".join(lines[:30]), height=300)
+    df_raw = extract_table_from_pdf(file_bytes)
 
-    if st.button("🤖 Run GPT Extraction", type="primary"):
-        with st.spinner("Running GPT extractor…"):
-            data = extract_with_gpt(lines)
+    if df_raw.empty:
+        st.error("❌ No data extracted from PDF.")
+        st.stop()
 
-        if data:
-            df = pd.DataFrame(data)
-            st.success(f"✅ Extracted {len(df)} records!")
-            st.dataframe(df, use_container_width=True, hide_index=True)
+    st.write("### Extracted Raw Table")
+    st.dataframe(df_raw, use_container_width=True)
 
-            st.download_button(
-                "⬇️ Download Excel File",
-                data=to_excel_bytes(data),
-                file_name="datafalcon_extracted.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            )
-        else:
-            st.warning("⚠️ No records extracted. Check the PDF formatting.")
-else:
-    st.info("📥 Upload a PDF to begin.")
+    # ---- CLEAN HEADERS ----
+    df = df_raw.rename(columns=lambda x: x.strip().replace(" ", "_"))
+
+    # Ensure required columns exist
+    required = ["Referencia", "Debit", "Credit"]
+    for col in required:
+        if col not in df.columns:
+            df[col] = ""
+
+    # ---- CLASSIFICATION ----
+    results = []
+    for _, row in df.iterrows():
+        results.append(classify_entry(row))
+
+    final_df = pd.DataFrame(results)
+
+    st.write("### 🧠 Classified Results (FINAL)")
+    st.dataframe(final_df, use_container_width=True)
+
+    # ---- DOWNLOAD ----
+    output = BytesIO()
+    final_df.to_excel(output, index=False)
+    st.download_button(
+        label="⬇️ Download Excel",
+        data=output.getvalue(),
+        file_name="DataFalcon_Results.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
