@@ -1,5 +1,5 @@
 # ==========================================================
-# 🦅 DataFalcon Pro v3 — Ultra Fast (NO OCR, FINAL RULES)
+# 🦅 DataFalcon Pro v3 — HYBRID GPT + Ultra Fast (FINAL)
 # ==========================================================
 
 import streamlit as st
@@ -7,13 +7,20 @@ import pandas as pd
 import pdfplumber
 from io import BytesIO
 import re
+from openai import OpenAI
 
 # ==========================================================
-# PAGE CONFIG
+# CONFIG
 # ==========================================================
 
-st.set_page_config(page_title="🦅 DataFalcon Pro v3 — Ultra Fast", layout="wide")
-st.title("🦅 DataFalcon Pro v3 — Ultra Fast Edition (FINAL)")
+st.set_page_config(page_title="🦅 DataFalcon Pro v3 — Hybrid GPT", layout="wide")
+st.title("🦅 DataFalcon Pro v3 — Hybrid GPT Edition (FINAL)")
+
+# Load key
+api_key = st.secrets.get("OPENAI_API_KEY")
+client = OpenAI(api_key=api_key)
+
+GPT_MODEL = "gpt-4o-mini"   # stable + fast
 
 
 # ==========================================================
@@ -41,8 +48,8 @@ def clean_amount(v):
         return None
 
 
-def extract_table_from_pdf(file_bytes):
-    """Extract table using only pdfplumber (NO OCR)."""
+def extract_table_pdfplumber(file_bytes):
+    """Extract table using pdfplumber."""
     records = []
 
     with pdfplumber.open(BytesIO(file_bytes)) as pdf:
@@ -57,6 +64,48 @@ def extract_table_from_pdf(file_bytes):
         return pd.DataFrame()
 
     return pd.DataFrame(records)
+
+
+def gpt_extract_table(text):
+    """Use GPT to convert messy text to a structured table."""
+    prompt = f"""
+You are a data extraction model. Convert the following text into a clean table.
+Output strictly as JSON list of objects with:
+["Referencia", "Debit", "Credit"]
+
+Text:
+{text}
+"""
+
+    response = client.responses.create(
+        model=GPT_MODEL,
+        input=prompt,
+        max_output_tokens=2000
+    )
+
+    content = response.output_text
+    try:
+        df = pd.read_json(BytesIO(content.encode()))
+        return df
+    except:
+        return pd.DataFrame()
+
+
+def hybrid_gpt_extraction(file_bytes):
+    """Try pdfplumber → if empty then GPT."""
+    df = extract_table_pdfplumber(file_bytes)
+    if not df.empty:
+        return df, "pdfplumber"
+
+    # If no table found → GPT fallback
+    with pdfplumber.open(BytesIO(file_bytes)) as pdf:
+        raw_text = "\n".join([page.extract_text() or "" for page in pdf.pages])
+
+    df_gpt = gpt_extract_table(raw_text)
+    if not df_gpt.empty:
+        return df_gpt, "gpt"
+
+    return pd.DataFrame(), "none"
 
 
 # ==========================================================
@@ -108,35 +157,36 @@ def classify_entry(row):
 uploaded = st.file_uploader("Upload PDF", type=["pdf"])
 
 if uploaded:
-    st.success("📄 PDF uploaded — extracting table...")
+    st.success("📄 PDF uploaded — extracting...")
 
     file_bytes = uploaded.read()
 
-    df_raw = extract_table_from_pdf(file_bytes)
+    df_raw, method = hybrid_gpt_extraction(file_bytes)
+
+    st.write(f"### Extraction Method Used: **{method.upper()}**")
 
     if df_raw.empty:
-        st.error("❌ No table found in PDF (and OCR is disabled).")
+        st.error("❌ No table extracted from PDF.")
         st.stop()
 
     st.write("### Extracted Raw Table")
     st.dataframe(df_raw, use_container_width=True)
 
-    # Clean headers
-    df = df_raw.rename(columns=lambda x: x.strip().replace(" ", "_"))
+    df = df_raw.rename(columns=lambda x: str(x).strip().replace(" ", "_"))
 
     # Ensure required fields
     for col in ["Referencia", "Debit", "Credit"]:
         if col not in df.columns:
             df[col] = ""
 
-    # --- Classification ---
+    # Classification
     results = [classify_entry(row) for _, row in df.iterrows()]
     final_df = pd.DataFrame(results)
 
     st.write("### 🧠 Classified Results (FINAL)")
     st.dataframe(final_df, use_container_width=True)
 
-    # --- Download ---
+    # Download
     output = BytesIO()
     final_df.to_excel(output, index=False)
 
