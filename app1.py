@@ -21,7 +21,7 @@ if not api_key:
     st.error("❌ No OpenAI API key found. Add it to .env or Streamlit Secrets.")
     st.stop()
 client = OpenAI(api_key=api_key)
-PRIMARY_MODEL = "gpt-4-mini"
+PRIMARY_MODEL = "gpt-4o-mini"
 BACKUP_MODEL = "gpt-4o"
 # ==========================================================
 # HELPERS
