@@ -1,44 +1,37 @@
 # ==========================================================
-# 🦅 DataFalcon Pro v3 — HYBRID GPT + Ultra Fast (FINAL)
+# 🦅 DataFalcon Pro v4 — GPT Hybrid (NO OCR, CORRECT FALLBACK)
 # ==========================================================
 
 import streamlit as st
 import pandas as pd
 import pdfplumber
-from io import BytesIO
 import re
+from io import BytesIO
 from openai import OpenAI
 
 # ==========================================================
 # CONFIG
 # ==========================================================
 
-st.set_page_config(page_title="🦅 DataFalcon Pro v3 — Hybrid GPT", layout="wide")
-st.title("🦅 DataFalcon Pro v3 — Hybrid GPT Edition (FINAL)")
+st.set_page_config(page_title="🦅 DataFalcon Pro v4 — GPT Hybrid", layout="wide")
+st.title("🦅 DataFalcon Pro v4 — GPT Hybrid Edition (FINAL)")
 
-# Load key
 api_key = st.secrets.get("OPENAI_API_KEY")
 client = OpenAI(api_key=api_key)
-
-GPT_MODEL = "gpt-4o-mini"   # stable + fast
+GPT_MODEL = "gpt-4o-mini"
 
 
 # ==========================================================
-# HELPERS
+# CLEAN AMOUNTS
 # ==========================================================
 
 def clean_amount(v):
-    """Normalize numbers — EU format support."""
     if v is None or v == "":
         return None
-    s = str(v).strip()
+    s = re.sub(r"[^\d,.\-]", "", str(v))
 
-    s = re.sub(r"[^\d,.\-]", "", s)
-
-    # Convert EU format 1.234,56 → 1234.56
-    if "," in s and "." in s:
-        if s.find(".") < s.find(","):
-            s = s.replace(".", "").replace(",", ".")
+    if "," in s and "." in s and s.find(".") < s.find(","):
+        s = s.replace(".", "").replace(",", ".")
     elif "," in s:
         s = s.replace(",", ".")
 
@@ -48,106 +41,94 @@ def clean_amount(v):
         return None
 
 
-def extract_table_pdfplumber(file_bytes):
-    """Extract table using pdfplumber."""
-    records = []
-
-    with pdfplumber.open(BytesIO(file_bytes)) as pdf:
-        for page in pdf.pages:
-            table = page.extract_table()
-            if table:
-                header = table[0]
-                for row in table[1:]:
-                    records.append(dict(zip(header, row)))
-
-    if len(records) == 0:
-        return pd.DataFrame()
-
-    return pd.DataFrame(records)
-
+# ==========================================================
+# GPT EXTRACTOR
+# ==========================================================
 
 def gpt_extract_table(text):
-    """Use GPT to convert messy text to a structured table."""
     prompt = f"""
-You are a data extraction model. Convert the following text into a clean table.
-Output strictly as JSON list of objects with:
-["Referencia", "Debit", "Credit"]
+Extract a clean table in JSON array format.
+Each object MUST contain exactly:
+- "Referencia"
+- "Debit"
+- "Credit"
 
-Text:
+If a field is missing, return empty string.
+
+Text to parse:
 {text}
 """
 
     response = client.responses.create(
         model=GPT_MODEL,
         input=prompt,
-        max_output_tokens=2000
+        max_output_tokens=4000
     )
 
-    content = response.output_text
     try:
-        df = pd.read_json(BytesIO(content.encode()))
-        return df
+        return pd.read_json(BytesIO(response.output_text.encode()))
     except:
         return pd.DataFrame()
 
 
-def hybrid_gpt_extraction(file_bytes):
-    """Try pdfplumber → if empty then GPT."""
-    df = extract_table_pdfplumber(file_bytes)
-    if not df.empty:
-        return df, "pdfplumber"
+# ==========================================================
+# HYBRID ENGINE
+# ==========================================================
 
-    # If no table found → GPT fallback
+def extract_hybrid(file_bytes):
+
+    # 1) Try pdfplumber
     with pdfplumber.open(BytesIO(file_bytes)) as pdf:
-        raw_text = "\n".join([page.extract_text() or "" for page in pdf.pages])
+        tables = []
+        for page in pdf.pages:
+            tbl = page.extract_table()
+            if tbl:
+                tables.append(tbl)
 
-    df_gpt = gpt_extract_table(raw_text)
-    if not df_gpt.empty:
-        return df_gpt, "gpt"
+    # If no table: GPT
+    if len(tables) == 0:
+        raw_text = ""
+        with pdfplumber.open(BytesIO(file_bytes)) as pdf:
+            for p in pdf.pages:
+                raw_text += p.extract_text() or ""
+        return gpt_extract_table(raw_text), "gpt"
 
-    return pd.DataFrame(), "none"
+    # Convert first table
+    table = tables[0]
+    header = table[0]
+    rows = table[1:]
+    df = pd.DataFrame(rows, columns=header)
+
+    # If table is garbage (1 column, 1 row, etc.) → GPT
+    if df.shape[1] < 3 or df.shape[0] < 2:
+        raw_text = ""
+        with pdfplumber.open(BytesIO(file_bytes)) as pdf:
+            for p in pdf.pages:
+                raw_text += p.extract_text() or ""
+        return gpt_extract_table(raw_text), "gpt"
+
+    return df, "pdfplumber"
 
 
 # ==========================================================
-# FINAL CLASSIFICATION RULES
+# CLASSIFICATION
 # ==========================================================
 
 def classify_entry(row):
-    referencia = str(row.get("Referencia", "")).strip()
-
+    ref = str(row.get("Referencia", "")).strip()
     debit = clean_amount(row.get("Debit"))
     credit = clean_amount(row.get("Credit"))
 
-    # RULE 1 → Payment (NO referencia)
-    if referencia == "" or referencia.lower() == "none":
-        amount = debit if debit is not None else credit
-        return {
-            "Document": "",
-            "Reason": "Payment",
-            "Amount": amount
-        }
+    if ref == "" or ref.lower() == "none":
+        return {"Document": "", "Reason": "Payment", "Amount": debit if debit else credit}
 
-    # RULE 2 → Invoice (Referencia + Debit)
-    if debit is not None:
-        return {
-            "Document": referencia,
-            "Reason": "Invoice",
-            "Amount": debit
-        }
+    if debit:
+        return {"Document": ref, "Reason": "Invoice", "Amount": debit}
 
-    # RULE 3 → Credit Note (Referencia + Credit)
-    if credit is not None:
-        return {
-            "Document": referencia,
-            "Reason": "Credit Note",
-            "Amount": credit
-        }
+    if credit:
+        return {"Document": ref, "Reason": "Credit Note", "Amount": credit}
 
-    return {
-        "Document": referencia,
-        "Reason": "Unknown",
-        "Amount": None
-    }
+    return {"Document": ref, "Reason": "Unknown", "Amount": None}
 
 
 # ==========================================================
@@ -157,42 +138,31 @@ def classify_entry(row):
 uploaded = st.file_uploader("Upload PDF", type=["pdf"])
 
 if uploaded:
-    st.success("📄 PDF uploaded — extracting...")
 
     file_bytes = uploaded.read()
 
-    df_raw, method = hybrid_gpt_extraction(file_bytes)
+    df_raw, method = extract_hybrid(file_bytes)
 
-    st.write(f"### Extraction Method Used: **{method.upper()}**")
-
-    if df_raw.empty:
-        st.error("❌ No table extracted from PDF.")
-        st.stop()
-
-    st.write("### Extracted Raw Table")
+    st.write(f"### Extraction Method: **{method.upper()}**")
     st.dataframe(df_raw, use_container_width=True)
-
-    df = df_raw.rename(columns=lambda x: str(x).strip().replace(" ", "_"))
 
     # Ensure required fields
     for col in ["Referencia", "Debit", "Credit"]:
-        if col not in df.columns:
-            df[col] = ""
+        if col not in df_raw.columns:
+            df_raw[col] = ""
 
-    # Classification
-    results = [classify_entry(row) for _, row in df.iterrows()]
-    final_df = pd.DataFrame(results)
+    final = pd.DataFrame([classify_entry(r) for _, r in df_raw.iterrows()])
 
     st.write("### 🧠 Classified Results (FINAL)")
-    st.dataframe(final_df, use_container_width=True)
+    st.dataframe(final, use_container_width=True)
 
-    # Download
+    from io import BytesIO
     output = BytesIO()
-    final_df.to_excel(output, index=False)
+    final.to_excel(output, index=False)
 
     st.download_button(
-        label="⬇️ Download Excel",
+        "⬇️ Download Excel",
         data=output.getvalue(),
-        file_name="DataFalcon_Results.xlsx",
+        file_name="DataFalcon_v4.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
