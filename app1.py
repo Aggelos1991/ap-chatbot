@@ -122,20 +122,24 @@ Extract from each line:
 - Fecha (Date)
 - Referencia (Reference/Document number from "Referencia" column - THIS IS KEY)
 - Concepto / Descripción (description)
-- DEBE / Debit (Invoice amount)
-- HABER / Credit (Payment or credit note amount)
+- DEBE = Debit column (put in "Debit" field)
+- HABER = Credit column (put in "Credit" field)
 
 ⚠️ CRITICAL RULES:
-1. Look specifically for the "Referencia" column/field for document numbers.
-2. If a line has NO Referencia value, leave "Referencia" as empty string "".
-3. COMPLETELY IGNORE 'Saldo' column - it is NOT Credit and NOT Debit!
-4. SALDO is the running balance - NEVER extract it as Credit or Debit.
-5. Only extract ACTUAL DEBE (Debit) and HABER (Credit) values.
-6. If a line only has a Saldo value and no real DEBE/HABER, leave both Debit and Credit EMPTY.
-7. Ignore lines with 'Asiento', 'IVA', or 'Total Saldo'.
-8. DEBE values go in Debit field.
-9. HABER values go in Credit field.
-10. Output strictly JSON array only, no explanations.
+1. DEBE goes to Debit field. HABER goes to Credit field. DO NOT MIX THEM!
+2. Look specifically for the "Referencia" column/field for document numbers.
+3. If a line has NO Referencia value, leave "Referencia" as empty string "".
+4. COMPLETELY IGNORE 'Saldo' column - it is NOT Credit and NOT Debit!
+5. SALDO is the running balance - NEVER extract it as Credit or Debit.
+6. Only extract ACTUAL DEBE (Debit) and HABER (Credit) values.
+7. If a line only has a Saldo value and no real DEBE/HABER, leave both Debit and Credit EMPTY.
+8. Ignore lines with 'Asiento', 'IVA', or 'Total Saldo'.
+9. Output strictly JSON array only, no explanations.
+
+⚠️ COLUMN MAPPING - VERY IMPORTANT:
+- DEBE → put in "Debit" (these are invoices)
+- HABER → put in "Credit" (these are payments or credit notes)
+- SALDO → IGNORE completely (this is just running balance)
 
 ⚠️ SALDO WARNING:
 - Typical column order: DEBE | HABER | SALDO
@@ -154,15 +158,19 @@ OUTPUT FORMAT:
 ]
 
 Examples:
-Line: "15/03/25 REF-123 Factura servicios 1.234,56 5.000,00"
-(1.234,56 is DEBE, 5.000,00 is SALDO - ignore Saldo!)
+Line with DEBE (Invoice): "15/03/25 REF-123 Factura servicios 1.234,56 5.000,00"
+(DEBE=1.234,56, SALDO=5.000,00 - ignore Saldo!)
 → {{"Referencia": "REF-123", "Concepto": "Factura servicios", "Date": "15/03/25", "Debit": "1.234,56", "Credit": ""}}
 
-Line: "20/03/25 Transferencia bancaria 500,00 4.500,00"
-(500,00 is HABER, 4.500,00 is SALDO - ignore Saldo!)
+Line with HABER (Payment, no ref): "20/03/25 Transferencia bancaria 500,00 4.500,00"
+(HABER=500,00, SALDO=4.500,00 - ignore Saldo!)
 → {{"Referencia": "", "Concepto": "Transferencia bancaria", "Date": "20/03/25", "Debit": "", "Credit": "500,00"}}
 
-Line: "25/03/25 Ajuste contable 4.500,00"
+Line with HABER + Referencia (Credit Note): "22/03/25 NC-456 Nota de crédito 200,00 4.300,00"
+(HABER=200,00, SALDO=4.300,00 - ignore Saldo!)
+→ {{"Referencia": "NC-456", "Concepto": "Nota de crédito", "Date": "22/03/25", "Debit": "", "Credit": "200,00"}}
+
+Line with only SALDO (skip): "25/03/25 Ajuste contable 4.500,00"
 (Only SALDO shown, no DEBE/HABER - leave both empty!)
 → {{"Referencia": "", "Concepto": "Ajuste contable", "Date": "25/03/25", "Debit": "", "Credit": ""}}
 
@@ -209,33 +217,31 @@ Text to analyze:
                 continue
 
             # === SIMPLIFIED CLASSIFICATION RULES ===
-            # Rule 1: Referencia empty → Payment
-            # Rule 2: Referencia has value + Debit → Invoice
-            # Rule 3: Referencia has value + Credit → Credit Note
+            # DEBE = Debit column (Invoices)
+            # HABER = Credit column (Payments or Credit Notes)
+            # Rule 1: No Referencia → Payment
+            # Rule 2: Referencia + DEBE (Debit) → Invoice
+            # Rule 3: Referencia + HABER (Credit) → Credit Note
 
             if referencia == "":
-                # No referencia = Payment
+                # No referencia = Payment (should have Credit/HABER value)
                 reason = "Payment"
-                # Payments should be in Credit column
-                if debit_val and not credit_val:
-                    credit_val = debit_val
-                    debit_val = ""
             elif debit_val and not credit_val:
-                # Has referencia + Debit = Invoice
+                # Has referencia + Debit (DEBE) = Invoice
                 reason = "Invoice"
             elif credit_val and not debit_val:
-                # Has referencia + Credit = Credit Note
+                # Has referencia + Credit (HABER) = Credit Note
                 reason = "Credit Note"
             elif debit_val and credit_val:
-                # Both values - use larger one to determine
+                # Both values present - keep both, classify by the larger
                 if float(debit_val) >= float(credit_val):
                     reason = "Invoice"
-                    credit_val = ""
                 else:
                     reason = "Credit Note"
-                    debit_val = ""
             else:
                 continue
+            
+            # DON'T move values between columns - DEBE stays Debit, HABER stays Credit
 
             all_records.append({
                 "Referencia": referencia,
