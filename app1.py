@@ -1,7 +1,7 @@
-import os, re, json, time, concurrent.futures
+import os, re, json
 import pdfplumber
-import pandas as pd
 import streamlit as st
+import pandas as pd
 from io import BytesIO
 from openai import OpenAI
 from pdf2image import convert_from_bytes
@@ -10,8 +10,8 @@ import pytesseract
 # ==========================================================
 # CONFIG
 # ==========================================================
-st.set_page_config(page_title="DataFalcon Pro — FINAL FIX", layout="wide")
-st.title("🦅 DataFalcon Pro — FINAL FIXED VERSION")
+st.set_page_config(page_title="DataFalcon — FINAL GPT-SAFE", layout="wide")
+st.title("🦅 DataFalcon Pro — FINAL GPT-SAFE VERSION")
 
 try:
     from dotenv import load_dotenv
@@ -20,100 +20,70 @@ except:
     pass
 
 api_key = os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY")
-if not api_key:
-    st.error("Missing OpenAI API Key.")
-    st.stop()
-
 client = OpenAI(api_key=api_key)
 
-PRIMARY_MODEL = "gpt-4o-mini"
-BACKUP_MODEL = "gpt-4o"
+MODEL = "gpt-4o-mini"
 
 
 # ==========================================================
-# HELPERS
+# 1. RAW PDF EXTRACTION
 # ==========================================================
-def normalize(v):
-    if not v:
-        return ""
-    s = str(v).replace(" ", "")
-    s = s.replace(",", ".")
-    s = re.sub(r"[^\d.\-]", "", s)
-    try:
-        return round(float(s), 2)
-    except:
-        return ""
-
-
-# ==========================================================
-# PDF TEXT EXTRACTION
-# ==========================================================
-def extract_raw_lines(file):
+def extract_raw(file):
     out = []
     pdf_bytes = file.read()
     file.seek(0)
 
     with pdfplumber.open(BytesIO(pdf_bytes)) as pdf:
-        for page in pdf.pages:
-            text = page.extract_text()
+        for p in pdf.pages:
+            text = p.extract_text()
             if text:
                 for ln in text.split("\n"):
                     ln = ln.strip()
-                    if ln and "saldo" not in ln.lower():
+                    if ln:
                         out.append(ln)
             else:
-                try:
-                    img = convert_from_bytes(pdf_bytes, dpi=200, first_page=page.page_number, last_page=page.page_number)[0]
-                    t = pytesseract.image_to_string(img, lang="spa+eng+ell")
-                    for ln in t.split("\n"):
-                        ln = ln.strip()
-                        if ln and "saldo" not in ln.lower():
-                            out.append(ln)
-                except:
-                    pass
+                img = convert_from_bytes(pdf_bytes, dpi=200, first_page=p.page_number, last_page=p.page_number)[0]
+                t = pytesseract.image_to_string(img, lang="spa+eng+ell")
+                for ln in t.split("\n"):
+                    ln = ln.strip()
+                    if ln:
+                        out.append(ln)
 
     return out
 
 
 # ==========================================================
-# 1) CLEAN LEDGER → KEEP ONLY LINES STARTING WITH DATE
+# 2. MERGE MULTIPLE BROKEN LEDGER ROWS
 # ==========================================================
-def keep_only_date_lines(lines):
-    pattern = r"^\d{2}/\d{2}/\d{4}"
-    return [ln for ln in lines if re.match(pattern, ln)]
-
-
-# ==========================================================
-# 2) MERGE MULTI-LINE RECORDS INTO ONE LINE
-# ==========================================================
-def merge_multiline_rows(lines):
-    merged = []
+def merge_rows(raw):
+    rows = []
     buffer = ""
-    pattern = r"^\d{2}/\d{2}/\d{4}"
 
-    for ln in lines:
-        if re.match(pattern, ln):
-            if buffer.strip():
-                merged.append(buffer.strip())
+    date_re = r"^\d{2}/\d{2}/\d{4}"
+
+    for ln in raw:
+        if re.match(date_re, ln):
+            if buffer:
+                rows.append(buffer.strip())
             buffer = ln
         else:
-            buffer += " " + ln.strip()
+            buffer += " " + ln
 
-    if buffer.strip():
-        merged.append(buffer.strip())
+    if buffer:
+        rows.append(buffer.strip())
 
-    return merged
+    return rows
 
 
 # ==========================================================
-# 3) SPLIT MULTIPLE RECORDS INSIDE ONE PHYSICAL LINE
+# 3. SPLIT MULTIPLE ENTRIES INSIDE A SINGLE ROW
 # ==========================================================
-def split_multiple_in_one_line(lines):
+def split_rows(lines):
     final = []
-    pattern = r"(?=\d{2}/\d{2}/\d{4})"
+    date_re = r"(?=\d{2}/\d{2}/\d{4})"
 
     for ln in lines:
-        parts = re.split(pattern, ln)
+        parts = re.split(date_re, ln)
         for p in parts:
             p = p.strip()
             if re.match(r"^\d{2}/\d{2}/\d{4}", p):
@@ -123,115 +93,73 @@ def split_multiple_in_one_line(lines):
 
 
 # ==========================================================
-# GPT TIMEOUT WRAPPER
+# 4. PURE PYTHON PARSING (NO GPT)
 # ==========================================================
-def gpt_timeout(model, prompt, timeout=10):
-    def job():
-        return client.chat.completions.create(
-            model=model,
-            messages=[{"role": "user", "content": prompt}]
-        )
+def parse_line(ln):
+    # DATE
+    m = re.match(r"^(\d{2}/\d{2}/\d{4})", ln)
+    date = m.group(1) if m else ""
 
-    with concurrent.futures.ThreadPoolExecutor() as ex:
-        f = ex.submit(job)
-        try:
-            return f.result(timeout=timeout)
-        except:
-            return None
+    # ASIENTO (VEN / GRL / etc)
+    asiento = ""
+    m = re.search(r"\b(VEN|GRL|APL|DEV|ABN|V)\b", ln)
+    if m:
+        asiento = m.group(1)
+
+    # REFERENCIA = 9–15 digit numbers
+    ref = ""
+    m = re.search(r"\b(\d{9,15})\b", ln)
+    if m:
+        ref = m.group(1)
+
+    # DEBIT / CREDIT (last numbers)
+    nums = re.findall(r"[-]?\d{1,3}(?:\.\d{3})*,\d{2}", ln)
+    debit = credit = ""
+
+    if len(nums) == 1:
+        # only one number
+        debit = nums[0]
+    elif len(nums) >= 2:
+        debit = nums[-2]
+        credit = nums[-1]
+
+    return {
+        "Date": date,
+        "Asiento": asiento,
+        "Referencia": ref,
+        "Debit": debit,
+        "Credit": credit,
+        "Concepto": ln
+    }
 
 
 # ==========================================================
-# PARSE GPT JSON
+# 5. GPT ONLY FOR CLASSIFICATION (FAST)
 # ==========================================================
-def parse_json(x):
-    m = re.search(r"\[.*\]", x, re.DOTALL)
-    if not m:
-        return []
-    try:
-        return json.loads(m.group(0))
-    except:
-        return []
-
-
-# ==========================================================
-# GPT LEDGER EXTRACTION
-# ==========================================================
-def extract_with_gpt(lines):
+def classify(rows):
     out = []
-    B = 20
 
-    for i in range(0, len(lines), B):
-        block = "\n".join(lines[i:i+B])
+    for r in rows:
+        ref = r["Referencia"]
+        asiento = r["Asiento"]
+        debit = r["Debit"]
+        credit = r["Credit"]
 
-        prompt = f"""
-Extract ledger rows.
+        if ref == "":
+            reason = "Payment"
+        elif asiento == "VEN" and credit not in ("", "0,00", "0.00"):
+            reason = "Credit Note"
+        else:
+            reason = "Invoice"
 
-RULES:
-- Document number = ONLY 'Referencia'.
-- If Referencia empty → Payment.
-- If Asiento = VEN AND Credit > 0 → Credit Note.
-- Else → Invoice.
-
-FORMAT:
-Fecha | Asiento | Documento | Libro | Descripción | Referencia | Debe | Haber
-
-Return ONLY JSON array:
-[
-  {{
-    "Fecha": "",
-    "Asiento": "",
-    "Referencia": "",
-    "Concepto": "",
-    "Debit": "",
-    "Credit": ""
-  }}
-]
-
-Text:
-{block}
-"""
-
-        response = gpt_timeout(PRIMARY_MODEL, prompt, timeout=10)
-        if response is None:
-            response = gpt_timeout(BACKUP_MODEL, prompt, timeout=10)
-
-        if response is None:
-            st.warning(f"⚠️ GPT timeout on batch {i//B+1}, skipped.")
-            continue
-
-        rows = parse_json(response.choices[0].message.content)
-        if not rows:
-            continue
-
-        for r in rows:
-            ref = r.get("Referencia", "").strip()
-            asiento = r.get("Asiento", "").strip().upper()
-
-            debit = normalize(r.get("Debit"))
-            credit = normalize(r.get("Credit"))
-
-            if ref == "":
-                reason = "Payment"
-            elif asiento == "VEN" and credit not in ("", 0) and float(credit) > 0:
-                reason = "Credit Note"
-            else:
-                reason = "Invoice"
-
-            out.append({
-                "Document": ref,
-                "Date": r.get("Fecha", ""),
-                "Asiento": asiento,
-                "Concepto": r.get("Concepto", ""),
-                "Reason": reason,
-                "Debit": debit,
-                "Credit": credit
-            })
+        r["Reason"] = reason
+        out.append(r)
 
     return out
 
 
 # ==========================================================
-# EXCEL EXPORT
+# 6. EXCEL EXPORT
 # ==========================================================
 def to_excel(df):
     b = BytesIO()
@@ -243,40 +171,29 @@ def to_excel(df):
 # ==========================================================
 # UI
 # ==========================================================
-uploaded = st.file_uploader("Upload Ledger PDF", type=["pdf"])
+file = st.file_uploader("Upload Ledger PDF", type=["pdf"])
 
-if uploaded:
-    # 1) Raw extraction
-    raw = extract_raw_lines(uploaded)
+if file:
 
-    # 2) Keep only ledger lines starting with date
-    lines = keep_only_date_lines(raw)
+    raw = extract_raw(file)
 
-    # 3) Merge broken multi-line records
-    lines = merge_multiline_rows(lines)
+    merged = merge_rows(raw)
+    split = split_rows(merged)
 
-    # 4) Split multiple entries hidden inside one line
-    lines = split_multiple_in_one_line(lines)
+    st.success(f"Detected {len(split)} ledger rows.")
+    st.text_area("Preview", "\n".join(split[:20]), height=200)
 
-    st.success(f"Detected {len(lines)} ledger rows.")
-    st.text_area("Preview", "\n".join(lines[:40]), height=250)
+    parsed = [parse_line(ln) for ln in split]
+    final = classify(parsed)
 
-    if st.button("Run DataFalcon Extraction"):
-        with st.spinner("Processing with GPT…"):
-            data = extract_with_gpt(lines)
+    df = pd.DataFrame(final)
 
-        if data:
-            df = pd.DataFrame(data)
-            st.success("Extraction complete!")
-            st.dataframe(df, hide_index=True, use_container_width=True)
+    st.dataframe(df, hide_index=True, use_container_width=True)
 
-            st.download_button(
-                "Download Excel",
-                data=to_excel(df),
-                file_name="datafalcon_output.xlsx"
-            )
-        else:
-            st.error("No rows extracted.")
-
+    st.download_button(
+        "Download Excel",
+        data=to_excel(df),
+        file_name="datafalcon_final.xlsx"
+    )
 else:
-    st.info("Upload a PDF to begin.")
+    st.info("Upload a PDF to start.")
