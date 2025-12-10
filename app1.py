@@ -10,7 +10,7 @@ import pytesseract
 # ==========================================================
 # CONFIG
 # ==========================================================
-st.set_page_config(page_title="🦅 DataFalcon Pro — Final Version", layout="wide")
+st.set_page_config(page_title="🦅 DataFalcon Pro — FINAL VERSION", layout="wide")
 st.title("🦅 DataFalcon Pro — FINAL VERSION")
 
 try:
@@ -51,13 +51,12 @@ def normalize_number(v):
 
 
 # ==========================================================
-# PDF EXTRACTION WITH OCR FALLBACK
+# PDF + OCR EXTRACTION
 # ==========================================================
 def extract_raw_lines(uploaded_pdf):
     all_lines = []
     pdf_bytes = uploaded_pdf.read()
     uploaded_pdf.seek(0)
-    ocr_pages = []
 
     with pdfplumber.open(BytesIO(pdf_bytes)) as pdf:
         for i, page in enumerate(pdf.pages, start=1):
@@ -68,7 +67,6 @@ def extract_raw_lines(uploaded_pdf):
                     if clean and not re.search(r"saldo", clean, re.IGNORECASE):
                         all_lines.append(clean)
             else:
-                ocr_pages.append(i)
                 try:
                     img = convert_from_bytes(pdf_bytes, dpi=240, first_page=i, last_page=i)[0]
                     ocr_text = pytesseract.image_to_string(img, lang="spa+eng+ell")
@@ -79,14 +77,29 @@ def extract_raw_lines(uploaded_pdf):
                 except:
                     pass
 
-    if ocr_pages:
-        st.info(f"OCR applied on pages: {ocr_pages}")
-
     return all_lines
 
 
 # ==========================================================
-# JSON PARSER
+# **THE CRITICAL FIX**
+# SPLIT MULTIPLE RECORDS IN THE SAME PHYSICAL LINE
+# ==========================================================
+def preprocess_ledger_lines(raw_lines):
+    final = []
+    pattern = r"\d{2}/\d{2}/\d{4}"
+
+    for ln in raw_lines:
+        parts = re.split(f"(?=\\b{pattern}\\b)", ln)
+        for p in parts:
+            p = p.strip()
+            if re.match(pattern, p):
+                final.append(p)
+
+    return final
+
+
+# ==========================================================
+# PARSE GPT JSON
 # ==========================================================
 def parse_gpt_response(content):
     m = re.search(r'\[.*\]', content, re.DOTALL)
@@ -117,24 +130,25 @@ def gpt_call_with_timeout(model, prompt, timeout=12):
 
 
 # ==========================================================
-# MAIN GPT EXTRACTOR (FILTERED + SMALL BATCHES)
+# MAIN GPT EXTRACTOR
 # ==========================================================
 def extract_with_gpt(lines):
     all_records = []
-    BATCH = 20  # small → fast + stable
+    BATCH = 20  # fast + stable
 
     for i in range(0, len(lines), BATCH):
         block = "\n".join(lines[i:i+BATCH])
 
         prompt = f"""
-Extract ledger rows.
+Extract ledger entries.
 
 RULES:
 - Document number = ONLY 'Referencia'.
 - If Referencia empty → Payment.
 - If Asiento = VEN AND Credit > 0 → Credit Note.
-- Everything else → Invoice.
-- NEVER extract doc numbers from Concepto.
+- Otherwise → Invoice.
+- Do NOT invent numbers.
+- Do NOT extract numbers from Concepto.
 
 FORMAT:
 Fecha | Asiento | Documento | Libro | Descripción | Referencia | F. valor | Debe | Haber
@@ -151,18 +165,14 @@ Return JSON ONLY:
   }}
 ]
 
-Text:
+TEXT TO ANALYZE:
 {block}
 """
 
-        # Try main model
         response = gpt_call_with_timeout(PRIMARY_MODEL, prompt, timeout=12)
-
-        # Fallback
         if response is None:
             response = gpt_call_with_timeout(BACKUP_MODEL, prompt, timeout=12)
 
-        # Skip if both time out
         if response is None:
             st.warning(f"⚠️ GPT timeout on batch {i//BATCH+1}, skipping.")
             continue
@@ -172,7 +182,6 @@ Text:
         if not data:
             continue
 
-        # FINAL CLASSIFICATION
         for r in data:
             ref = str(r.get("Referencia", "")).strip()
             asiento = str(r.get("Asiento", "")).strip().upper()
@@ -201,7 +210,7 @@ Text:
 
 
 # ==========================================================
-# EXCEL EXPORT
+# EXPORT
 # ==========================================================
 def to_excel(df):
     buf = BytesIO()
@@ -211,21 +220,19 @@ def to_excel(df):
 
 
 # ==========================================================
-# STREAMLIT UI
+# UI
 # ==========================================================
 uploaded = st.file_uploader("📂 Upload Vendor Ledger PDF", type=["pdf"])
 
 if uploaded:
-    raw_lines = extract_raw_lines(uploaded)
-
-    # KEEP ONLY REAL LEDGER LINES (start with date dd/mm/yyyy)
-    lines = [ln for ln in raw_lines if re.match(r"^\d{2}/\d{2}/\d{4}", ln)]
+    raw = extract_raw_lines(uploaded)
+    lines = preprocess_ledger_lines(raw)
 
     if not lines:
-        st.error("No valid ledger rows found.")
+        st.error("No ledger rows detected.")
         st.stop()
 
-    st.success(f"Detected {len(lines)} ledger rows.")
+    st.success(f"Detected {len(lines)} real ledger rows.")
     st.text_area("Preview", "\n".join(lines[:40]), height=250)
 
     if st.button("🚀 Run DataFalcon Extraction", type="primary"):
