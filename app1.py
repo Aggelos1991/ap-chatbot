@@ -1,4 +1,4 @@
-import os, re, json
+import os, re, json, time, concurrent.futures
 import pdfplumber
 import pandas as pd
 import streamlit as st
@@ -8,9 +8,9 @@ from pdf2image import convert_from_bytes
 import pytesseract
 
 # ==========================================================
-# CONFIGURATION
+# CONFIG
 # ==========================================================
-st.set_page_config(page_title="🦅 DataFalcon Pro — Hybrid GPT Extractor", layout="wide")
+st.set_page_config(page_title="🦅 DataFalcon Pro — Final Version", layout="wide")
 st.title("🦅 DataFalcon Pro — Final Version")
 
 try:
@@ -21,11 +21,10 @@ except:
 
 api_key = os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY")
 if not api_key:
-    st.error("❌ Missing API key.")
+    st.error("❌ Missing OpenAI API Key.")
     st.stop()
 
 client = OpenAI(api_key=api_key)
-
 PRIMARY_MODEL = "gpt-4o-mini"
 BACKUP_MODEL = "gpt-4o"
 
@@ -33,10 +32,10 @@ BACKUP_MODEL = "gpt-4o"
 # ==========================================================
 # HELPERS
 # ==========================================================
-def normalize_number(value):
-    if not value:
+def normalize_number(v):
+    if not v:
         return ""
-    s = str(value).replace(" ", "")
+    s = str(v).replace(" ", "").strip()
     if "," in s and "." in s:
         if s.rfind(",") > s.rfind("."):
             s = s.replace(".", "").replace(",", ".")
@@ -52,7 +51,7 @@ def normalize_number(value):
 
 
 # ==========================================================
-# PDF + OCR EXTRACTION
+# PDF EXTRACTION WITH OCR FALLBACK
 # ==========================================================
 def extract_raw_lines(uploaded_pdf):
     all_lines = []
@@ -100,32 +99,47 @@ def parse_gpt_response(content):
 
 
 # ==========================================================
-# GPT EXTRACTOR (FORCED ASIENTO)
+# GPT TIMEOUT WRAPPER
+# ==========================================================
+def gpt_call_with_timeout(model, prompt, timeout=12):
+    def task():
+        return client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}]
+        )
+
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        future = executor.submit(task)
+        try:
+            return future.result(timeout=timeout)
+        except concurrent.futures.TimeoutError:
+            return None
+
+
+# ==========================================================
+# MAIN GPT EXTRACTOR (SMALL BATCHES + TIMEOUT)
 # ==========================================================
 def extract_with_gpt(lines):
     all_records = []
-    BATCH = 50
+    BATCH = 20  # small batches => fast, stable
 
     for i in range(0, len(lines), BATCH):
         block = "\n".join(lines[i:i+BATCH])
 
         prompt = f"""
-Extract structured data from Spanish vendor ledger entries.
+Extract ledger data.
 
 ABSOLUTE RULES:
 - Document number = ONLY the field 'Referencia'.
-- NEVER extract invoice numbers from Concepto or description.
-- If Referencia is empty → Reason = Payment.
-- If Asiento = VEN AND Credit > 0 → Reason = Credit Note.
-- Everything else → Reason = Invoice.
+- If Referencia empty → Payment.
+- If Asiento = VEN AND Credit > 0 → Credit Note.
+- Everything else → Invoice.
+- NEVER extract numbers from Concepto.
 
-INPUT FORMAT:
+FORMAT:
 Fecha | Asiento | Documento | Libro | Descripción | Referencia | F. valor | Debe | Haber
 
-You MUST extract Asiento exactly as shown (VEN, GRL, etc). 
-If Asiento missing → return empty string "".
-
-RETURN ONLY JSON:
+Return ONLY JSON:
 [
   {{
     "Fecha": "",
@@ -141,29 +155,28 @@ Text:
 {block}
 """
 
-        data = []
-        for model in [PRIMARY_MODEL, BACKUP_MODEL]:
-            try:
-                resp = client.chat.completions.create(
-                    model=model,
-                    messages=[{"role": "user", "content": prompt}]
-                )
-                content = resp.choices[0].message.content
-                data = parse_gpt_response(content)
-                if data:
-                    break
-            except:
-                continue
+        # Try primary model
+        response = gpt_call_with_timeout(PRIMARY_MODEL, prompt, timeout=12)
 
+        # Fallback
+        if response is None:
+            response = gpt_call_with_timeout(BACKUP_MODEL, prompt, timeout=12)
+
+        # If still none → skip batch
+        if response is None:
+            st.warning(f"⚠️ GPT timeout on batch {i//BATCH+1}, skipping.")
+            continue
+
+        content = response.choices[0].message.content
+        data = parse_gpt_response(content)
         if not data:
             continue
 
-        # =======================================
-        # FINAL CLASSIFICATION RULES (THESE ONLY)
-        # =======================================
+        # Final classification rules
         for r in data:
             ref = str(r.get("Referencia", "")).strip()
             asiento = str(r.get("Asiento", "")).strip().upper()
+
             debit = normalize_number(r.get("Debit", ""))
             credit = normalize_number(r.get("Credit", ""))
 
@@ -200,7 +213,7 @@ def to_excel(df):
 # ==========================================================
 # STREAMLIT UI
 # ==========================================================
-uploaded = st.file_uploader("📂 Upload Vendor PDF", type=["pdf"])
+uploaded = st.file_uploader("📂 Upload Vendor Ledger PDF", type=["pdf"])
 
 if uploaded:
     lines = extract_raw_lines(uploaded)
@@ -214,7 +227,6 @@ if uploaded:
         if records:
             df = pd.DataFrame(records)
             st.success(f"Extraction complete! {len(df)} rows.")
-
             st.dataframe(df, hide_index=True, use_container_width=True)
 
             st.download_button(
@@ -225,4 +237,4 @@ if uploaded:
         else:
             st.error("No records extracted.")
 else:
-    st.info("Upload a vendor PDF to begin.")
+    st.info("Upload a PDF to begin.")
