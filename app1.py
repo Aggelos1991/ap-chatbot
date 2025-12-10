@@ -70,7 +70,6 @@ def extract_raw_lines(uploaded_pdf):
                         continue
                     all_lines.append(clean_line)
             else:
-                # OCR fallback only when pdfplumber fails entirely
                 try:
                     ocr_pages.append(i)
                     images = convert_from_bytes(pdf_bytes, dpi=250, first_page=i, last_page=i)
@@ -100,7 +99,7 @@ def parse_gpt_response(content, batch_num):
         return []
 
 # ==========================================================
-# GPT EXTRACTOR (Simplified classification by Referencia rule)
+# GPT EXTRACTOR — Referencia-based logic
 # ==========================================================
 def extract_with_gpt(lines):
     BATCH_SIZE = 60
@@ -111,40 +110,39 @@ def extract_with_gpt(lines):
         text_block = "\n".join(batch)
 
         prompt = f"""
-You are a financial data extractor for Spanish and Greek vendor statements.
-Extract structured data with these fields:
-- Referencia (Invoice/Payment reference if any)
-- Fecha (Date)
-- Concepto / Descripción
-- DEBE (Invoice amount)
-- HABER (Payment or credit amount)
+You are a financial data extractor for Spanish vendor statements (Libro mayor). 
+Each line has columns such as:
+Fecha | Asiento | Documento | Libro | Descripción | Referencia | F. valor | Debe | Haber | Saldo
 
-Rules:
-1. Ignore 'Saldo', 'IVA', 'Asiento', or total balance lines.
-2. Output JSON array only (no explanation).
-3. Classification logic (IMPORTANT):
-   - If Referencia exists and DEBE filled → Reason = "Invoice"
-   - If Referencia exists and HABER filled → Reason = "Credit Note"
-   - If Referencia empty → Reason = "Payment"
-4. Use "Referencia" for "Alternative Document" field in output.
+Extract one JSON object per transaction with these fields:
+- Alternative Document → The value under Referencia (leave empty if none)
+- Concepto → Combine Asiento, Documento, and Descripción columns
+- Date → Fecha
+- Reason → based on Referencia + Debit/Credit logic:
+   • If Referencia is empty → "Payment"
+   • If Referencia exists and Debe > 0 → "Invoice"
+   • If Referencia exists and Haber > 0 → "Credit Note"
+- Debit → Debe value (only if visible)
+- Credit → Haber value (only if visible)
 
-Output format:
-[
-  {{
-    "Alternative Document": "Referencia value or empty",
-    "Concepto": "Description text",
-    "Date": "dd/mm/yy or yyyy-mm-dd",
-    "Reason": "Invoice | Credit Note | Payment",
-    "Debit": "DEBE value or empty",
-    "Credit": "HABER value or empty"
-  }}
-]
+⚠️ Rules:
+- Never guess missing Referencia. If not visible, leave Alternative Document empty.
+- Do NOT infer numeric values from nearby text — only copy explicit Debe/Haber numbers.
+- Ignore “Saldo” columns completely.
+- Return pure JSON array only, no explanations.
+
+Example:
+Line: "01/01/2023 VEN / 6887 183 /383005976 V 230101183005951 FP 010123 230101183005951 01/01/2023 6.171,48"
+→ {{"Alternative Document": "230101183005951", "Concepto": "VEN / 6887 183 /383005976", "Date": "01/01/2023", "Reason": "Invoice", "Debit": "6.171,48", "Credit": ""}}
+
+Line: "02/01/2023 GRL / 16811 GRL /0 V 221207183000015 IR VARIOS 2 02/01/2023  840,95"
+→ {{"Alternative Document": "", "Concepto": "GRL / 16811 GRL /0", "Date": "02/01/2023", "Reason": "Payment", "Debit": "", "Credit": "840,95"}}
 
 Text to analyze:
 {text_block}
 """
 
-        # GPT request with retry
+        # GPT request
         for model in [PRIMARY_MODEL, BACKUP_MODEL]:
             try:
                 response = client.chat.completions.create(
@@ -165,7 +163,7 @@ Text to analyze:
         if not data:
             continue
 
-        # Normalize numbers and store results
+        # Normalize
         for row in data:
             alt_doc = str(row.get("Alternative Document", "")).strip()
             debit_val = normalize_number(row.get("Debit", ""))
