@@ -11,7 +11,7 @@ import pytesseract
 # CONFIG
 # ==========================================================
 st.set_page_config(page_title="🦅 DataFalcon Pro — Final Version", layout="wide")
-st.title("🦅 DataFalcon Pro — Final Version")
+st.title("🦅 DataFalcon Pro — FINAL VERSION")
 
 try:
     from dotenv import load_dotenv
@@ -72,8 +72,8 @@ def extract_raw_lines(uploaded_pdf):
                 try:
                     img = convert_from_bytes(pdf_bytes, dpi=240, first_page=i, last_page=i)[0]
                     ocr_text = pytesseract.image_to_string(img, lang="spa+eng+ell")
-                    for line in ocr_text.split("\n"):
-                        clean = " ".join(line.split())
+                    for ln in ocr_text.split("\n"):
+                        clean = " ".join(ln.split())
                         if clean and not re.search(r"saldo", clean, re.IGNORECASE):
                             all_lines.append(clean)
                 except:
@@ -117,29 +117,29 @@ def gpt_call_with_timeout(model, prompt, timeout=12):
 
 
 # ==========================================================
-# MAIN GPT EXTRACTOR (SMALL BATCHES + TIMEOUT)
+# MAIN GPT EXTRACTOR (FILTERED + SMALL BATCHES)
 # ==========================================================
 def extract_with_gpt(lines):
     all_records = []
-    BATCH = 20  # small batches => fast, stable
+    BATCH = 20  # small → fast + stable
 
     for i in range(0, len(lines), BATCH):
         block = "\n".join(lines[i:i+BATCH])
 
         prompt = f"""
-Extract ledger data.
+Extract ledger rows.
 
-ABSOLUTE RULES:
-- Document number = ONLY the field 'Referencia'.
+RULES:
+- Document number = ONLY 'Referencia'.
 - If Referencia empty → Payment.
 - If Asiento = VEN AND Credit > 0 → Credit Note.
 - Everything else → Invoice.
-- NEVER extract numbers from Concepto.
+- NEVER extract doc numbers from Concepto.
 
 FORMAT:
 Fecha | Asiento | Documento | Libro | Descripción | Referencia | F. valor | Debe | Haber
 
-Return ONLY JSON:
+Return JSON ONLY:
 [
   {{
     "Fecha": "",
@@ -155,14 +155,14 @@ Text:
 {block}
 """
 
-        # Try primary model
+        # Try main model
         response = gpt_call_with_timeout(PRIMARY_MODEL, prompt, timeout=12)
 
         # Fallback
         if response is None:
             response = gpt_call_with_timeout(BACKUP_MODEL, prompt, timeout=12)
 
-        # If still none → skip batch
+        # Skip if both time out
         if response is None:
             st.warning(f"⚠️ GPT timeout on batch {i//BATCH+1}, skipping.")
             continue
@@ -172,7 +172,7 @@ Text:
         if not data:
             continue
 
-        # Final classification rules
+        # FINAL CLASSIFICATION
         for r in data:
             ref = str(r.get("Referencia", "")).strip()
             asiento = str(r.get("Asiento", "")).strip().upper()
@@ -216,8 +216,16 @@ def to_excel(df):
 uploaded = st.file_uploader("📂 Upload Vendor Ledger PDF", type=["pdf"])
 
 if uploaded:
-    lines = extract_raw_lines(uploaded)
-    st.success(f"Extracted {len(lines)} lines.")
+    raw_lines = extract_raw_lines(uploaded)
+
+    # KEEP ONLY REAL LEDGER LINES (start with date dd/mm/yyyy)
+    lines = [ln for ln in raw_lines if re.match(r"^\d{2}/\d{2}/\d{4}", ln)]
+
+    if not lines:
+        st.error("No valid ledger rows found.")
+        st.stop()
+
+    st.success(f"Detected {len(lines)} ledger rows.")
     st.text_area("Preview", "\n".join(lines[:40]), height=250)
 
     if st.button("🚀 Run DataFalcon Extraction", type="primary"):
