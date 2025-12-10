@@ -3,8 +3,8 @@ import pdfplumber
 import pandas as pd
 from io import BytesIO
 
-st.set_page_config(page_title="DataFalcon — FINAL VERSION", layout="wide")
-st.title("🦅 DataFalcon Pro — FINAL VERSION (TABLE EXTRACTION)")
+st.set_page_config(page_title="DataFalcon — FINAL SAFE VERSION", layout="wide")
+st.title("🦅 DataFalcon Pro — FINAL SAFE VERSION (NO CRASH)")
 
 uploaded = st.file_uploader("Upload Ledger PDF", type=["pdf"])
 
@@ -23,7 +23,6 @@ if uploaded:
     with pdfplumber.open(uploaded) as pdf:
         for page in pdf.pages:
 
-            # TABLE EXTRACTION — THIS IS THE REAL FIX
             table = page.extract_table({
                 "vertical_strategy": "lines",
                 "horizontal_strategy": "lines",
@@ -34,11 +33,15 @@ if uploaded:
             if not table:
                 continue
 
-            # FIRST ROW = HEADERS → SKIP
+            # Skip header row
             for row in table[1:]:
-
-                if all(v is None or v.strip() == "" for v in row):
+                # FIX: pad row so row[0..9] always exist
+                if row is None:
                     continue
+
+                # Make row always length 10
+                while len(row) < 10:
+                    row.append("")
 
                 date = row[0]
                 asiento = row[1]
@@ -50,6 +53,10 @@ if uploaded:
                 debe = clean_amount(row[7])
                 haber = clean_amount(row[8])
                 saldo = clean_amount(row[9])
+
+                # Skip completely empty rows
+                if not date and not descripcion and debe == 0 and haber == 0:
+                    continue
 
                 rows.append({
                     "Date": date,
@@ -66,12 +73,13 @@ if uploaded:
 
     df = pd.DataFrame(rows)
 
-    st.success(f"EXTRACTED {len(df)} REAL LEDGER ROWS ✔")
+    st.success(f"EXTRACTED {len(df)} LEDGER ROWS ✔ (SAFE MODE)")
     st.dataframe(df, use_container_width=True)
 
-    # DOWNLOAD
+    # Export
     buf = BytesIO()
     df.to_excel(buf, index=False)
+
     st.download_button(
         "Download Excel",
         buf.getvalue(),
