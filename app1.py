@@ -8,37 +8,19 @@ from openai import OpenAI
 # ==========================================================
 # STREAMLIT CONFIG
 # ==========================================================
-st.set_page_config(page_title="🦅 DataFalcon Pro — FINAL VERSION", layout="wide")
-st.title("🦅 DataFalcon Pro — FINAL SABA LEDGER VERSION")
-
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except:
-    pass
+st.set_page_config(page_title="🦅 DataFalcon Pro — ULTRA FAST VERSION", layout="wide")
+st.title("🦅 DataFalcon Pro — Ultra Fast SABA Extractor")
 
 api_key = os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY")
 if not api_key:
-    st.error("❌ Missing API key")
+    st.error("❌ No API key")
     st.stop()
 
 client = OpenAI(api_key=api_key)
 MODEL = "gpt-4o-mini"
 
 # ==========================================================
-# CLEAN NUMBER
-# ==========================================================
-def clean_num(v):
-    if not v:
-        return ""
-    v = v.replace(".", "").replace(",", ".")
-    try:
-        return round(float(v), 2)
-    except:
-        return ""
-
-# ==========================================================
-# EXTRACT RAW LINES FROM PDF
+# PDF → RAW LINES
 # ==========================================================
 def extract_lines(pdf):
     lines = []
@@ -49,57 +31,35 @@ def extract_lines(pdf):
                 continue
             for line in text.split("\n"):
                 line = " ".join(line.split())
-                if (
-                    not line.strip()
-                    or "Saldo" in line
-                    or "saldo" in line
-                    or "SALDO" in line
-                ):
+                if not line.strip():
+                    continue
+                if "Saldo" in line or "SALDO" in line:
                     continue
                 lines.append(line)
     return lines
 
 # ==========================================================
-# GPT EXTRACTION — FINAL VERSION
+# GPT FAST EXTRACTOR
 # ==========================================================
-def extract_with_gpt(lines):
-    all_records = []
-    BATCH = 60
+def extract_with_gpt_fast(lines):
+    all_rows = []
+    BATCH = 20  # 🚀 SUPER FAST
 
     for i in range(0, len(lines), BATCH):
-        batch = lines[i:i+BATCH]
-        text_block = "\n".join(batch)
+        block = "\n".join(lines[i:i+BATCH])
 
         prompt = f"""
-You extract accounting ledger rows from SABA-style Spanish PDFs.
+Extract rows from SABA ledger lines.
 
-VERY IMPORTANT RULES:
-1. The first date dd/mm/yyyy is the Date.
-2. The **LAST TWO** numeric values are ALWAYS:
-   - Debit (DEBE)
-   - Credit (HABER)
-3. A negative value means Credit Note → put in Credit.
-4. "Alternative Document" must be the FIRST long number or code after the date.
-5. SALDO is ignored.
-6. Output STRICT JSON array. NO text, NO comments.
+RULES:
+- First dd/mm/yyyy = Date
+- Last two numeric values = Debit, Credit
+- If Debit negative → Credit Note
+- Alternative Document = first long number/code after date
+- Return ONLY JSON array.
 
-Example:
-Line: "02/01/2023 GRL ... 840,95 6.648,01"
-→ Debit: 840,95
-→ Credit: 6648,01
-
-Extract fields:
-- Alternative Document
-- Concepto (the whole text except the numbers)
-- Date
-- Reason: "Invoice" (if Debit), "Payment" (if Credit), "Credit Note" (if Credit was negative)
-- Debit
-- Credit
-
-Return ONLY valid JSON array.
-
-TEXT TO PARSE:
-{text_block}
+LINES:
+{block}
 """
 
         try:
@@ -109,21 +69,20 @@ TEXT TO PARSE:
                 temperature=0
             )
             content = response.choices[0].message.content.strip()
-            json_match = re.search(r"\[.*\]", content, re.DOTALL)
-            if json_match:
-                data = json.loads(json_match.group(0))
-                all_records.extend(data)
+
+            # Force JSON extraction
+            json_array = re.search(r"\[.*\]", content, re.DOTALL)
+            if not json_array:
+                continue
+
+            rows = json.loads(json_array.group(0))
+            all_rows.extend(rows)
+
         except Exception as e:
-            st.warning(f"GPT error: {e}")
+            st.warning(f"Batch error: {e}")
+            continue
 
-    # clean numbers
-    cleaned = []
-    for r in all_records:
-        r["Debit"] = clean_num(str(r.get("Debit", "")))
-        r["Credit"] = clean_num(str(r.get("Credit", "")))
-        cleaned.append(r)
-
-    return cleaned
+    return all_rows
 
 # ==========================================================
 # EXPORT
@@ -138,20 +97,29 @@ def to_excel(data):
 # ==========================================================
 # UI
 # ==========================================================
-pdf_file = st.file_uploader("📂 Upload SABA Ledger PDF", type=["pdf"])
+pdf_file = st.file_uploader("📂 Upload Ledger PDF", type=["pdf"])
 
 if pdf_file:
-    with st.spinner("Extracting lines from PDF…"):
+    with st.spinner("Extracting lines…"):
         lines = extract_lines(pdf_file)
 
     st.success(f"Extracted {len(lines)} lines.")
-    st.text_area("Preview first 30 lines:", "\n".join(lines[:30]), height=300)
+    st.text_area("Preview:", "\n".join(lines[:30]), height=300)
 
-    if st.button("🤖 Run Final Extraction", type="primary"):
-        with st.spinner("GPT analyzing…"):
-            data = extract_with_gpt(lines)
+    if st.button("⚡ Run Ultra-Fast Extraction", type="primary"):
+        with st.spinner("GPT extracting… (fast mode)"):
+            data = extract_with_gpt_fast(lines)
 
         if not data:
-            st.error("No valid rows detected.")
+            st.error("No rows extracted.")
         else:
             df = pd.DataFrame(data)
+            st.success(f"Done! {len(df)} rows extracted.")
+            st.dataframe(df, use_container_width=True)
+
+            st.download_button(
+                "⬇️ Download Excel",
+                data=to_excel(data),
+                file_name="saba_ledger.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
