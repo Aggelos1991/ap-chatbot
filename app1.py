@@ -107,7 +107,7 @@ def extract_with_gpt(lines):
 You are a financial data extractor specialized in Spanish and Greek vendor statements.
 Each line may contain:
 - Fecha (Date)
-- Documento / N° DOC / Αρ. Παραστατικού / Αρ. Τιμολογίου (Document number)
+- Referencia (Document number)
 - Concepto / Περιγραφή / Comentario (description)
 - DEBE / Χρέωση (Invoice amount)
 - HABER / Πίστωση (Payments or credit notes)
