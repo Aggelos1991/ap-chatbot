@@ -1,6 +1,7 @@
 # ==========================================================
-# THE REMITATOR — OLD FINAL HYBRID VERSION (DEFAULT USER ID)
-# ALWAYS USES GLPI USER ID = 22487
+# THE REMITATOR — OLD FINAL HYBRID VERSION (FINAL STABLE)
+# DEFAULT USER ID = 22487 (ANGELOS KERAMARIS)
+# FULL GLPI FIX + SIGNATURE INJECTION
 # ==========================================================
 
 import os, re, requests
@@ -18,7 +19,8 @@ from dotenv import load_dotenv
 st.set_page_config(page_title="The Remitator", layout="wide")
 st.title("💀 The Remitator — Old Final Hybrid (User ID Fixed)")
 
-DEFAULT_USER_ID = 22487    # <─────── ALWAYS YOU
+DEFAULT_USER_ID = 22487
+SIGNATURE = """<br><br>Saludos,<br><b>Angelos Keramaris<br>Accounts Payable Iberia</b>"""
 
 # ----------------------------------------------------------
 # ENV
@@ -32,9 +34,11 @@ USER_TOKEN = os.getenv("USER_TOKEN")
 # HELPERS
 # ----------------------------------------------------------
 def parse_amount(v):
-    if pd.isna(v): return 0.0
+    if pd.isna(v):
+        return 0.0
     s = str(v).strip()
     s = re.sub(r"[^\d,.\-]", "", s)
+
     if s.count(",") == 1 and s.count(".") == 1:
         if s.find(",") > s.find("."):
             s = s.replace(".", "").replace(",", ".")
@@ -42,21 +46,25 @@ def parse_amount(v):
             s = s.replace(",", "")
     elif s.count(",") == 1:
         s = s.replace(",", ".")
+
     try:
         return float(s)
     except:
         return 0.0
 
+
 def find_col(df, names):
     for c in df.columns:
         clean = c.strip().lower().replace(" ", "").replace(".", "")
         for n in names:
-            if n.replace(" ", "").replace(".", "").lower() in clean:
+            n_clean = n.lower().replace(" ", "").replace(".", "")
+            if n_clean in clean:
                 return c
     return None
 
+
 # ----------------------------------------------------------
-# GLPI BASIC FUNCTIONS
+# GLPI FUNCTIONS — FIXED (ALWAYS USES DEFAULT_USER_ID)
 # ----------------------------------------------------------
 def glpi_login():
     r = requests.get(
@@ -65,43 +73,58 @@ def glpi_login():
     )
     return r.json().get("session_token")
 
+
 def glpi_update_ticket(token, ticket_id, status=5, category_id=None):
-    payload = {"input": {"status": int(status)}}
+    payload = {
+        "input": {
+            "id": int(ticket_id),
+            "status": int(status),
+            "users_id_lastupdater": DEFAULT_USER_ID,
+            "users_id_recipient": DEFAULT_USER_ID
+        }
+    }
+
     if category_id:
         payload["input"]["itilcategories_id"] = int(category_id)
+
     return requests.put(
         f"{GLPI_URL}/Ticket/{ticket_id}",
         json=payload,
         headers={"Session-Token": token, "App-Token": APP_TOKEN}
     )
 
+
 def glpi_add_solution(token, ticket_id, html):
     payload = {
         "input": {
             "itemtype": "Ticket",
             "items_id": int(ticket_id),
-            "users_id": 22487,     # <── ALWAYS YOU
+            "users_id": DEFAULT_USER_ID,
+            "users_id_recipient": DEFAULT_USER_ID,
             "content": html,
             "solutiontypes_id": 10,
             "status": 5
         }
     }
+
     return requests.post(
         f"{GLPI_URL}/ITILSolution",
         json=payload,
         headers={"Session-Token": token, "App-Token": APP_TOKEN}
     )
 
+
 def glpi_add_followup(token, ticket_id, html):
     payload = {
         "input": {
             "itemtype": "Ticket",
             "items_id": int(ticket_id),
-            "users_id": 22487,     # <── ALWAYS YOU
-            "content": html,
-            "solutiontypes_id": 10
+            "users_id": DEFAULT_USER_ID,
+            "users_id_recipient": DEFAULT_USER_ID,
+            "content": html
         }
     }
+
     return requests.post(
         f"{GLPI_URL}/Ticket/{ticket_id}/ITILFollowup",
         json=payload,
@@ -110,7 +133,7 @@ def glpi_add_followup(token, ticket_id, html):
 
 
 # ----------------------------------------------------------
-# MAIN INPUTS
+# INPUT FILES
 # ----------------------------------------------------------
 pay_file = st.file_uploader("Upload Payment Excel", type=["xlsx"])
 cn_file = st.file_uploader("Upload Credit Notes (optional)", type=["xlsx"])
@@ -139,6 +162,7 @@ debug_rows_all = []
 # PROCESS EACH PAYMENT CODE
 # ----------------------------------------------------------
 for pay_code in selected_codes:
+
     col = find_col(df, ["PaymentDocumentCode", "PaymentDocument"])
     if not col:
         st.error("Cannot find Payment Document Code column.")
@@ -180,7 +204,7 @@ for pay_code in selected_codes:
                 pay_val = row["Payment Value"]
                 diff = round(pay_val - inv_val, 2)
 
-                debug_entry = {
+                dbg = {
                     "Payment Code": pay_code,
                     "Vendor": vendor,
                     "Alt. Document": inv,
@@ -190,8 +214,8 @@ for pay_code in selected_codes:
                 }
 
                 if abs(diff) < 0.01:
-                    debug_entry["Matched"] = "✓"
-                    debug_rows_all.append(debug_entry)
+                    dbg["Matched"] = "✓"
+                    debug_rows_all.append(dbg)
                     continue
 
                 matched = False
@@ -206,7 +230,7 @@ for pay_code in selected_codes:
                         })
                         used.add(i)
                         matched = True
-                        debug_entry["Matched"] = "✓ CN"
+                        dbg["Matched"] = "✓ CN"
                         break
 
                 if not matched:
@@ -214,9 +238,9 @@ for pay_code in selected_codes:
                         "Alt. Document": f"{inv} (Adj. Diff)",
                         "Invoice Value": diff
                     })
-                    debug_entry["Matched"] = "✗ No CN"
+                    dbg["Matched"] = "✗ No CN"
 
-                debug_rows_all.append(debug_entry)
+                debug_rows_all.append(dbg)
 
     full = pd.concat([
         summary,
@@ -242,16 +266,18 @@ for pay_code in selected_codes:
 """
 
 # ----------------------------------------------------------
-# OUTPUT SUMMARY
+# FINAL OUTPUT
 # ----------------------------------------------------------
 if combined_html.endswith("<br><hr><br>"):
     combined_html = combined_html[:-12]
 
 tab1, tab2, tab3 = st.tabs(["Summary", "Advanced Debug", "GLPI"])
 
+# ------------------------ SUMMARY -------------------------
 with tab1:
     st.markdown(combined_html, unsafe_allow_html=True)
 
+# ------------------------ DEBUG ---------------------------
 with tab2:
     dbg_df = pd.DataFrame(debug_rows_all)
     st.dataframe(dbg_df, use_container_width=True)
@@ -263,6 +289,7 @@ with tab2:
         mime="text/csv"
     )
 
+# ------------------------ GLPI OUTPUT ----------------------
 with tab3:
     language = st.radio("Language", ["Spanish", "English"], horizontal=True)
 
@@ -270,11 +297,20 @@ with tab3:
     category_id = st.text_input("Category ID")
 
     if language == "Spanish":
-        intro = "Estimado proveedor,<br><br>Adjuntamos las facturas correspondientes a los pagos realizados:<br><br>"
-        outro = "<br>Quedamos a su disposición para cualquier aclaración.<br><br>Saludos,<br>Finance"
+        intro = (
+            "Estimado proveedor,<br><br>"
+            "Adjuntamos el detalle de facturas correspondientes a los pagos realizados:"
+            "<br><br>"
+        )
+        outro = SIGNATURE
+
     else:
-        intro = "Dear supplier,<br><br>Please find below the invoices corresponding to the executed payments:<br><br>"
-        outro = "<br>Should you need any clarification, we remain available.<br><br>Regards,<br>Finance Team"
+        intro = (
+            "Dear supplier,<br><br>"
+            "Please find below the invoice breakdown corresponding to the executed payments:"
+            "<br><br>"
+        )
+        outro = "<br><br>Regards,<br><b>Angelos Keramaris<br>Accounts Payable Iberia</b>"
 
     html_message = intro + combined_html + outro
     st.markdown(html_message, unsafe_allow_html=True)
@@ -290,11 +326,10 @@ with tab3:
             st.stop()
 
         glpi_update_ticket(token, ticket_id, 5, category_id)
-
         resp = glpi_add_solution(token, ticket_id, html_message)
 
         if resp.status_code == 400 or "already solved" in resp.text.lower():
             glpi_add_followup(token, ticket_id, html_message)
-            st.warning("Ticket solved already — posted as follow-up.")
+            st.warning("Ticket already solved — posted as follow-up.")
         else:
-            st.success("Solution added.")
+            st.success("Solution added to GLPI.")
