@@ -164,7 +164,7 @@ for pay_code in selected_codes:
     # ------------------------------------------------------
     if cn_file:
         cn = pd.read_excel(cn_file)
-        cn.columns = [c.strip() for c in ccn.columns]
+        cn.columns = [c.strip() for c in cn.columns]
         cn = cn.loc[:, ~cn.columns.duplicated()]
 
         cn_alt = find_col(cn, ["AltDocument", "Alt.Document"])
