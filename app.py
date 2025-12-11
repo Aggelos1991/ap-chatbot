@@ -80,7 +80,7 @@ def glpi_add_solution(token, ticket_id, html):
         "input": {
             "itemtype": "Ticket",
             "items_id": int(ticket_id),
-            "users_id": DEFAULT_USER_ID,     # <── ALWAYS YOU
+            "users_id": 22487,     # <── ALWAYS YOU
             "content": html,
             "solutiontypes_id": 10,
             "status": 5
@@ -97,7 +97,7 @@ def glpi_add_followup(token, ticket_id, html):
         "input": {
             "itemtype": "Ticket",
             "items_id": int(ticket_id),
-            "users_id": DEFAULT_USER_ID,     # <── ALWAYS YOU
+            "users_id": 22487,     # <── ALWAYS YOU
             "content": html,
             "solutiontypes_id": 10
         }
