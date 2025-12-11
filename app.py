@@ -1,6 +1,6 @@
 # ==========================================================
-# THE REMITATOR — OLD FINAL HYBRID VERSION
-# OLD FINAL + ADVANCED DEBUG B (✓/✗)
+# THE REMITATOR — OLD FINAL HYBRID VERSION (DEFAULT USER ID)
+# ALWAYS USES GLPI USER ID = 22487
 # ==========================================================
 
 import os, re, requests
@@ -16,7 +16,9 @@ from dotenv import load_dotenv
 # UI
 # ----------------------------------------------------------
 st.set_page_config(page_title="The Remitator", layout="wide")
-st.title("💀 The Remitator — Old Final Hybrid")
+st.title("💀 The Remitator — Old Final Hybrid (User ID Fixed)")
+
+DEFAULT_USER_ID = 22487    # <─────── ALWAYS YOU
 
 # ----------------------------------------------------------
 # ENV
@@ -78,6 +80,7 @@ def glpi_add_solution(token, ticket_id, html):
         "input": {
             "itemtype": "Ticket",
             "items_id": int(ticket_id),
+            "users_id": DEFAULT_USER_ID,     # <── ALWAYS YOU
             "content": html,
             "solutiontypes_id": 10,
             "status": 5
@@ -94,6 +97,7 @@ def glpi_add_followup(token, ticket_id, html):
         "input": {
             "itemtype": "Ticket",
             "items_id": int(ticket_id),
+            "users_id": DEFAULT_USER_ID,     # <── ALWAYS YOU
             "content": html,
             "solutiontypes_id": 10
         }
@@ -104,14 +108,6 @@ def glpi_add_followup(token, ticket_id, html):
         headers={"Session-Token": token, "App-Token": APP_TOKEN}
     )
 
-
-# ----------------------------------------------------------
-# USER MAP (OLD FINAL)
-# ----------------------------------------------------------
-USER_MAP = {
-    "akeramaris@saniikos.com": 22487,
-    "mmarquis@saniikos.com": 16207
-}
 
 # ----------------------------------------------------------
 # MAIN INPUTS
@@ -136,9 +132,8 @@ if not selected_codes:
     st.stop()
 
 combined_html = ""
-combined_vendor_names = []
 export_data = {}
-debug_rows_all = []   # <--- FOR ADVANCED DEBUG B
+debug_rows_all = []
 
 # ----------------------------------------------------------
 # PROCESS EACH PAYMENT CODE
@@ -159,90 +154,70 @@ for pay_code in selected_codes:
     vendor_col = find_col(df, ["Vendor", "SupplierName", "Supplier"])
     vendor = subset[vendor_col].iloc[0] if vendor_col else "Unknown Vendor"
 
-    combined_vendor_names.append(vendor)
-
     summary = subset[["Alt. Document", "Invoice Value"]].copy()
 
     cn_rows = []
     unmatched = []
 
     # ------------------------------------------------------
-    # CREDIT NOTES MATCHING
+    # CREDIT NOTES MATCHING — FIXED
     # ------------------------------------------------------
-    # ------------------------------------------------------
-# CREDIT NOTES MATCHING — FIXED (NO ZERO CNs, NO ZERO DIFFS)
-# ------------------------------------------------------
-if cn_file:
-    cn = pd.read_excel(cn_file)
-    cn.columns = [c.strip() for c in cn.columns]
-    cn = cn.loc[:, ~cn.columns.duplicated()]
+    if cn_file:
+        cn = pd.read_excel(cn_file)
+        cn.columns = [c.strip() for c in ccn.columns]
+        cn = cn.loc[:, ~cn.columns.duplicated()]
 
-    cn_alt = find_col(cn, ["AltDocument", "Alt.Document"])
-    cn_val = find_col(cn, ["Amount", "InvoiceValue", "DEBE", "Cargo"])
+        cn_alt = find_col(cn, ["AltDocument", "Alt.Document"])
+        cn_val = find_col(cn, ["Amount", "InvoiceValue", "DEBE", "Cargo"])
 
-    if cn_alt and cn_val:
-        cn[cn_val] = cn[cn_val].apply(parse_amount)
-        used = set()
+        if cn_alt and cn_val:
+            cn[cn_val] = cn[cn_val].apply(parse_amount)
+            used = set()
 
-        for _, row in subset.iterrows():
-            inv = str(row["Alt. Document"])
-            inv_val = row["Invoice Value"]
-            pay_val = row["Payment Value"]
-            diff = round(pay_val - inv_val, 2)
+            for _, row in subset.iterrows():
+                inv = str(row["Alt. Document"])
+                inv_val = row["Invoice Value"]
+                pay_val = row["Payment Value"]
+                diff = round(pay_val - inv_val, 2)
 
-            # Debug log entry
-            debug_entry = {
-                "Payment Code": pay_code,
-                "Vendor": vendor,
-                "Alt. Document": inv,
-                "Invoice Value": inv_val,
-                "Payment Value": pay_val,
-                "Difference": diff
-            }
+                debug_entry = {
+                    "Payment Code": pay_code,
+                    "Vendor": vendor,
+                    "Alt. Document": inv,
+                    "Invoice Value": inv_val,
+                    "Payment Value": pay_val,
+                    "Difference": diff
+                }
 
-            # ----------------------------------------------------------
-            # FIX 1: If difference = 0 → fully matched, skip everything.
-            # NO CN, NO ADJ DIFF, NO ZERO ROWS.
-            # ----------------------------------------------------------
-            if abs(diff) < 0.01:
-                debug_entry["Matched"] = "✓"
-                debug_rows_all.append(debug_entry)
-                continue
-
-            # ----------------------------------------------------------
-            # CN MATCHING ONLY IF DIFF ≠ 0
-            # ----------------------------------------------------------
-            matched = False
-            for i, r in cn.iterrows():
-                if i in used:
+                if abs(diff) < 0.01:
+                    debug_entry["Matched"] = "✓"
+                    debug_rows_all.append(debug_entry)
                     continue
 
-                if round(abs(r[cn_val]), 2) == round(abs(diff), 2):
-                    cn_rows.append({
-                        "Alt. Document": f"{r[cn_alt]} (CN)",
-                        "Invoice Value": -abs(r[cn_val])
+                matched = False
+                for i, r in cn.iterrows():
+                    if i in used:
+                        continue
+
+                    if round(abs(r[cn_val]), 2) == round(abs(diff), 2):
+                        cn_rows.append({
+                            "Alt. Document": f"{r[cn_alt]} (CN)",
+                            "Invoice Value": -abs(r[cn_val])
+                        })
+                        used.add(i)
+                        matched = True
+                        debug_entry["Matched"] = "✓ CN"
+                        break
+
+                if not matched:
+                    unmatched.append({
+                        "Alt. Document": f"{inv} (Adj. Diff)",
+                        "Invoice Value": diff
                     })
-                    used.add(i)
-                    matched = True
-                    debug_entry["Matched"] = "✓ CN"
-                    break
+                    debug_entry["Matched"] = "✗ No CN"
 
-            # ----------------------------------------------------------
-            # If no CN matches → create Adj. Diff (only for real differences)
-            # ----------------------------------------------------------
-            if not matched:
-                unmatched.append({
-                    "Alt. Document": f"{inv} (Adj. Diff)",
-                    "Invoice Value": diff
-                })
-                debug_entry["Matched"] = "✗ No CN"
+                debug_rows_all.append(debug_entry)
 
-            debug_rows_all.append(debug_entry)
-
-
-    # ------------------------------------------------------
-    # FINAL ROW TABLE
-    # ------------------------------------------------------
     full = pd.concat([
         summary,
         pd.DataFrame(cn_rows),
@@ -266,7 +241,6 @@ if cn_file:
 <br><hr><br>
 """
 
-
 # ----------------------------------------------------------
 # OUTPUT SUMMARY
 # ----------------------------------------------------------
@@ -275,19 +249,11 @@ if combined_html.endswith("<br><hr><br>"):
 
 tab1, tab2, tab3 = st.tabs(["Summary", "Advanced Debug", "GLPI"])
 
-# ----------------------------------------------------------
-# TAB 1 — SUMMARY
-# ----------------------------------------------------------
 with tab1:
     st.markdown(combined_html, unsafe_allow_html=True)
 
-# ----------------------------------------------------------
-# TAB 2 — ADVANCED DEBUG (VERSION B)
-# ----------------------------------------------------------
 with tab2:
-    st.subheader("Advanced Debug Breakdown (Unicode Icons ✓ / ✗)")
     dbg_df = pd.DataFrame(debug_rows_all)
-    dbg_df = dbg_df.sort_values(by=["Payment Code", "Vendor", "Alt. Document"]).reset_index(drop=True)
     st.dataframe(dbg_df, use_container_width=True)
 
     st.download_button(
@@ -297,16 +263,11 @@ with tab2:
         mime="text/csv"
     )
 
-
-# ----------------------------------------------------------
-# TAB 3 — GLPI
-# ----------------------------------------------------------
 with tab3:
     language = st.radio("Language", ["Spanish", "English"], horizontal=True)
 
     ticket_id = st.text_input("Ticket ID")
     category_id = st.text_input("Category ID")
-    assigned_email = st.text_input("Assign Email (optional)")
 
     if language == "Spanish":
         intro = "Estimado proveedor,<br><br>Adjuntamos las facturas correspondientes a los pagos realizados:<br><br>"
