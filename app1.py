@@ -125,7 +125,6 @@ Each line may contain:
 6. HABER / Πίστωση → Payment or Credit Note (put in Credit)
 7. If neither DEBE nor HABER exists but TOTAL/TOTALES/ΤΕΛΙΚΟ/ΣΥΝΟΛΟ appear, use that value as Debit (Invoice total).
 8. Output strictly JSON array only, no explanations.
-9. DO NOT BRING A COLUMN NAME BASE or Base!!
 Examples:
 Line: "31/01/25 1 245 N.F. A250213 NF A25021 907,98 6.355,74"
 Output object: {{"Alternative Document": "NF A25021", "Date": "31/01/25", "Reason": "Invoice", "Debit": "907,98", "Credit": ""}}
