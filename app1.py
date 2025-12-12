@@ -114,7 +114,7 @@ Each line may contain:
 - SALDO (ignore)
 - TOTAL / TOTALES / ΤΕΛΙΚΟ / ΣΥΝΟΛΟ / IMPORTE TOTAL / TOTAL FACTURA — treat as invoice total if no DEBE/HABER available
 ⚠️ RULES
-1. Ignore lines with 'Asiento', 'Saldo', 'IVA','Total Saldo' or 'Base'.
+1. Ignore lines with 'Asiento', 'Saldo', 'IVA','Total Saldo'.
 2. Exclude codes like "Código IC N" or similar from document detection.
 3. If "N° DOC" or "Documento" missing, detect invoice-like code (FAC123, F23, INV-2024, FRA-005, ΤΙΜ 123, etc or embedded in Concepto/Περιγραφή/Comentario as fallback)).
 4. Detect reason:
@@ -125,6 +125,7 @@ Each line may contain:
 6. HABER / Πίστωση → Payment or Credit Note (put in Credit)
 7. If neither DEBE nor HABER exists but TOTAL/TOTALES/ΤΕΛΙΚΟ/ΣΥΝΟΛΟ appear, use that value as Debit (Invoice total).
 8. Output strictly JSON array only, no explanations.
+9. DO NOT BRING A COLUMN NAME BASE or Base!!
 Examples:
 Line: "31/01/25 1 245 N.F. A250213 NF A25021 907,98 6.355,74"
 Output object: {{"Alternative Document": "NF A25021", "Date": "31/01/25", "Reason": "Invoice", "Debit": "907,98", "Credit": ""}}
