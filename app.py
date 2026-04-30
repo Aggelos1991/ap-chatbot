@@ -1,23 +1,18 @@
 # ==========================================================
-# THE REMITATOR — OLD FINAL HYBRID VERSION (FINAL STABLE)
+# THE REMITATOR — FINAL HYBRID (HARDENED GLPI EDITION)
 # DEFAULT USER ID = 22487 (ANGELOS KERAMARIS)
-# FULL GLPI FIX + SIGNATURE INJECTION
 # ==========================================================
 
 import os, re, requests
 import pandas as pd
 import streamlit as st
-from io import BytesIO
-from openpyxl import Workbook
-from openpyxl.styles import Font, Alignment, PatternFill
-from datetime import datetime
 from dotenv import load_dotenv
 
 # ----------------------------------------------------------
 # UI
 # ----------------------------------------------------------
 st.set_page_config(page_title="The Remitator", layout="wide")
-st.title("💀 The Remitator — Old Final Hybrid (User ID Fixed)")
+st.title("💀 The Remitator — Final Hybrid (Hardened)")
 
 DEFAULT_USER_ID = 22487
 SIGNATURE = """<br><br>Saludos,<br><b>Angelos Keramaris<br>Accounts Payable Iberia</b>"""
@@ -26,9 +21,10 @@ SIGNATURE = """<br><br>Saludos,<br><b>Angelos Keramaris<br>Accounts Payable Iber
 # ENV
 # ----------------------------------------------------------
 load_dotenv()
-GLPI_URL = os.getenv("GLPI_URL")
-APP_TOKEN = os.getenv("APP_TOKEN")
+GLPI_URL   = (os.getenv("GLPI_URL") or "").rstrip("/")
+APP_TOKEN  = os.getenv("APP_TOKEN")
 USER_TOKEN = os.getenv("USER_TOKEN")
+
 
 # ----------------------------------------------------------
 # HELPERS
@@ -63,15 +59,57 @@ def find_col(df, names):
     return None
 
 
+def safe_json(resp):
+    """Return parsed JSON or None — never crashes."""
+    try:
+        return resp.json()
+    except Exception:
+        return None
+
+
 # ----------------------------------------------------------
-# GLPI FUNCTIONS — FIXED (ALWAYS USES DEFAULT_USER_ID)
+# GLPI FUNCTIONS — HARDENED
 # ----------------------------------------------------------
 def glpi_login():
-    r = requests.get(
-        f"{GLPI_URL}/initSession",
-        headers={"Authorization": f"user_token {USER_TOKEN}", "App-Token": APP_TOKEN}
-    )
-    return r.json().get("session_token")
+    """Returns (session_token, error_message). One of them is always None."""
+    if not GLPI_URL or not APP_TOKEN or not USER_TOKEN:
+        return None, (
+            "Missing GLPI credentials. Check your .env / Streamlit secrets:\n"
+            f"- GLPI_URL set:   {bool(GLPI_URL)}\n"
+            f"- APP_TOKEN set:  {bool(APP_TOKEN)}\n"
+            f"- USER_TOKEN set: {bool(USER_TOKEN)}"
+        )
+
+    try:
+        r = requests.get(
+            f"{GLPI_URL}/initSession",
+            headers={
+                "Authorization": f"user_token {USER_TOKEN}",
+                "App-Token": APP_TOKEN,
+                "Content-Type": "application/json",
+            },
+            timeout=20,
+        )
+    except requests.RequestException as e:
+        return None, f"Network error contacting GLPI: {e}"
+
+    data = safe_json(r)
+
+    # GLPI error shape: ["ERROR_XXX", "human readable message"]
+    if isinstance(data, list):
+        return None, f"GLPI rejected login: {data}"
+
+    if not isinstance(data, dict):
+        return None, (
+            f"Unexpected GLPI response (status {r.status_code}). "
+            f"Body: {r.text[:300]}"
+        )
+
+    token = data.get("session_token")
+    if not token:
+        return None, f"GLPI response had no session_token. Body: {data}"
+
+    return token, None
 
 
 def glpi_update_ticket(token, ticket_id, status=5, category_id=None):
@@ -80,17 +118,17 @@ def glpi_update_ticket(token, ticket_id, status=5, category_id=None):
             "id": int(ticket_id),
             "status": int(status),
             "users_id_lastupdater": DEFAULT_USER_ID,
-            "users_id_recipient": DEFAULT_USER_ID
+            "users_id_recipient": DEFAULT_USER_ID,
         }
     }
-
     if category_id:
         payload["input"]["itilcategories_id"] = int(category_id)
 
     return requests.put(
         f"{GLPI_URL}/Ticket/{ticket_id}",
         json=payload,
-        headers={"Session-Token": token, "App-Token": APP_TOKEN}
+        headers={"Session-Token": token, "App-Token": APP_TOKEN},
+        timeout=20,
     )
 
 
@@ -103,14 +141,14 @@ def glpi_add_solution(token, ticket_id, html):
             "users_id_recipient": DEFAULT_USER_ID,
             "content": html,
             "solutiontypes_id": 10,
-            "status": 5
+            "status": 5,
         }
     }
-
     return requests.post(
         f"{GLPI_URL}/ITILSolution",
         json=payload,
-        headers={"Session-Token": token, "App-Token": APP_TOKEN}
+        headers={"Session-Token": token, "App-Token": APP_TOKEN},
+        timeout=20,
     )
 
 
@@ -121,22 +159,33 @@ def glpi_add_followup(token, ticket_id, html):
             "items_id": int(ticket_id),
             "users_id": DEFAULT_USER_ID,
             "users_id_recipient": DEFAULT_USER_ID,
-            "content": html
+            "content": html,
         }
     }
-
     return requests.post(
         f"{GLPI_URL}/Ticket/{ticket_id}/ITILFollowup",
         json=payload,
-        headers={"Session-Token": token, "App-Token": APP_TOKEN}
+        headers={"Session-Token": token, "App-Token": APP_TOKEN},
+        timeout=20,
     )
+
+
+def glpi_kill_session(token):
+    try:
+        requests.get(
+            f"{GLPI_URL}/killSession",
+            headers={"Session-Token": token, "App-Token": APP_TOKEN},
+            timeout=10,
+        )
+    except Exception:
+        pass
 
 
 # ----------------------------------------------------------
 # INPUT FILES
 # ----------------------------------------------------------
 pay_file = st.file_uploader("Upload Payment Excel", type=["xlsx"])
-cn_file = st.file_uploader("Upload Credit Notes (optional)", type=["xlsx"])
+cn_file  = st.file_uploader("Upload Credit Notes (optional)", type=["xlsx"])
 
 if not pay_file:
     st.info("Upload Payment Excel to start.")
@@ -184,7 +233,7 @@ for pay_code in selected_codes:
     unmatched = []
 
     # ------------------------------------------------------
-    # CREDIT NOTES MATCHING — FIXED
+    # CREDIT NOTES MATCHING
     # ------------------------------------------------------
     if cn_file:
         cn = pd.read_excel(cn_file)
@@ -210,7 +259,7 @@ for pay_code in selected_codes:
                     "Alt. Document": inv,
                     "Invoice Value": inv_val,
                     "Payment Value": pay_val,
-                    "Difference": diff
+                    "Difference": diff,
                 }
 
                 if abs(diff) < 0.01:
@@ -222,11 +271,10 @@ for pay_code in selected_codes:
                 for i, r in cn.iterrows():
                     if i in used:
                         continue
-
                     if round(abs(r[cn_val]), 2) == round(abs(diff), 2):
                         cn_rows.append({
                             "Alt. Document": f"{r[cn_alt]} (CN)",
-                            "Invoice Value": -abs(r[cn_val])
+                            "Invoice Value": -abs(r[cn_val]),
                         })
                         used.add(i)
                         matched = True
@@ -236,17 +284,16 @@ for pay_code in selected_codes:
                 if not matched:
                     unmatched.append({
                         "Alt. Document": f"{inv} (Adj. Diff)",
-                        "Invoice Value": diff
+                        "Invoice Value": diff,
                     })
                     dbg["Matched"] = "✗ No CN"
 
                 debug_rows_all.append(dbg)
 
-    full = pd.concat([
-        summary,
-        pd.DataFrame(cn_rows),
-        pd.DataFrame(unmatched)
-    ], ignore_index=True)
+    full = pd.concat(
+        [summary, pd.DataFrame(cn_rows), pd.DataFrame(unmatched)],
+        ignore_index=True,
+    )
 
     total_value = full["Invoice Value"].sum()
     full.loc[len(full)] = ["TOTAL", total_value]
@@ -286,14 +333,14 @@ with tab2:
         "⬇️ Download Debug CSV",
         dbg_df.to_csv(index=False).encode("utf-8"),
         file_name="debug_breakdown.csv",
-        mime="text/csv"
+        mime="text/csv",
     )
 
 # ------------------------ GLPI OUTPUT ----------------------
 with tab3:
     language = st.radio("Language", ["Spanish", "English"], horizontal=True)
 
-    ticket_id = st.text_input("Ticket ID")
+    ticket_id   = st.text_input("Ticket ID")
     category_id = st.text_input("Category ID")
 
     if language == "Spanish":
@@ -303,7 +350,6 @@ with tab3:
             "<br><br>"
         )
         outro = SIGNATURE
-
     else:
         intro = (
             "Dear supplier,<br><br>"
@@ -320,16 +366,27 @@ with tab3:
             st.error("Invalid Ticket ID")
             st.stop()
 
-        token = glpi_login()
-        if not token:
-            st.error("GLPI login error.")
+        token, err = glpi_login()
+        if err:
+            st.error(err)
             st.stop()
 
-        glpi_update_ticket(token, ticket_id, 5, category_id)
-        resp = glpi_add_solution(token, ticket_id, html_message)
+        try:
+            upd = glpi_update_ticket(token, ticket_id, 5, category_id)
+            if upd.status_code >= 400:
+                st.warning(f"Ticket update returned {upd.status_code}: {upd.text[:300]}")
 
-        if resp.status_code == 400 or "already solved" in resp.text.lower():
-            glpi_add_followup(token, ticket_id, html_message)
-            st.warning("Ticket already solved — posted as follow-up.")
-        else:
-            st.success("Solution added to GLPI.")
+            resp = glpi_add_solution(token, ticket_id, html_message)
+
+            if resp.status_code == 400 or "already solved" in resp.text.lower():
+                fu = glpi_add_followup(token, ticket_id, html_message)
+                if fu.status_code >= 400:
+                    st.error(f"Follow-up failed ({fu.status_code}): {fu.text[:300]}")
+                else:
+                    st.warning("Ticket already solved — posted as follow-up.")
+            elif resp.status_code >= 400:
+                st.error(f"Solution failed ({resp.status_code}): {resp.text[:300]}")
+            else:
+                st.success("Solution added to GLPI.")
+        finally:
+            glpi_kill_session(token)
