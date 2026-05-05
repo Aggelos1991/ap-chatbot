@@ -19,12 +19,23 @@ DEFAULT_USER_ID = 22487
 SIGNATURE = """<br><br>Saludos,<br><b>Angelos Keramaris<br>Accounts Payable Iberia</b>"""
 
 # ----------------------------------------------------------
-# ENV
+# ENV / SECRETS
 # ----------------------------------------------------------
 load_dotenv()
-GLPI_URL   = (os.getenv("GLPI_URL") or "").rstrip("/")
-APP_TOKEN  = os.getenv("APP_TOKEN")
-USER_TOKEN = os.getenv("USER_TOKEN")
+
+def _get(name, default=""):
+    """Streamlit Cloud secrets first, then environment variable, then default."""
+    try:
+        v = st.secrets.get(name)
+        if v:
+            return v
+    except Exception:
+        pass
+    return os.getenv(name, default)
+
+GLPI_URL   = (_get("GLPI_URL") or "").rstrip("/")
+APP_TOKEN  = _get("APP_TOKEN")
+USER_TOKEN = _get("USER_TOKEN")
 
 
 # ----------------------------------------------------------
@@ -73,16 +84,14 @@ def col_by_letter(df, letter):
 
 def find_cn_combo(pool, used, target, max_combo=3):
     """
-    pool: pre-built list of (idx, doc, abs_amount) tuples.
+    pool: list of (idx, doc, abs_amount) tuples (pre-built once).
     used: set of CN indices already consumed.
     target: signed difference (we match abs).
-    max_combo: max number of CNs to combine. Default 3.
     """
     target = round(abs(target), 2)
     if target <= 0:
         return None
 
-    # Filter once: drop used, zero, and any CN larger than target
     avail = [t for t in pool if t[0] not in used and 0 < t[2] <= target]
     if not avail:
         return None
@@ -94,7 +103,7 @@ def find_cn_combo(pool, used, target, max_combo=3):
     if max_combo < 2:
         return None
 
-    # Size 2 — O(n^2) on filtered pool
+    # Size 2
     n = len(avail)
     for i in range(n):
         a = avail[i][2]
@@ -104,7 +113,7 @@ def find_cn_combo(pool, used, target, max_combo=3):
     if max_combo < 3:
         return None
 
-    # Size 3+ via combinations on filtered pool
+    # Size 3+
     for size in range(3, min(max_combo, len(avail)) + 1):
         for combo in combinations(avail, size):
             if round(sum(c[2] for c in combo), 2) == target:
@@ -125,7 +134,7 @@ def safe_json(resp):
 def glpi_login():
     if not GLPI_URL or not APP_TOKEN or not USER_TOKEN:
         return None, (
-            "Missing GLPI credentials. Check your .env / Streamlit secrets:\n"
+            "Missing GLPI credentials. Check your Streamlit secrets / .env:\n"
             f"- GLPI_URL set:   {bool(GLPI_URL)}\n"
             f"- APP_TOKEN set:  {bool(APP_TOKEN)}\n"
             f"- USER_TOKEN set: {bool(USER_TOKEN)}"
@@ -227,7 +236,7 @@ vendor_col = find_col(df, ["Vendor", "SupplierName", "Supplier"])
 # ----------------------------------------------------------
 cn_df = None
 cn_pool = None
-cn_alt = cn_val = None
+cn_alt = cn_credit = cn_charge = cn_reason = None
 if cn_file:
     cn_df = pd.read_excel(cn_file)
     cn_df.columns = [c.strip() for c in cn_df.columns]
@@ -239,53 +248,86 @@ if cn_file:
         "Factura", "Nº Factura", "Referencia", "Ref",
         "Document", "DocNumber", "InvoiceNumber"
     ])
-    cn_val = find_col(cn_df, [
-        "Credit", "CreditAmount", "CreditValue", "CR",
-        "Amount", "InvoiceValue", "Invoice Value",
-        "DEBE", "Cargo", "Haber", "Abono",
-        "Importe", "Total", "Valor", "Monto", "Saldo"
+    cn_credit = find_col(cn_df, ["Credit", "CreditAmount", "CreditValue", "Haber", "Abono"])
+    cn_charge = find_col(cn_df, ["Charge", "ChargeAmount", "Cargo", "DEBE", "Debit"])
+    cn_reason = find_col(cn_df, [
+        "Reason", "Razon", "Razón", "Motivo",
+        "Description", "Descripcion", "Descripción",
+        "Concept", "Concepto"
     ])
 
     with st.expander("🔧 Credit Notes — column override",
-                     expanded=(cn_alt is None or cn_val is None)):
+                     expanded=(cn_alt is None or (cn_credit is None and cn_charge is None))):
         st.write("**Columns in CN file:**", list(cn_df.columns))
-        st.write(f"Auto-detected document: `{cn_alt}` | amount: `{cn_val}`")
+        st.write(
+            f"Auto-detected — document: `{cn_alt}` | "
+            f"credit: `{cn_credit}` | charge: `{cn_charge}` | reason: `{cn_reason}`"
+        )
 
         c1, c2 = st.columns(2)
         with c1:
-            letter_alt = st.text_input("Document column (Excel letter)", "")
-            dropdown_alt = st.selectbox("…or pick by name",
-                options=["(auto)"] + list(cn_df.columns), index=0, key="alt_pick")
+            letter_alt    = st.text_input("Document column (letter)", "")
+            letter_credit = st.text_input("Credit column (letter)", "F")
         with c2:
-            letter_val = st.text_input("Amount column (Excel letter)", "F")
-            dropdown_val = st.selectbox("…or pick by name",
-                options=["(auto)"] + list(cn_df.columns), index=0, key="val_pick")
+            letter_charge = st.text_input("Charge column (letter)", "E")
+            letter_reason = st.text_input("Reason column (letter)", "G")
 
         if letter_alt:
             r = col_by_letter(cn_df, letter_alt)
             if r: cn_alt = r
-            else: st.error(f"Letter '{letter_alt}' out of range.")
-        elif dropdown_alt != "(auto)":
-            cn_alt = dropdown_alt
+            else: st.error(f"Letter '{letter_alt}' out of range for document.")
+        if letter_credit:
+            r = col_by_letter(cn_df, letter_credit)
+            if r: cn_credit = r
+            else: st.error(f"Letter '{letter_credit}' out of range for credit.")
+        if letter_charge:
+            r = col_by_letter(cn_df, letter_charge)
+            if r: cn_charge = r
+            else: st.error(f"Letter '{letter_charge}' out of range for charge.")
+        if letter_reason:
+            r = col_by_letter(cn_df, letter_reason)
+            if r: cn_reason = r
+            else: st.error(f"Letter '{letter_reason}' out of range for reason.")
 
-        if letter_val:
-            r = col_by_letter(cn_df, letter_val)
-            if r: cn_val = r
-            else: st.error(f"Letter '{letter_val}' out of range.")
-        elif dropdown_val != "(auto)":
-            cn_val = dropdown_val
+    if cn_alt and (cn_credit or cn_charge):
+        if cn_credit: cn_df[cn_credit] = cn_df[cn_credit].apply(parse_amount)
+        if cn_charge: cn_df[cn_charge] = cn_df[cn_charge].apply(parse_amount)
 
-    if cn_alt and cn_val:
-        cn_df[cn_val] = cn_df[cn_val].apply(parse_amount)
-        # Pre-build CN pool ONCE — list of (idx, doc, abs_amount)
-        cn_pool = [
-            (int(i), str(cn_df.at[i, cn_alt]), round(abs(cn_df.at[i, cn_val]), 2))
-            for i in cn_df.index
-        ]
-        st.success(f"CN matching enabled — {len(cn_pool)} CNs loaded "
-                   f"(document=`{cn_alt}`, amount=`{cn_val}`).")
+        CN_KEYWORDS = (
+            "credit note", "credit", "nota credito", "nota de credito",
+            "nota crédito", "nota de crédito", "abono", "ncr", "n/c", "cn"
+        )
+
+        cn_pool = []
+        skipped_no_reason = 0
+        for i in cn_df.index:
+            if cn_reason:
+                reason = str(cn_df.at[i, cn_reason] or "").lower()
+                if not any(k in reason for k in CN_KEYWORDS):
+                    skipped_no_reason += 1
+                    continue
+
+            val = 0.0
+            if cn_credit:
+                val = parse_amount(cn_df.at[i, cn_credit])
+            if val == 0 and cn_charge:
+                val = parse_amount(cn_df.at[i, cn_charge])
+            if val == 0:
+                continue
+
+            doc = str(cn_df.at[i, cn_alt])
+            cn_pool.append((int(i), doc, round(abs(val), 2)))
+
+        msg = (
+            f"CN matching enabled — {len(cn_pool)} CNs loaded "
+            f"(document=`{cn_alt}`, credit=`{cn_credit}`, "
+            f"charge=`{cn_charge}`, reason=`{cn_reason}`)."
+        )
+        if cn_reason and skipped_no_reason:
+            msg += f" Skipped {skipped_no_reason} non-CN rows by Reason."
+        st.success(msg)
     else:
-        st.warning("CN matching disabled — set the document & amount columns above.")
+        st.warning("CN matching disabled — set the document and at least one of credit/charge columns above.")
         cn_df = None
 
 cn_used_global = set()
@@ -296,7 +338,7 @@ debug_rows_all = []
 # ----------------------------------------------------------
 # PROCESS EACH PAYMENT CODE
 # ----------------------------------------------------------
-MAX_COMBO = 3  # 1 + 2 + 3 CN combinations. Bump to 4 if you really need it.
+MAX_COMBO = 3  # combine up to 3 CNs to cover a single invoice diff
 
 for pay_code in selected_codes:
     subset = df[df[pay_doc_col].astype(str) == str(pay_code)].copy()
@@ -397,7 +439,6 @@ with tab1:
 with tab2:
     if debug_rows_all:
         dbg_df = pd.DataFrame(debug_rows_all)
-        # Force string columns to be strings — Arrow-safe
         for c in ["Payment Code", "Vendor", "Alt. Document",
                   "Matched CN(s)", "CN Value(s)", "Status"]:
             if c in dbg_df.columns:
