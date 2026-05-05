@@ -35,7 +35,6 @@ def parse_amount(v):
         return 0.0
     s = str(v).strip()
     s = re.sub(r"[^\d,.\-]", "", s)
-
     if s.count(",") == 1 and s.count(".") == 1:
         if s.find(",") > s.find("."):
             s = s.replace(".", "").replace(",", ".")
@@ -43,7 +42,6 @@ def parse_amount(v):
             s = s.replace(",", "")
     elif s.count(",") == 1:
         s = s.replace(",", ".")
-
     try:
         return float(s)
     except:
@@ -73,22 +71,42 @@ def col_by_letter(df, letter):
     return None
 
 
-def find_cn_combo(cn_df, cn_val, cn_alt, used, target, max_combo=4):
+def find_cn_combo(pool, used, target, max_combo=3):
     """
-    Find a subset of unused CN rows whose absolute amounts sum to abs(target).
-    Returns list of (row_index, doc, amount) or None.
-    Tries size 1 first, then 2, then 3, ... up to max_combo.
+    pool: pre-built list of (idx, doc, abs_amount) tuples.
+    used: set of CN indices already consumed.
+    target: signed difference (we match abs).
+    max_combo: max number of CNs to combine. Default 3.
     """
     target = round(abs(target), 2)
-    available = [
-        (i, str(r[cn_alt]), round(abs(r[cn_val]), 2))
-        for i, r in cn_df.iterrows()
-        if i not in used and round(abs(r[cn_val]), 2) > 0
-    ]
-    if not available:
+    if target <= 0:
         return None
-    for size in range(1, min(max_combo, len(available)) + 1):
-        for combo in combinations(available, size):
+
+    # Filter once: drop used, zero, and any CN larger than target
+    avail = [t for t in pool if t[0] not in used and 0 < t[2] <= target]
+    if not avail:
+        return None
+
+    # Size 1
+    for entry in avail:
+        if entry[2] == target:
+            return [entry]
+    if max_combo < 2:
+        return None
+
+    # Size 2 — O(n^2) on filtered pool
+    n = len(avail)
+    for i in range(n):
+        a = avail[i][2]
+        for j in range(i + 1, n):
+            if round(a + avail[j][2], 2) == target:
+                return [avail[i], avail[j]]
+    if max_combo < 3:
+        return None
+
+    # Size 3+ via combinations on filtered pool
+    for size in range(3, min(max_combo, len(avail)) + 1):
+        for combo in combinations(avail, size):
             if round(sum(c[2] for c in combo), 2) == target:
                 return list(combo)
     return None
@@ -112,7 +130,6 @@ def glpi_login():
             f"- APP_TOKEN set:  {bool(APP_TOKEN)}\n"
             f"- USER_TOKEN set: {bool(USER_TOKEN)}"
         )
-
     try:
         r = requests.get(
             f"{GLPI_URL}/initSession",
@@ -125,7 +142,6 @@ def glpi_login():
         )
     except requests.RequestException as e:
         return None, f"Network error contacting GLPI: {e}"
-
     data = safe_json(r)
     if isinstance(data, list):
         return None, f"GLPI rejected login: {data}"
@@ -138,69 +154,35 @@ def glpi_login():
 
 
 def glpi_update_ticket(token, ticket_id, status=5, category_id=None):
-    payload = {
-        "input": {
-            "id": int(ticket_id),
-            "status": int(status),
-            "users_id_lastupdater": DEFAULT_USER_ID,
-            "users_id_recipient": DEFAULT_USER_ID,
-        }
-    }
+    payload = {"input": {"id": int(ticket_id), "status": int(status),
+                         "users_id_lastupdater": DEFAULT_USER_ID,
+                         "users_id_recipient": DEFAULT_USER_ID}}
     if category_id:
         payload["input"]["itilcategories_id"] = int(category_id)
-    return requests.put(
-        f"{GLPI_URL}/Ticket/{ticket_id}",
-        json=payload,
-        headers={"Session-Token": token, "App-Token": APP_TOKEN},
-        timeout=20,
-    )
+    return requests.put(f"{GLPI_URL}/Ticket/{ticket_id}", json=payload,
+                        headers={"Session-Token": token, "App-Token": APP_TOKEN}, timeout=20)
 
 
 def glpi_add_solution(token, ticket_id, html):
-    payload = {
-        "input": {
-            "itemtype": "Ticket",
-            "items_id": int(ticket_id),
-            "users_id": DEFAULT_USER_ID,
-            "users_id_recipient": DEFAULT_USER_ID,
-            "content": html,
-            "solutiontypes_id": 10,
-            "status": 5,
-        }
-    }
-    return requests.post(
-        f"{GLPI_URL}/ITILSolution",
-        json=payload,
-        headers={"Session-Token": token, "App-Token": APP_TOKEN},
-        timeout=20,
-    )
+    payload = {"input": {"itemtype": "Ticket", "items_id": int(ticket_id),
+                         "users_id": DEFAULT_USER_ID, "users_id_recipient": DEFAULT_USER_ID,
+                         "content": html, "solutiontypes_id": 10, "status": 5}}
+    return requests.post(f"{GLPI_URL}/ITILSolution", json=payload,
+                         headers={"Session-Token": token, "App-Token": APP_TOKEN}, timeout=20)
 
 
 def glpi_add_followup(token, ticket_id, html):
-    payload = {
-        "input": {
-            "itemtype": "Ticket",
-            "items_id": int(ticket_id),
-            "users_id": DEFAULT_USER_ID,
-            "users_id_recipient": DEFAULT_USER_ID,
-            "content": html,
-        }
-    }
-    return requests.post(
-        f"{GLPI_URL}/Ticket/{ticket_id}/ITILFollowup",
-        json=payload,
-        headers={"Session-Token": token, "App-Token": APP_TOKEN},
-        timeout=20,
-    )
+    payload = {"input": {"itemtype": "Ticket", "items_id": int(ticket_id),
+                         "users_id": DEFAULT_USER_ID, "users_id_recipient": DEFAULT_USER_ID,
+                         "content": html}}
+    return requests.post(f"{GLPI_URL}/Ticket/{ticket_id}/ITILFollowup", json=payload,
+                         headers={"Session-Token": token, "App-Token": APP_TOKEN}, timeout=20)
 
 
 def glpi_kill_session(token):
     try:
-        requests.get(
-            f"{GLPI_URL}/killSession",
-            headers={"Session-Token": token, "App-Token": APP_TOKEN},
-            timeout=10,
-        )
+        requests.get(f"{GLPI_URL}/killSession",
+                     headers={"Session-Token": token, "App-Token": APP_TOKEN}, timeout=10)
     except Exception:
         pass
 
@@ -241,9 +223,10 @@ payv_col   = find_col(df, ["PaymentValue", "Payment Value"]) or "Payment Value"
 vendor_col = find_col(df, ["Vendor", "SupplierName", "Supplier"])
 
 # ----------------------------------------------------------
-# CREDIT NOTES — load ONCE outside loop
+# CREDIT NOTES — load and pre-build pool ONCE
 # ----------------------------------------------------------
 cn_df = None
+cn_pool = None
 cn_alt = cn_val = None
 if cn_file:
     cn_df = pd.read_excel(cn_file)
@@ -268,39 +251,39 @@ if cn_file:
         st.write("**Columns in CN file:**", list(cn_df.columns))
         st.write(f"Auto-detected document: `{cn_alt}` | amount: `{cn_val}`")
 
-        col1, col2 = st.columns(2)
-        with col1:
-            letter_alt = st.text_input("Document column (Excel letter, e.g. A)", "")
-            dropdown_alt = st.selectbox(
-                "…or pick by name",
-                options=["(auto)"] + list(cn_df.columns),
-                index=0, key="alt_pick",
-            )
-        with col2:
-            letter_val = st.text_input("Amount column (Excel letter, e.g. F)", "F")
-            dropdown_val = st.selectbox(
-                "…or pick by name",
-                options=["(auto)"] + list(cn_df.columns),
-                index=0, key="val_pick",
-            )
+        c1, c2 = st.columns(2)
+        with c1:
+            letter_alt = st.text_input("Document column (Excel letter)", "")
+            dropdown_alt = st.selectbox("…or pick by name",
+                options=["(auto)"] + list(cn_df.columns), index=0, key="alt_pick")
+        with c2:
+            letter_val = st.text_input("Amount column (Excel letter)", "F")
+            dropdown_val = st.selectbox("…or pick by name",
+                options=["(auto)"] + list(cn_df.columns), index=0, key="val_pick")
 
         if letter_alt:
-            resolved = col_by_letter(cn_df, letter_alt)
-            if resolved: cn_alt = resolved
-            else:        st.error(f"Column letter '{letter_alt}' is out of range.")
+            r = col_by_letter(cn_df, letter_alt)
+            if r: cn_alt = r
+            else: st.error(f"Letter '{letter_alt}' out of range.")
         elif dropdown_alt != "(auto)":
             cn_alt = dropdown_alt
 
         if letter_val:
-            resolved = col_by_letter(cn_df, letter_val)
-            if resolved: cn_val = resolved
-            else:        st.error(f"Column letter '{letter_val}' is out of range.")
+            r = col_by_letter(cn_df, letter_val)
+            if r: cn_val = r
+            else: st.error(f"Letter '{letter_val}' out of range.")
         elif dropdown_val != "(auto)":
             cn_val = dropdown_val
 
     if cn_alt and cn_val:
         cn_df[cn_val] = cn_df[cn_val].apply(parse_amount)
-        st.success(f"CN matching enabled — document=`{cn_alt}`, amount=`{cn_val}`.")
+        # Pre-build CN pool ONCE — list of (idx, doc, abs_amount)
+        cn_pool = [
+            (int(i), str(cn_df.at[i, cn_alt]), round(abs(cn_df.at[i, cn_val]), 2))
+            for i in cn_df.index
+        ]
+        st.success(f"CN matching enabled — {len(cn_pool)} CNs loaded "
+                   f"(document=`{cn_alt}`, amount=`{cn_val}`).")
     else:
         st.warning("CN matching disabled — set the document & amount columns above.")
         cn_df = None
@@ -313,6 +296,8 @@ debug_rows_all = []
 # ----------------------------------------------------------
 # PROCESS EACH PAYMENT CODE
 # ----------------------------------------------------------
+MAX_COMBO = 3  # 1 + 2 + 3 CN combinations. Bump to 4 if you really need it.
+
 for pay_code in selected_codes:
     subset = df[df[pay_doc_col].astype(str) == str(pay_code)].copy()
     if subset.empty:
@@ -329,15 +314,15 @@ for pay_code in selected_codes:
 
     for _, row in subset.iterrows():
         inv     = str(row[alt_col])
-        inv_val = row[inv_col]
-        pay_val = row[payv_col]
+        inv_val = float(row[inv_col])
+        pay_val = float(row[payv_col])
         diff    = round(pay_val - inv_val, 2)
 
         summary_rows.append({"Alt. Document": inv, "Invoice Value": inv_val})
 
         dbg = {
-            "Payment Code": pay_code,
-            "Vendor": vendor,
+            "Payment Code": str(pay_code),
+            "Vendor": str(vendor),
             "Alt. Document": inv,
             "Invoice Value": inv_val,
             "Payment Value": pay_val,
@@ -354,18 +339,15 @@ for pay_code in selected_codes:
             continue
 
         combo = None
-        if cn_df is not None:
-            combo = find_cn_combo(cn_df, cn_val, cn_alt, cn_used_global, diff, max_combo=4)
+        if cn_pool is not None:
+            combo = find_cn_combo(cn_pool, cn_used_global, diff, max_combo=MAX_COMBO)
 
         if combo:
             sign = -1 if diff < 0 else 1
             docs, vals = [], []
             for idx, doc, amt in combo:
                 signed = sign * amt
-                cn_rows.append({
-                    "Alt. Document": f"{doc} (CN)",
-                    "Invoice Value": signed,
-                })
+                cn_rows.append({"Alt. Document": f"{doc} (CN)", "Invoice Value": signed})
                 cn_used_global.add(idx)
                 docs.append(doc)
                 vals.append(f"{signed:.2f}")
@@ -374,10 +356,7 @@ for pay_code in selected_codes:
             dbg["CN Value(s)"]   = ", ".join(vals)
             dbg["CN Count"]      = len(combo)
         else:
-            unmatched.append({
-                "Alt. Document": f"{inv} (Adj. Diff)",
-                "Invoice Value": diff,
-            })
+            unmatched.append({"Alt. Document": f"{inv} (Adj. Diff)", "Invoice Value": diff})
             dbg["Status"] = "✗ No CN — adjustment"
 
         debug_rows_all.append(dbg)
@@ -418,7 +397,12 @@ with tab1:
 with tab2:
     if debug_rows_all:
         dbg_df = pd.DataFrame(debug_rows_all)
-        st.dataframe(dbg_df, use_container_width=True)
+        # Force string columns to be strings — Arrow-safe
+        for c in ["Payment Code", "Vendor", "Alt. Document",
+                  "Matched CN(s)", "CN Value(s)", "Status"]:
+            if c in dbg_df.columns:
+                dbg_df[c] = dbg_df[c].astype(str)
+        st.dataframe(dbg_df, width="stretch")
         st.download_button(
             "⬇️ Download Debug CSV",
             dbg_df.to_csv(index=False).encode("utf-8"),
@@ -435,18 +419,14 @@ with tab3:
     category_id = st.text_input("Category ID")
 
     if language == "Spanish":
-        intro = (
-            "Estimado proveedor,<br><br>"
-            "Adjuntamos el detalle de facturas correspondientes a los pagos realizados:"
-            "<br><br>"
-        )
+        intro = ("Estimado proveedor,<br><br>"
+                 "Adjuntamos el detalle de facturas correspondientes a los pagos realizados:"
+                 "<br><br>")
         outro = SIGNATURE
     else:
-        intro = (
-            "Dear supplier,<br><br>"
-            "Please find below the invoice breakdown corresponding to the executed payments:"
-            "<br><br>"
-        )
+        intro = ("Dear supplier,<br><br>"
+                 "Please find below the invoice breakdown corresponding to the executed payments:"
+                 "<br><br>")
         outro = "<br><br>Regards,<br><b>Angelos Keramaris<br>Accounts Payable Iberia</b>"
 
     html_message = intro + combined_html + outro
