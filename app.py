@@ -60,7 +60,6 @@ def find_col(df, names):
 
 
 def safe_json(resp):
-    """Return parsed JSON or None — never crashes."""
     try:
         return resp.json()
     except Exception:
@@ -71,7 +70,6 @@ def safe_json(resp):
 # GLPI FUNCTIONS — HARDENED
 # ----------------------------------------------------------
 def glpi_login():
-    """Returns (session_token, error_message). One of them is always None."""
     if not GLPI_URL or not APP_TOKEN or not USER_TOKEN:
         return None, (
             "Missing GLPI credentials. Check your .env / Streamlit secrets:\n"
@@ -95,7 +93,6 @@ def glpi_login():
 
     data = safe_json(r)
 
-    # GLPI error shape: ["ERROR_XXX", "human readable message"]
     if isinstance(data, list):
         return None, f"GLPI rejected login: {data}"
 
@@ -203,6 +200,41 @@ selected_codes = [x.strip() for x in pay_input.split(",") if x.strip()]
 if not selected_codes:
     st.stop()
 
+# ----------------------------------------------------------
+# COLUMN DETECTION (once, up front)
+# ----------------------------------------------------------
+pay_doc_col = find_col(df, ["PaymentDocumentCode", "PaymentDocument"])
+if not pay_doc_col:
+    st.error("Cannot find Payment Document Code column.")
+    st.stop()
+
+alt_col    = find_col(df, ["Alt.Document", "AltDocument", "Alt. Document"]) or "Alt. Document"
+inv_col    = find_col(df, ["InvoiceValue", "Invoice Value"]) or "Invoice Value"
+payv_col   = find_col(df, ["PaymentValue", "Payment Value"]) or "Payment Value"
+vendor_col = find_col(df, ["Vendor", "SupplierName", "Supplier"])
+
+# ----------------------------------------------------------
+# CREDIT NOTES — load ONCE outside loop
+# ----------------------------------------------------------
+cn_df = None
+cn_alt = cn_val = None
+if cn_file:
+    cn_df = pd.read_excel(cn_file)
+    cn_df.columns = [c.strip() for c in cn_df.columns]
+    cn_df = cn_df.loc[:, ~cn_df.columns.duplicated()]
+    cn_alt = find_col(cn_df, ["AltDocument", "Alt.Document", "Alt. Document"])
+    cn_val = find_col(cn_df, ["Amount", "InvoiceValue", "DEBE", "Cargo"])
+    if cn_alt and cn_val:
+        cn_df[cn_val] = cn_df[cn_val].apply(parse_amount)
+    else:
+        st.warning(
+            f"Credit-notes file uploaded but columns not detected "
+            f"(alt={cn_alt!r}, val={cn_val!r}). CN matching disabled."
+        )
+        cn_df = None
+
+cn_used_global = set()
+
 combined_html = ""
 export_data = {}
 debug_rows_all = []
@@ -211,87 +243,74 @@ debug_rows_all = []
 # PROCESS EACH PAYMENT CODE
 # ----------------------------------------------------------
 for pay_code in selected_codes:
-
-    col = find_col(df, ["PaymentDocumentCode", "PaymentDocument"])
-    if not col:
-        st.error("Cannot find Payment Document Code column.")
-        st.stop()
-
-    subset = df[df[col].astype(str) == str(pay_code)]
+    subset = df[df[pay_doc_col].astype(str) == str(pay_code)].copy()
     if subset.empty:
         continue
 
-    subset["Invoice Value"] = subset["Invoice Value"].apply(parse_amount)
-    subset["Payment Value"] = subset["Payment Value"].apply(parse_amount)
+    subset[inv_col]  = subset[inv_col].apply(parse_amount)
+    subset[payv_col] = subset[payv_col].apply(parse_amount)
 
-    vendor_col = find_col(df, ["Vendor", "SupplierName", "Supplier"])
     vendor = subset[vendor_col].iloc[0] if vendor_col else "Unknown Vendor"
 
-    summary = subset[["Alt. Document", "Invoice Value"]].copy()
-
+    summary_rows = []
     cn_rows = []
     unmatched = []
 
-    # ------------------------------------------------------
-    # CREDIT NOTES MATCHING
-    # ------------------------------------------------------
-    if cn_file:
-        cn = pd.read_excel(cn_file)
-        cn.columns = [c.strip() for c in cn.columns]
-        cn = cn.loc[:, ~cn.columns.duplicated()]
+    for _, row in subset.iterrows():
+        inv     = str(row[alt_col])
+        inv_val = row[inv_col]
+        pay_val = row[payv_col]
+        diff    = round(pay_val - inv_val, 2)
 
-        cn_alt = find_col(cn, ["AltDocument", "Alt.Document"])
-        cn_val = find_col(cn, ["Amount", "InvoiceValue", "DEBE", "Cargo"])
+        summary_rows.append({"Alt. Document": inv, "Invoice Value": inv_val})
 
-        if cn_alt and cn_val:
-            cn[cn_val] = cn[cn_val].apply(parse_amount)
-            used = set()
+        dbg = {
+            "Payment Code": pay_code,
+            "Vendor": vendor,
+            "Alt. Document": inv,
+            "Invoice Value": inv_val,
+            "Payment Value": pay_val,
+            "Difference": diff,
+            "Matched CN": "",
+            "CN Value": "",
+            "Status": "",
+        }
 
-            for _, row in subset.iterrows():
-                inv = str(row["Alt. Document"])
-                inv_val = row["Invoice Value"]
-                pay_val = row["Payment Value"]
-                diff = round(pay_val - inv_val, 2)
+        if abs(diff) < 0.01:
+            dbg["Status"] = "✓ Exact"
+            debug_rows_all.append(dbg)
+            continue
 
-                dbg = {
-                    "Payment Code": pay_code,
-                    "Vendor": vendor,
-                    "Alt. Document": inv,
-                    "Invoice Value": inv_val,
-                    "Payment Value": pay_val,
-                    "Difference": diff,
-                }
-
-                if abs(diff) < 0.01:
-                    dbg["Matched"] = "✓"
-                    debug_rows_all.append(dbg)
+        matched = False
+        if cn_df is not None:
+            for i, r in cn_df.iterrows():
+                if i in cn_used_global:
                     continue
-
-                matched = False
-                for i, r in cn.iterrows():
-                    if i in used:
-                        continue
-                    if round(abs(r[cn_val]), 2) == round(abs(diff), 2):
-                        cn_rows.append({
-                            "Alt. Document": f"{r[cn_alt]} (CN)",
-                            "Invoice Value": -abs(r[cn_val]),
-                        })
-                        used.add(i)
-                        matched = True
-                        dbg["Matched"] = "✓ CN"
-                        break
-
-                if not matched:
-                    unmatched.append({
-                        "Alt. Document": f"{inv} (Adj. Diff)",
-                        "Invoice Value": diff,
+                if round(abs(r[cn_val]), 2) == round(abs(diff), 2):
+                    cn_doc = str(r[cn_alt])
+                    cn_amount = -abs(r[cn_val]) if diff < 0 else abs(r[cn_val])
+                    cn_rows.append({
+                        "Alt. Document": f"{cn_doc} (CN)",
+                        "Invoice Value": cn_amount,
                     })
-                    dbg["Matched"] = "✗ No CN"
+                    cn_used_global.add(i)
+                    matched = True
+                    dbg["Status"]     = "✓ CN matched"
+                    dbg["Matched CN"] = cn_doc
+                    dbg["CN Value"]   = cn_amount
+                    break
 
-                debug_rows_all.append(dbg)
+        if not matched:
+            unmatched.append({
+                "Alt. Document": f"{inv} (Adj. Diff)",
+                "Invoice Value": diff,
+            })
+            dbg["Status"] = "✗ No CN — adjustment"
+
+        debug_rows_all.append(dbg)
 
     full = pd.concat(
-        [summary, pd.DataFrame(cn_rows), pd.DataFrame(unmatched)],
+        [pd.DataFrame(summary_rows), pd.DataFrame(cn_rows), pd.DataFrame(unmatched)],
         ignore_index=True,
     )
 
@@ -326,15 +345,18 @@ with tab1:
 
 # ------------------------ DEBUG ---------------------------
 with tab2:
-    dbg_df = pd.DataFrame(debug_rows_all)
-    st.dataframe(dbg_df, use_container_width=True)
+    if debug_rows_all:
+        dbg_df = pd.DataFrame(debug_rows_all)
+        st.dataframe(dbg_df, use_container_width=True)
 
-    st.download_button(
-        "⬇️ Download Debug CSV",
-        dbg_df.to_csv(index=False).encode("utf-8"),
-        file_name="debug_breakdown.csv",
-        mime="text/csv",
-    )
+        st.download_button(
+            "⬇️ Download Debug CSV",
+            dbg_df.to_csv(index=False).encode("utf-8"),
+            file_name="debug_breakdown.csv",
+            mime="text/csv",
+        )
+    else:
+        st.info("No rows processed — check that the Payment Document Codes match the Excel.")
 
 # ------------------------ GLPI OUTPUT ----------------------
 with tab3:
