@@ -4,6 +4,7 @@
 # ==========================================================
 
 import os, re, requests
+from itertools import combinations
 import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
@@ -59,6 +60,40 @@ def find_col(df, names):
     return None
 
 
+def col_by_letter(df, letter):
+    letter = (letter or "").strip().upper()
+    if not letter or not letter.isalpha():
+        return None
+    idx = 0
+    for ch in letter:
+        idx = idx * 26 + (ord(ch) - ord('A') + 1)
+    idx -= 1
+    if 0 <= idx < len(df.columns):
+        return df.columns[idx]
+    return None
+
+
+def find_cn_combo(cn_df, cn_val, cn_alt, used, target, max_combo=4):
+    """
+    Find a subset of unused CN rows whose absolute amounts sum to abs(target).
+    Returns list of (row_index, doc, amount) or None.
+    Tries size 1 first, then 2, then 3, ... up to max_combo.
+    """
+    target = round(abs(target), 2)
+    available = [
+        (i, str(r[cn_alt]), round(abs(r[cn_val]), 2))
+        for i, r in cn_df.iterrows()
+        if i not in used and round(abs(r[cn_val]), 2) > 0
+    ]
+    if not available:
+        return None
+    for size in range(1, min(max_combo, len(available)) + 1):
+        for combo in combinations(available, size):
+            if round(sum(c[2] for c in combo), 2) == target:
+                return list(combo)
+    return None
+
+
 def safe_json(resp):
     try:
         return resp.json()
@@ -92,20 +127,13 @@ def glpi_login():
         return None, f"Network error contacting GLPI: {e}"
 
     data = safe_json(r)
-
     if isinstance(data, list):
         return None, f"GLPI rejected login: {data}"
-
     if not isinstance(data, dict):
-        return None, (
-            f"Unexpected GLPI response (status {r.status_code}). "
-            f"Body: {r.text[:300]}"
-        )
-
+        return None, f"Unexpected GLPI response (status {r.status_code}). Body: {r.text[:300]}"
     token = data.get("session_token")
     if not token:
         return None, f"GLPI response had no session_token. Body: {data}"
-
     return token, None
 
 
@@ -120,7 +148,6 @@ def glpi_update_ticket(token, ticket_id, status=5, category_id=None):
     }
     if category_id:
         payload["input"]["itilcategories_id"] = int(category_id)
-
     return requests.put(
         f"{GLPI_URL}/Ticket/{ticket_id}",
         json=payload,
@@ -201,7 +228,7 @@ if not selected_codes:
     st.stop()
 
 # ----------------------------------------------------------
-# COLUMN DETECTION (once, up front)
+# COLUMN DETECTION (payment file)
 # ----------------------------------------------------------
 pay_doc_col = find_col(df, ["PaymentDocumentCode", "PaymentDocument"])
 if not pay_doc_col:
@@ -222,19 +249,63 @@ if cn_file:
     cn_df = pd.read_excel(cn_file)
     cn_df.columns = [c.strip() for c in cn_df.columns]
     cn_df = cn_df.loc[:, ~cn_df.columns.duplicated()]
-    cn_alt = find_col(cn_df, ["AltDocument", "Alt.Document", "Alt. Document"])
-    cn_val = find_col(cn_df, ["Amount", "InvoiceValue", "DEBE", "Cargo"])
+
+    cn_alt = find_col(cn_df, [
+        "AltDocument", "Alt.Document", "Alt. Document",
+        "Documento", "Nº Documento", "NumDocumento",
+        "Factura", "Nº Factura", "Referencia", "Ref",
+        "Document", "DocNumber", "InvoiceNumber"
+    ])
+    cn_val = find_col(cn_df, [
+        "Credit", "CreditAmount", "CreditValue", "CR",
+        "Amount", "InvoiceValue", "Invoice Value",
+        "DEBE", "Cargo", "Haber", "Abono",
+        "Importe", "Total", "Valor", "Monto", "Saldo"
+    ])
+
+    with st.expander("🔧 Credit Notes — column override",
+                     expanded=(cn_alt is None or cn_val is None)):
+        st.write("**Columns in CN file:**", list(cn_df.columns))
+        st.write(f"Auto-detected document: `{cn_alt}` | amount: `{cn_val}`")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            letter_alt = st.text_input("Document column (Excel letter, e.g. A)", "")
+            dropdown_alt = st.selectbox(
+                "…or pick by name",
+                options=["(auto)"] + list(cn_df.columns),
+                index=0, key="alt_pick",
+            )
+        with col2:
+            letter_val = st.text_input("Amount column (Excel letter, e.g. F)", "F")
+            dropdown_val = st.selectbox(
+                "…or pick by name",
+                options=["(auto)"] + list(cn_df.columns),
+                index=0, key="val_pick",
+            )
+
+        if letter_alt:
+            resolved = col_by_letter(cn_df, letter_alt)
+            if resolved: cn_alt = resolved
+            else:        st.error(f"Column letter '{letter_alt}' is out of range.")
+        elif dropdown_alt != "(auto)":
+            cn_alt = dropdown_alt
+
+        if letter_val:
+            resolved = col_by_letter(cn_df, letter_val)
+            if resolved: cn_val = resolved
+            else:        st.error(f"Column letter '{letter_val}' is out of range.")
+        elif dropdown_val != "(auto)":
+            cn_val = dropdown_val
+
     if cn_alt and cn_val:
         cn_df[cn_val] = cn_df[cn_val].apply(parse_amount)
+        st.success(f"CN matching enabled — document=`{cn_alt}`, amount=`{cn_val}`.")
     else:
-        st.warning(
-            f"Credit-notes file uploaded but columns not detected "
-            f"(alt={cn_alt!r}, val={cn_val!r}). CN matching disabled."
-        )
+        st.warning("CN matching disabled — set the document & amount columns above.")
         cn_df = None
 
 cn_used_global = set()
-
 combined_html = ""
 export_data = {}
 debug_rows_all = []
@@ -271,8 +342,9 @@ for pay_code in selected_codes:
             "Invoice Value": inv_val,
             "Payment Value": pay_val,
             "Difference": diff,
-            "Matched CN": "",
-            "CN Value": "",
+            "Matched CN(s)": "",
+            "CN Value(s)": "",
+            "CN Count": 0,
             "Status": "",
         }
 
@@ -281,26 +353,27 @@ for pay_code in selected_codes:
             debug_rows_all.append(dbg)
             continue
 
-        matched = False
+        combo = None
         if cn_df is not None:
-            for i, r in cn_df.iterrows():
-                if i in cn_used_global:
-                    continue
-                if round(abs(r[cn_val]), 2) == round(abs(diff), 2):
-                    cn_doc = str(r[cn_alt])
-                    cn_amount = -abs(r[cn_val]) if diff < 0 else abs(r[cn_val])
-                    cn_rows.append({
-                        "Alt. Document": f"{cn_doc} (CN)",
-                        "Invoice Value": cn_amount,
-                    })
-                    cn_used_global.add(i)
-                    matched = True
-                    dbg["Status"]     = "✓ CN matched"
-                    dbg["Matched CN"] = cn_doc
-                    dbg["CN Value"]   = cn_amount
-                    break
+            combo = find_cn_combo(cn_df, cn_val, cn_alt, cn_used_global, diff, max_combo=4)
 
-        if not matched:
+        if combo:
+            sign = -1 if diff < 0 else 1
+            docs, vals = [], []
+            for idx, doc, amt in combo:
+                signed = sign * amt
+                cn_rows.append({
+                    "Alt. Document": f"{doc} (CN)",
+                    "Invoice Value": signed,
+                })
+                cn_used_global.add(idx)
+                docs.append(doc)
+                vals.append(f"{signed:.2f}")
+            dbg["Status"]        = "✓ CN matched" if len(combo) == 1 else f"✓ {len(combo)} CNs combined"
+            dbg["Matched CN(s)"] = ", ".join(docs)
+            dbg["CN Value(s)"]   = ", ".join(vals)
+            dbg["CN Count"]      = len(combo)
+        else:
             unmatched.append({
                 "Alt. Document": f"{inv} (Adj. Diff)",
                 "Invoice Value": diff,
@@ -339,16 +412,13 @@ if combined_html.endswith("<br><hr><br>"):
 
 tab1, tab2, tab3 = st.tabs(["Summary", "Advanced Debug", "GLPI"])
 
-# ------------------------ SUMMARY -------------------------
 with tab1:
     st.markdown(combined_html, unsafe_allow_html=True)
 
-# ------------------------ DEBUG ---------------------------
 with tab2:
     if debug_rows_all:
         dbg_df = pd.DataFrame(debug_rows_all)
         st.dataframe(dbg_df, use_container_width=True)
-
         st.download_button(
             "⬇️ Download Debug CSV",
             dbg_df.to_csv(index=False).encode("utf-8"),
@@ -358,7 +428,6 @@ with tab2:
     else:
         st.info("No rows processed — check that the Payment Document Codes match the Excel.")
 
-# ------------------------ GLPI OUTPUT ----------------------
 with tab3:
     language = st.radio("Language", ["Spanish", "English"], horizontal=True)
 
