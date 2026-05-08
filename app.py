@@ -3,7 +3,7 @@
 # DEFAULT USER ID = 22487 (ANGELOS KERAMARIS)
 # ==========================================================
 
-import os, re, requests
+import os, re, io, requests
 from itertools import combinations
 import pandas as pd
 import streamlit as st
@@ -126,6 +126,36 @@ def safe_json(resp):
         return resp.json()
     except Exception:
         return None
+
+
+def build_excel_export(export_data):
+    """One sheet per payment code + a combined Summary sheet."""
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        # Summary sheet
+        summary_rows = []
+        for code, info in export_data.items():
+            rows = info["rows"]
+            total_row = rows[rows["Alt. Document"] == "TOTAL"]
+            total = float(total_row["Invoice Value"].iloc[0]) if not total_row.empty else 0.0
+            summary_rows.append({"Payment Code": code, "Vendor": info["vendor"], "Total (€)": total})
+        if summary_rows:
+            pd.DataFrame(summary_rows).to_excel(writer, sheet_name="Summary", index=False)
+
+        # Per-payment-code sheets (Excel sheet names: max 31 chars, no \ / * ? : [ ])
+        used = set()
+        for code, info in export_data.items():
+            base = re.sub(r'[\\/*?:\[\]]', '_', str(code))[:28] or "Sheet"
+            name, n = base, 1
+            while name in used:
+                n += 1
+                name = f"{base[:25]}_{n}"
+            used.add(name)
+            out = info["rows"].copy()
+            out.insert(0, "Vendor", info["vendor"])
+            out.insert(0, "Payment Code", code)
+            out.to_excel(writer, sheet_name=name, index=False)
+    return buf.getvalue()
 
 
 # ----------------------------------------------------------
@@ -435,6 +465,13 @@ tab1, tab2, tab3 = st.tabs(["Summary", "Advanced Debug", "GLPI"])
 
 with tab1:
     st.markdown(combined_html, unsafe_allow_html=True)
+    if export_data:
+        st.download_button(
+            "⬇️ Download Payment Analysis (Excel)",
+            data=build_excel_export(export_data),
+            file_name="payment_analysis.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
 
 with tab2:
     if debug_rows_all:
