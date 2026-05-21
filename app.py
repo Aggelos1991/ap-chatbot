@@ -59,6 +59,26 @@ def parse_amount(v):
         return 0.0
 
 
+def fmt_date(v):
+    """Format a payment date from the Excel into dd/mm/yyyy (European). Falls back to raw text."""
+    if pd.isna(v):
+        return ""
+    # Already a date/datetime/Timestamp
+    if hasattr(v, "strftime"):
+        try:
+            return v.strftime("%d/%m/%Y")
+        except Exception:
+            pass
+    # Try to parse strings / Excel serials (day-first for European dates)
+    try:
+        ts = pd.to_datetime(v, dayfirst=True, errors="coerce")
+        if pd.notna(ts):
+            return ts.strftime("%d/%m/%Y")
+    except Exception:
+        pass
+    return str(v).strip()
+
+
 def find_col(df, names):
     for c in df.columns:
         clean = c.strip().lower().replace(" ", "").replace(".", "")
@@ -138,7 +158,12 @@ def build_excel_export(export_data):
             rows = info["rows"]
             total_row = rows[rows["Alt. Document"] == "TOTAL"]
             total = float(total_row["Invoice Value"].iloc[0]) if not total_row.empty else 0.0
-            summary_rows.append({"Payment Code": code, "Vendor": info["vendor"], "Total (€)": total})
+            summary_rows.append({
+                "Payment Code": code,
+                "Payment Date": info.get("pay_date", ""),
+                "Vendor": info["vendor"],
+                "Total (€)": total,
+            })
         if summary_rows:
             pd.DataFrame(summary_rows).to_excel(writer, sheet_name="Summary", index=False)
 
@@ -153,6 +178,7 @@ def build_excel_export(export_data):
             used.add(name)
             out = info["rows"].copy()
             out.insert(0, "Vendor", info["vendor"])
+            out.insert(0, "Payment Date", info.get("pay_date", ""))
             out.insert(0, "Payment Code", code)
             out.to_excel(writer, sheet_name=name, index=False)
     return buf.getvalue()
@@ -256,10 +282,16 @@ if not pay_doc_col:
     st.error("Cannot find Payment Document Code column.")
     st.stop()
 
-alt_col    = find_col(df, ["Alt.Document", "AltDocument", "Alt. Document"]) or "Alt. Document"
-inv_col    = find_col(df, ["InvoiceValue", "Invoice Value"]) or "Invoice Value"
-payv_col   = find_col(df, ["PaymentValue", "Payment Value"]) or "Payment Value"
-vendor_col = find_col(df, ["Vendor", "SupplierName", "Supplier"])
+alt_col     = find_col(df, ["Alt.Document", "AltDocument", "Alt. Document"]) or "Alt. Document"
+inv_col     = find_col(df, ["InvoiceValue", "Invoice Value"]) or "Invoice Value"
+payv_col    = find_col(df, ["PaymentValue", "Payment Value"]) or "Payment Value"
+vendor_col  = find_col(df, ["Vendor", "SupplierName", "Supplier"])
+paydate_col = find_col(df, [
+    "PaymentDate", "Payment Date", "PaymentDt",
+    "FechaPago", "Fecha de Pago", "Fecha Pago",
+    "FechaValor", "Fecha Valor", "ValueDate", "Value Date",
+    "Fecha", "Date",
+])
 
 # ----------------------------------------------------------
 # CREDIT NOTES — load and pre-build pool ONCE
@@ -379,6 +411,7 @@ for pay_code in selected_codes:
     subset[payv_col] = subset[payv_col].apply(parse_amount)
 
     vendor = subset[vendor_col].iloc[0] if vendor_col else "Unknown Vendor"
+    pay_date = fmt_date(subset[paydate_col].iloc[0]) if paydate_col else ""
 
     summary_rows = []
     cn_rows = []
@@ -394,6 +427,7 @@ for pay_code in selected_codes:
 
         dbg = {
             "Payment Code": str(pay_code),
+            "Payment Date": pay_date,
             "Vendor": str(vendor),
             "Alt. Document": inv,
             "Invoice Value": inv_val,
@@ -441,16 +475,18 @@ for pay_code in selected_codes:
     total_value = full["Invoice Value"].sum()
     full.loc[len(full)] = ["TOTAL", total_value]
 
-    export_data[pay_code] = {"vendor": vendor, "rows": full.copy()}
+    export_data[pay_code] = {"vendor": vendor, "pay_date": pay_date, "rows": full.copy()}
 
     display_df = full.copy()
     display_df["Invoice Value (€)"] = display_df["Invoice Value"].apply(lambda v: f"€{v:,.2f}")
     display_df = display_df[["Alt. Document", "Invoice Value (€)"]]
 
+    pay_date_line = f"<b>Payment Date:</b> {pay_date}<br>" if pay_date else ""
+
     combined_html += f"""
 <b>Payment Code:</b> {pay_code}<br>
 <b>Vendor:</b> {vendor}<br>
-<b>Total Amount:</b> €{total_value:,.2f}<br><br>
+{pay_date_line}<b>Total Amount:</b> €{total_value:,.2f}<br><br>
 {display_df.to_html(index=False, border=0)}
 <br><hr><br>
 """
@@ -476,7 +512,7 @@ with tab1:
 with tab2:
     if debug_rows_all:
         dbg_df = pd.DataFrame(debug_rows_all)
-        for c in ["Payment Code", "Vendor", "Alt. Document",
+        for c in ["Payment Code", "Payment Date", "Vendor", "Alt. Document",
                   "Matched CN(s)", "CN Value(s)", "Status"]:
             if c in dbg_df.columns:
                 dbg_df[c] = dbg_df[c].astype(str)
