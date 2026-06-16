@@ -507,44 +507,45 @@ combined_html = ""
 tab1, tab2, tab3 = st.tabs(["Summary", "Advanced Debug", "GLPI"])
 
 with tab1:
-    edit_mode = st.toggle("✏️ Edit tables before sending", value=False,
-                          help="Add, delete, or change rows. Totals recalculate automatically.")
+    st.caption("✏️ This table is editable. Double-click a cell to change it · "
+               "➕ row at the bottom to add · select a row's checkbox + press ⌫ to delete · "
+               "totals recalc automatically and edits flow into the Excel + GLPI message.")
 
-    if edit_mode and export_data:
-        st.caption("➕ row at the bottom to add · select a row's checkbox to delete · "
-                   "edits stick when you switch tabs / send to GLPI.")
-        for code in list(export_data.keys()):
-            info = export_data[code]
-            label = f"**{code} — {info['vendor']}**"
-            if info.get("pay_date"):
-                label += f"  ·  {info['pay_date']}"
-            st.markdown(label)
+    # --- THE EDITABLE TABLE (always on, this IS the summary) ---
+    for code in list(export_data.keys()):
+        info = export_data[code]
+        label = f"**{code} — {info['vendor']}**"
+        if info.get("pay_date"):
+            label += f"  ·  {info['pay_date']}"
+        st.markdown(label)
 
-            base = _body_no_total(info["rows"])
-            edited = st.data_editor(
-                base,
-                num_rows="dynamic",
-                use_container_width=True,
-                key=f"editor_{code}",
-                column_config={
-                    "Alt. Document": st.column_config.TextColumn("Alt. Document"),
-                    "Invoice Value": st.column_config.NumberColumn(
-                        "Invoice Value", format="%.2f", step=0.01
-                    ),
-                },
-            )
-            # clean + push edits back into export_data so HTML/Excel/GLPI all use them
-            edited = edited.dropna(how="all")
-            edited["Alt. Document"] = edited["Alt. Document"].fillna("").astype(str)
-            edited["Invoice Value"] = pd.to_numeric(edited["Invoice Value"], errors="coerce").fillna(0.0)
-            export_data[code]["rows"] = edited.reset_index(drop=True)
+        base = _body_no_total(info["rows"])
+        edited = st.data_editor(
+            base,
+            num_rows="dynamic",
+            use_container_width=True,
+            key=f"editor_{code}",
+            column_config={
+                "Alt. Document": st.column_config.TextColumn("Alt. Document", width="large"),
+                "Invoice Value": st.column_config.NumberColumn(
+                    "Invoice Value", format="%.2f", step=0.01
+                ),
+            },
+        )
+        # clean + push edits back into export_data so HTML/Excel/GLPI all use them
+        edited = edited.dropna(how="all")
+        edited["Alt. Document"] = edited["Alt. Document"].fillna("").astype(str)
+        edited["Invoice Value"] = pd.to_numeric(edited["Invoice Value"], errors="coerce").fillna(0.0)
+        export_data[code]["rows"] = edited.reset_index(drop=True)
 
-            st.caption(f"Total: €{edited['Invoice Value'].sum():,.2f}")
-            st.markdown("---")
+        st.markdown(f"**Total: €{edited['Invoice Value'].sum():,.2f}**")
+        st.markdown("---")
 
-    # rebuild from (possibly edited) data
+    # rebuild the GLPI/email HTML from the (edited) data
     combined_html = build_combined_html(export_data)
-    st.markdown(combined_html, unsafe_allow_html=True)
+
+    with st.expander("👁️ Preview formatted message (what gets sent to GLPI)"):
+        st.markdown(combined_html, unsafe_allow_html=True)
 
     if export_data:
         st.download_button(
