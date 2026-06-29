@@ -2,6 +2,7 @@
 # THE REMITATOR — FINAL HYBRID (HARDENED GLPI EDITION)
 # DEFAULT USER ID = 22487 (ANGELOS KERAMARIS)
 # + EDITABLE TABLES (st.data_editor)
+# + BULK TICKETS: post the same answer to many tickets at once
 # ==========================================================
 
 import os, re, io, requests
@@ -277,6 +278,26 @@ def glpi_kill_session(token):
                      headers={"Session-Token": token, "App-Token": APP_TOKEN}, timeout=10)
     except Exception:
         pass
+
+
+def glpi_send_one(token, ticket_id, html_message, category_id):
+    """Update one ticket + post the solution (falls back to follow-up if already solved).
+    Returns a short human-readable result string."""
+    try:
+        upd = glpi_update_ticket(token, ticket_id, 5, category_id)
+        upd_warn = "" if upd.status_code < 400 else f" (update {upd.status_code})"
+
+        resp = glpi_add_solution(token, ticket_id, html_message)
+        if resp.status_code == 400 or "already solved" in (resp.text or "").lower():
+            fu = glpi_add_followup(token, ticket_id, html_message)
+            if fu.status_code >= 400:
+                return f"❌ Follow-up failed ({fu.status_code})" + upd_warn
+            return "⚠️ Already solved — follow-up posted" + upd_warn
+        if resp.status_code >= 400:
+            return f"❌ Solution failed ({resp.status_code})" + upd_warn
+        return "✅ Solution added" + upd_warn
+    except Exception as e:
+        return f"❌ Error: {e}"
 
 
 # ----------------------------------------------------------
@@ -576,9 +597,6 @@ with tab2:
 with tab3:
     language = st.radio("Language", ["Spanish", "English"], horizontal=True)
 
-    ticket_id   = st.text_input("Ticket ID")
-    category_id = st.text_input("Category ID")
-
     if language == "Spanish":
         intro = ("Estimado proveedor,<br><br>"
                  "Adjuntamos el detalle de facturas correspondientes a los pagos realizados:"
@@ -590,36 +608,83 @@ with tab3:
                  "<br><br>")
         outro = "<br><br>Regards,<br><b>Angelos Keramaris<br>Accounts Payable Iberia</b>"
 
-    # uses the edited combined_html from tab1
-    html_message = intro + combined_html + outro
+    # ---- what to send: the payment analysis, or any custom text ----
+    msg_mode = st.radio(
+        "Message to post",
+        ["Payment analysis (from Summary tab)", "Custom message (free text)"],
+        horizontal=True,
+    )
+    if msg_mode.startswith("Custom"):
+        custom_msg = st.text_area(
+            "Your message — HTML supported (use <br> for line breaks)",
+            height=220,
+            placeholder="Estimado proveedor, ...",
+        )
+        append_sig = st.checkbox("Append signature", value=True)
+        html_message = (custom_msg or "") + (SIGNATURE if append_sig else "")
+    else:
+        # uses the edited combined_html from tab1
+        html_message = intro + combined_html + outro
+
+    # ---- BULK ticket IDs ----
+    ticket_input = st.text_area(
+        "Ticket IDs — paste one or many (comma, space, or new-line separated)",
+        height=90,
+        placeholder="100245, 100246, 100247",
+    )
+    category_id = st.text_input("Category ID (optional — applied to every ticket)")
+
+    # robust: pull every number out of whatever the user pasted, keep order, dedupe
+    ticket_ids = list(dict.fromkeys(re.findall(r"\d+", ticket_input or "")))
+
+    st.markdown("**Preview — this exact message goes to every ticket below:**")
     st.markdown(html_message, unsafe_allow_html=True)
 
-    if st.button("Send to GLPI"):
-        if not ticket_id.isdigit():
-            st.error("Invalid Ticket ID")
-            st.stop()
+    if ticket_ids:
+        st.info(f"Ready to post to **{len(ticket_ids)}** ticket(s): {', '.join(ticket_ids)}")
+    else:
+        st.caption("Enter at least one Ticket ID to enable sending.")
 
+    confirm = st.checkbox(
+        f"I confirm posting this message to {len(ticket_ids)} ticket(s).",
+        value=False,
+        disabled=not ticket_ids,
+    )
+
+    if st.button("🚀 Send to GLPI", disabled=not (ticket_ids and confirm)):
         token, err = glpi_login()
         if err:
             st.error(err)
             st.stop()
 
+        results = []
+        total = len(ticket_ids)
+        progress = st.progress(0.0)
+        status_box = st.empty()
         try:
-            upd = glpi_update_ticket(token, ticket_id, 5, category_id)
-            if upd.status_code >= 400:
-                st.warning(f"Ticket update returned {upd.status_code}: {upd.text[:300]}")
-
-            resp = glpi_add_solution(token, ticket_id, html_message)
-
-            if resp.status_code == 400 or "already solved" in resp.text.lower():
-                fu = glpi_add_followup(token, ticket_id, html_message)
-                if fu.status_code >= 400:
-                    st.error(f"Follow-up failed ({fu.status_code}): {fu.text[:300]}")
-                else:
-                    st.warning("Ticket already solved — posted as follow-up.")
-            elif resp.status_code >= 400:
-                st.error(f"Solution failed ({resp.status_code}): {resp.text[:300]}")
-            else:
-                st.success("Solution added to GLPI.")
+            for i, tid in enumerate(ticket_ids):
+                status_box.write(f"Processing ticket {tid}  ({i + 1}/{total}) …")
+                res = glpi_send_one(token, tid, html_message, category_id)
+                results.append({"Ticket": tid, "Result": res})
+                progress.progress((i + 1) / total)
         finally:
             glpi_kill_session(token)
+
+        status_box.empty()
+        res_df = pd.DataFrame(results)
+        st.dataframe(res_df, use_container_width=True)
+
+        ok   = sum(1 for r in results if r["Result"].startswith("✅"))
+        warn = sum(1 for r in results if r["Result"].startswith("⚠️"))
+        bad  = sum(1 for r in results if r["Result"].startswith("❌"))
+        if bad == 0:
+            st.success(f"Done — ✅ {ok} solved · ⚠️ {warn} follow-up · ❌ {bad} failed  (of {total}).")
+        else:
+            st.warning(f"Done — ✅ {ok} solved · ⚠️ {warn} follow-up · ❌ {bad} failed  (of {total}). See table above.")
+
+        st.download_button(
+            "⬇️ Download results CSV",
+            res_df.to_csv(index=False).encode("utf-8"),
+            file_name="glpi_bulk_results.csv",
+            mime="text/csv",
+        )
