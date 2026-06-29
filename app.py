@@ -3,6 +3,9 @@
 # DEFAULT USER ID = 22487 (ANGELOS KERAMARIS)
 # + EDITABLE TABLES (st.data_editor)
 # + BULK TICKETS: post the same answer to many tickets at once
+# + BULK EMAIL mode (write your own message, no Excel needed)
+# + AUTO-ASSIGN every ticket to Angelos (GLPI 10 _actors + Ticket_User)
+# + Sidebar GLPI connection tester
 # ==========================================================
 
 import os, re, io, requests
@@ -35,9 +38,10 @@ def _get(name, default=""):
         pass
     return os.getenv(name, default)
 
-GLPI_URL   = (_get("GLPI_URL") or "").rstrip("/")
-APP_TOKEN  = _get("APP_TOKEN")
-USER_TOKEN = _get("USER_TOKEN")
+# .strip() removes stray spaces/newlines that sneak into the Streamlit secret and break login
+GLPI_URL   = (_get("GLPI_URL") or "").strip().rstrip("/")
+APP_TOKEN  = (_get("APP_TOKEN") or "").strip()
+USER_TOKEN = (_get("USER_TOKEN") or "").strip()
 
 
 # ----------------------------------------------------------
@@ -256,6 +260,44 @@ def glpi_update_ticket(token, ticket_id, status=5, category_id=None):
                         headers={"Session-Token": token, "App-Token": APP_TOKEN}, timeout=20)
 
 
+def glpi_assign_ticket(token, ticket_id, user_id=DEFAULT_USER_ID):
+    """Set the ticket's 'Assigned to' technician. Tries both:
+      1) GLPI 10 `_actors` structure (PUT /Ticket) — what the web form uses.
+      2) Universal Ticket_User type=2 (POST /Ticket_User) — works on 9.x & 10.x.
+    Returns True if either method was accepted (or the actor already exists)."""
+    hdr = {"Session-Token": token, "App-Token": APP_TOKEN}
+    ok = False
+
+    # Method 1 — GLPI 10 _actors (only touches the 'assign' role; requester/observer untouched)
+    try:
+        r1 = requests.put(
+            f"{GLPI_URL}/Ticket/{ticket_id}",
+            json={"input": {"id": int(ticket_id),
+                            "_actors": {"assign": [
+                                {"itemtype": "User", "items_id": int(user_id), "use_notification": 1}
+                            ]}}},
+            headers=hdr, timeout=20,
+        )
+        if r1.status_code < 400:
+            ok = True
+    except Exception:
+        pass
+
+    # Method 2 — Ticket_User type=2 (additive). 'already exists' (400) still means assigned.
+    try:
+        r2 = requests.post(
+            f"{GLPI_URL}/Ticket_User",
+            json={"input": {"tickets_id": int(ticket_id), "users_id": int(user_id), "type": 2}},
+            headers=hdr, timeout=20,
+        )
+        if r2.status_code < 400 or "already" in (r2.text or "").lower():
+            ok = True
+    except Exception:
+        pass
+
+    return ok
+
+
 def glpi_add_solution(token, ticket_id, html):
     payload = {"input": {"itemtype": "Ticket", "items_id": int(ticket_id),
                          "users_id": DEFAULT_USER_ID, "users_id_recipient": DEFAULT_USER_ID,
@@ -281,23 +323,61 @@ def glpi_kill_session(token):
 
 
 def glpi_send_one(token, ticket_id, html_message, category_id):
-    """Update one ticket + post the solution (falls back to follow-up if already solved).
-    Returns a short human-readable result string."""
+    """Update one ticket + assign to Angelos + post the solution
+    (falls back to follow-up if already solved). Returns a short result string."""
     try:
         upd = glpi_update_ticket(token, ticket_id, 5, category_id)
         upd_warn = "" if upd.status_code < 400 else f" (update {upd.status_code})"
+
+        # always assign the ticket to Angelos — robust across GLPI 9.x / 10.x
+        assigned = glpi_assign_ticket(token, ticket_id, DEFAULT_USER_ID)
+        assign_note = "" if assigned else " (assign?)"
 
         resp = glpi_add_solution(token, ticket_id, html_message)
         if resp.status_code == 400 or "already solved" in (resp.text or "").lower():
             fu = glpi_add_followup(token, ticket_id, html_message)
             if fu.status_code >= 400:
-                return f"❌ Follow-up failed ({fu.status_code})" + upd_warn
-            return "⚠️ Already solved — follow-up posted" + upd_warn
+                return f"❌ Follow-up failed ({fu.status_code})" + upd_warn + assign_note
+            return "⚠️ Already solved — follow-up posted" + upd_warn + assign_note
         if resp.status_code >= 400:
-            return f"❌ Solution failed ({resp.status_code})" + upd_warn
-        return "✅ Solution added" + upd_warn
+            return f"❌ Solution failed ({resp.status_code})" + upd_warn + assign_note
+        return "✅ Solution added" + upd_warn + assign_note
     except Exception as e:
         return f"❌ Error: {e}"
+
+
+# ----------------------------------------------------------
+# SIDEBAR — GLPI connection check / debugger
+# ----------------------------------------------------------
+with st.sidebar:
+    st.header("🔑 GLPI connection")
+
+    def _mask(t):
+        if not t:
+            return "❌ NOT SET"
+        return f"✅ set · {len(t)} chars · ends …{t[-4:]}"
+
+    st.write(f"**GLPI_URL:** {GLPI_URL or '❌ NOT SET'}")
+    st.write(f"**APP_TOKEN:** {_mask(APP_TOKEN)}")
+    st.write(f"**USER_TOKEN:** {_mask(USER_TOKEN)}")
+
+    if st.button("Test GLPI login"):
+        tok, err = glpi_login()
+        if err:
+            st.error(err)
+            st.info(
+                "If it says *user_token seems invalid*:\n"
+                "1. GLPI → your avatar → **My settings → Remote access keys**.\n"
+                "2. **Regenerate** the *API token* and copy it.\n"
+                "3. Streamlit Cloud → **Manage app → Settings → Secrets** → set "
+                "`USER_TOKEN = \"...\"` (no trailing spaces).\n"
+                "4. Save → app reboots → press Test again."
+            )
+        else:
+            st.success("✅ Login OK — tokens are valid.")
+            glpi_kill_session(tok)
+
+    st.caption("Tokens come from Streamlit **Secrets** / .env — never stored in the code.")
 
 
 # ----------------------------------------------------------
