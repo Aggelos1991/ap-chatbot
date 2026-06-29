@@ -1,6 +1,8 @@
 # ==========================================================
 # THE REMITATOR — FINAL HYBRID (HARDENED GLPI EDITION)
 # DEFAULT USER ID = 22487 (ANGELOS KERAMARIS)
+# + EDITABLE TABLES (st.data_editor)
+# + BULK TICKETS: post the same answer to many tickets at once
 # ==========================================================
 
 import os, re, io, requests
@@ -63,13 +65,11 @@ def fmt_date(v):
     """Format a payment date from the Excel into dd/mm/yyyy (European). Falls back to raw text."""
     if pd.isna(v):
         return ""
-    # Already a date/datetime/Timestamp
     if hasattr(v, "strftime"):
         try:
             return v.strftime("%d/%m/%Y")
         except Exception:
             pass
-    # Try to parse strings / Excel serials (day-first for European dates)
     try:
         ts = pd.to_datetime(v, dayfirst=True, errors="coerce")
         if pd.notna(ts):
@@ -103,11 +103,6 @@ def col_by_letter(df, letter):
 
 
 def find_cn_combo(pool, used, target, max_combo=3):
-    """
-    pool: list of (idx, doc, abs_amount) tuples (pre-built once).
-    used: set of CN indices already consumed.
-    target: signed difference (we match abs).
-    """
     target = round(abs(target), 2)
     if target <= 0:
         return None
@@ -116,14 +111,12 @@ def find_cn_combo(pool, used, target, max_combo=3):
     if not avail:
         return None
 
-    # Size 1
     for entry in avail:
         if entry[2] == target:
             return [entry]
     if max_combo < 2:
         return None
 
-    # Size 2
     n = len(avail)
     for i in range(n):
         a = avail[i][2]
@@ -133,7 +126,6 @@ def find_cn_combo(pool, used, target, max_combo=3):
     if max_combo < 3:
         return None
 
-    # Size 3+
     for size in range(3, min(max_combo, len(avail)) + 1):
         for combo in combinations(avail, size):
             if round(sum(c[2] for c in combo), 2) == target:
@@ -148,16 +140,49 @@ def safe_json(resp):
         return None
 
 
+def _body_no_total(rows):
+    """Return rows without any TOTAL line, with clean numeric Invoice Value."""
+    body = rows[rows["Alt. Document"].astype(str) != "TOTAL"].copy()
+    body["Alt. Document"] = body["Alt. Document"].fillna("").astype(str)
+    body["Invoice Value"] = pd.to_numeric(body["Invoice Value"], errors="coerce").fillna(0.0)
+    return body.reset_index(drop=True)
+
+
+def build_combined_html(export_data):
+    """Rebuild the HTML summary from (possibly edited) export_data. Totals recomputed."""
+    html = ""
+    for code, info in export_data.items():
+        body = _body_no_total(info["rows"])
+        total_value = body["Invoice Value"].sum()
+
+        full = body.copy()
+        full.loc[len(full)] = ["TOTAL", total_value]
+
+        disp = full.copy()
+        disp["Invoice Value (€)"] = disp["Invoice Value"].apply(lambda v: f"€{v:,.2f}")
+        disp = disp[["Alt. Document", "Invoice Value (€)"]]
+
+        pay_date_line = f"<b>Payment Date:</b> {info.get('pay_date','')}<br>" if info.get("pay_date") else ""
+        html += f"""
+<b>Payment Code:</b> {code}<br>
+<b>Vendor:</b> {info['vendor']}<br>
+{pay_date_line}<b>Total Amount:</b> €{total_value:,.2f}<br><br>
+{disp.to_html(index=False, border=0)}
+<br><hr><br>
+"""
+    if html.endswith("<br><hr><br>"):
+        html = html[:-12]
+    return html
+
+
 def build_excel_export(export_data):
-    """One sheet per payment code + a combined Summary sheet."""
+    """One sheet per payment code + a combined Summary sheet. Totals recomputed."""
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as writer:
-        # Summary sheet
         summary_rows = []
         for code, info in export_data.items():
-            rows = info["rows"]
-            total_row = rows[rows["Alt. Document"] == "TOTAL"]
-            total = float(total_row["Invoice Value"].iloc[0]) if not total_row.empty else 0.0
+            body = _body_no_total(info["rows"])
+            total = body["Invoice Value"].sum()
             summary_rows.append({
                 "Payment Code": code,
                 "Payment Date": info.get("pay_date", ""),
@@ -167,7 +192,6 @@ def build_excel_export(export_data):
         if summary_rows:
             pd.DataFrame(summary_rows).to_excel(writer, sheet_name="Summary", index=False)
 
-        # Per-payment-code sheets (Excel sheet names: max 31 chars, no \ / * ? : [ ])
         used = set()
         for code, info in export_data.items():
             base = re.sub(r'[\\/*?:\[\]]', '_', str(code))[:28] or "Sheet"
@@ -176,7 +200,11 @@ def build_excel_export(export_data):
                 n += 1
                 name = f"{base[:25]}_{n}"
             used.add(name)
-            out = info["rows"].copy()
+
+            body = _body_no_total(info["rows"])
+            total = body["Invoice Value"].sum()
+            out = body.copy()
+            out.loc[len(out)] = ["TOTAL", total]
             out.insert(0, "Vendor", info["vendor"])
             out.insert(0, "Payment Date", info.get("pay_date", ""))
             out.insert(0, "Payment Code", code)
@@ -252,6 +280,137 @@ def glpi_kill_session(token):
         pass
 
 
+def glpi_send_one(token, ticket_id, html_message, category_id):
+    """Update one ticket + post the solution (falls back to follow-up if already solved).
+    Returns a short human-readable result string."""
+    try:
+        upd = glpi_update_ticket(token, ticket_id, 5, category_id)
+        upd_warn = "" if upd.status_code < 400 else f" (update {upd.status_code})"
+
+        resp = glpi_add_solution(token, ticket_id, html_message)
+        if resp.status_code == 400 or "already solved" in (resp.text or "").lower():
+            fu = glpi_add_followup(token, ticket_id, html_message)
+            if fu.status_code >= 400:
+                return f"❌ Follow-up failed ({fu.status_code})" + upd_warn
+            return "⚠️ Already solved — follow-up posted" + upd_warn
+        if resp.status_code >= 400:
+            return f"❌ Solution failed ({resp.status_code})" + upd_warn
+        return "✅ Solution added" + upd_warn
+    except Exception as e:
+        return f"❌ Error: {e}"
+
+
+# ----------------------------------------------------------
+# MODE SELECTOR
+# ----------------------------------------------------------
+app_mode = st.radio(
+    "What do you want to do?",
+    ["✉️ Bulk Email to Tickets", "💶 Payment Analysis"],
+    horizontal=True,
+)
+
+# ==========================================================
+# MODE 1: BULK EMAIL — write your own message, post to many tickets
+#         (no Excel required — this is the standalone bulk sender)
+# ==========================================================
+if app_mode.startswith("✉️"):
+    st.subheader("✉️ Bulk Email to Tickets")
+    st.caption("Write your own message once and post it to as many GLPI tickets as you like. No Excel needed.")
+
+    lang = st.radio("Language (for greeting & signature)", ["Spanish", "English"], horizontal=True)
+
+    c1, c2 = st.columns(2)
+    with c1:
+        use_greeting = st.checkbox("Add greeting line", value=True)
+    with c2:
+        use_sig = st.checkbox("Add my signature", value=True)
+
+    greeting = ""
+    if use_greeting:
+        greeting = "Estimado proveedor,<br><br>" if lang == "Spanish" else "Dear supplier,<br><br>"
+
+    if lang == "English":
+        sig = "<br><br>Regards,<br><b>Angelos Keramaris<br>Accounts Payable Iberia</b>"
+    else:
+        sig = SIGNATURE
+    signature = sig if use_sig else ""
+
+    body = st.text_area(
+        "Your message  —  HTML supported (use <br> for a new line, <b>…</b> for bold)",
+        height=300,
+        placeholder="Write your email here…",
+    )
+
+    html_message = greeting + (body or "") + signature
+
+    st.markdown("**Preview — this exact message goes to every ticket:**")
+    st.markdown(html_message or "_(empty — type your message above)_", unsafe_allow_html=True)
+
+    st.markdown("---")
+    ticket_input = st.text_area(
+        "Ticket IDs  —  paste one or many (comma, space, or new-line separated)",
+        height=90,
+        placeholder="100245, 100246, 100247",
+    )
+    category_id = st.text_input("Category ID (optional — applied to every ticket)")
+
+    ticket_ids = list(dict.fromkeys(re.findall(r"\d+", ticket_input or "")))
+    has_body = bool((body or "").strip())
+
+    if ticket_ids:
+        st.info(f"Ready to post to **{len(ticket_ids)}** ticket(s): {', '.join(ticket_ids)}")
+    else:
+        st.caption("Enter at least one Ticket ID to enable sending.")
+    if not has_body:
+        st.caption("Type your message above to enable sending.")
+
+    confirm = st.checkbox(
+        f"I confirm posting this message to {len(ticket_ids)} ticket(s).",
+        value=False,
+        disabled=not (ticket_ids and has_body),
+    )
+
+    if st.button("🚀 Send to GLPI", disabled=not (ticket_ids and has_body and confirm)):
+        token, err = glpi_login()
+        if err:
+            st.error(err)
+            st.stop()
+
+        results = []
+        total = len(ticket_ids)
+        progress = st.progress(0.0)
+        status_box = st.empty()
+        try:
+            for i, tid in enumerate(ticket_ids):
+                status_box.write(f"Processing ticket {tid}  ({i + 1}/{total}) …")
+                res = glpi_send_one(token, tid, html_message, category_id)
+                results.append({"Ticket": tid, "Result": res})
+                progress.progress((i + 1) / total)
+        finally:
+            glpi_kill_session(token)
+
+        status_box.empty()
+        res_df = pd.DataFrame(results)
+        st.dataframe(res_df, use_container_width=True)
+
+        ok   = sum(1 for r in results if r["Result"].startswith("✅"))
+        warn = sum(1 for r in results if r["Result"].startswith("⚠️"))
+        bad  = sum(1 for r in results if r["Result"].startswith("❌"))
+        line = f"Done — ✅ {ok} solved · ⚠️ {warn} follow-up · ❌ {bad} failed  (of {total})."
+        (st.success if bad == 0 else st.warning)(line)
+
+        st.download_button(
+            "⬇️ Download results CSV",
+            res_df.to_csv(index=False).encode("utf-8"),
+            file_name="glpi_bulk_results.csv",
+            mime="text/csv",
+        )
+
+    st.stop()  # bulk-email mode ends here — payment flow below does not run
+
+# ==========================================================
+# MODE 2: PAYMENT ANALYSIS  (original flow)
+# ==========================================================
 # ----------------------------------------------------------
 # INPUT FILES
 # ----------------------------------------------------------
@@ -393,12 +552,11 @@ if cn_file:
         cn_df = None
 
 cn_used_global = set()
-combined_html = ""
 export_data = {}
 debug_rows_all = []
 
 # ----------------------------------------------------------
-# PROCESS EACH PAYMENT CODE
+# PROCESS EACH PAYMENT CODE  (builds base rows, NO total yet)
 # ----------------------------------------------------------
 MAX_COMBO = 3  # combine up to 3 CNs to cover a single invoice diff
 
@@ -467,40 +625,60 @@ for pay_code in selected_codes:
 
         debug_rows_all.append(dbg)
 
-    full = pd.concat(
+    body = pd.concat(
         [pd.DataFrame(summary_rows), pd.DataFrame(cn_rows), pd.DataFrame(unmatched)],
         ignore_index=True,
     )
-
-    total_value = full["Invoice Value"].sum()
-    full.loc[len(full)] = ["TOTAL", total_value]
-
-    export_data[pay_code] = {"vendor": vendor, "pay_date": pay_date, "rows": full.copy()}
-
-    display_df = full.copy()
-    display_df["Invoice Value (€)"] = display_df["Invoice Value"].apply(lambda v: f"€{v:,.2f}")
-    display_df = display_df[["Alt. Document", "Invoice Value (€)"]]
-
-    pay_date_line = f"<b>Payment Date:</b> {pay_date}<br>" if pay_date else ""
-
-    combined_html += f"""
-<b>Payment Code:</b> {pay_code}<br>
-<b>Vendor:</b> {vendor}<br>
-{pay_date_line}<b>Total Amount:</b> €{total_value:,.2f}<br><br>
-{display_df.to_html(index=False, border=0)}
-<br><hr><br>
-"""
+    # store base rows WITHOUT the TOTAL line — totals are recomputed on render/export
+    export_data[pay_code] = {"vendor": vendor, "pay_date": pay_date, "rows": body.copy()}
 
 # ----------------------------------------------------------
-# FINAL OUTPUT
+# TABS
 # ----------------------------------------------------------
-if combined_html.endswith("<br><hr><br>"):
-    combined_html = combined_html[:-12]
-
+combined_html = ""
 tab1, tab2, tab3 = st.tabs(["Summary", "Advanced Debug", "GLPI"])
 
 with tab1:
-    st.markdown(combined_html, unsafe_allow_html=True)
+    st.caption("✏️ This table is editable. Double-click a cell to change it · "
+               "➕ row at the bottom to add · select a row's checkbox + press ⌫ to delete · "
+               "totals recalc automatically and edits flow into the Excel + GLPI message.")
+
+    # --- THE EDITABLE TABLE (always on, this IS the summary) ---
+    for code in list(export_data.keys()):
+        info = export_data[code]
+        label = f"**{code} — {info['vendor']}**"
+        if info.get("pay_date"):
+            label += f"  ·  {info['pay_date']}"
+        st.markdown(label)
+
+        base = _body_no_total(info["rows"])
+        edited = st.data_editor(
+            base,
+            num_rows="dynamic",
+            use_container_width=True,
+            key=f"editor_{code}",
+            column_config={
+                "Alt. Document": st.column_config.TextColumn("Alt. Document", width="large"),
+                "Invoice Value": st.column_config.NumberColumn(
+                    "Invoice Value", format="%.2f", step=0.01
+                ),
+            },
+        )
+        # clean + push edits back into export_data so HTML/Excel/GLPI all use them
+        edited = edited.dropna(how="all")
+        edited["Alt. Document"] = edited["Alt. Document"].fillna("").astype(str)
+        edited["Invoice Value"] = pd.to_numeric(edited["Invoice Value"], errors="coerce").fillna(0.0)
+        export_data[code]["rows"] = edited.reset_index(drop=True)
+
+        st.markdown(f"**Total: €{edited['Invoice Value'].sum():,.2f}**")
+        st.markdown("---")
+
+    # rebuild the GLPI/email HTML from the (edited) data
+    combined_html = build_combined_html(export_data)
+
+    with st.expander("👁️ Preview formatted message (what gets sent to GLPI)"):
+        st.markdown(combined_html, unsafe_allow_html=True)
+
     if export_data:
         st.download_button(
             "⬇️ Download Payment Analysis (Excel)",
@@ -523,14 +701,12 @@ with tab2:
             file_name="debug_breakdown.csv",
             mime="text/csv",
         )
+        st.caption("Note: debug reflects the automatic match pass, not your manual edits.")
     else:
         st.info("No rows processed — check that the Payment Document Codes match the Excel.")
 
 with tab3:
     language = st.radio("Language", ["Spanish", "English"], horizontal=True)
-
-    ticket_id   = st.text_input("Ticket ID")
-    category_id = st.text_input("Category ID")
 
     if language == "Spanish":
         intro = ("Estimado proveedor,<br><br>"
@@ -543,35 +719,83 @@ with tab3:
                  "<br><br>")
         outro = "<br><br>Regards,<br><b>Angelos Keramaris<br>Accounts Payable Iberia</b>"
 
-    html_message = intro + combined_html + outro
+    # ---- what to send: the payment analysis, or any custom text ----
+    msg_mode = st.radio(
+        "Message to post",
+        ["Payment analysis (from Summary tab)", "Custom message (free text)"],
+        horizontal=True,
+    )
+    if msg_mode.startswith("Custom"):
+        custom_msg = st.text_area(
+            "Your message — HTML supported (use <br> for line breaks)",
+            height=220,
+            placeholder="Estimado proveedor, ...",
+        )
+        append_sig = st.checkbox("Append signature", value=True)
+        html_message = (custom_msg or "") + (SIGNATURE if append_sig else "")
+    else:
+        # uses the edited combined_html from tab1
+        html_message = intro + combined_html + outro
+
+    # ---- BULK ticket IDs ----
+    ticket_input = st.text_area(
+        "Ticket IDs — paste one or many (comma, space, or new-line separated)",
+        height=90,
+        placeholder="100245, 100246, 100247",
+    )
+    category_id = st.text_input("Category ID (optional — applied to every ticket)")
+
+    # robust: pull every number out of whatever the user pasted, keep order, dedupe
+    ticket_ids = list(dict.fromkeys(re.findall(r"\d+", ticket_input or "")))
+
+    st.markdown("**Preview — this exact message goes to every ticket below:**")
     st.markdown(html_message, unsafe_allow_html=True)
 
-    if st.button("Send to GLPI"):
-        if not ticket_id.isdigit():
-            st.error("Invalid Ticket ID")
-            st.stop()
+    if ticket_ids:
+        st.info(f"Ready to post to **{len(ticket_ids)}** ticket(s): {', '.join(ticket_ids)}")
+    else:
+        st.caption("Enter at least one Ticket ID to enable sending.")
 
+    confirm = st.checkbox(
+        f"I confirm posting this message to {len(ticket_ids)} ticket(s).",
+        value=False,
+        disabled=not ticket_ids,
+    )
+
+    if st.button("🚀 Send to GLPI", disabled=not (ticket_ids and confirm)):
         token, err = glpi_login()
         if err:
             st.error(err)
             st.stop()
 
+        results = []
+        total = len(ticket_ids)
+        progress = st.progress(0.0)
+        status_box = st.empty()
         try:
-            upd = glpi_update_ticket(token, ticket_id, 5, category_id)
-            if upd.status_code >= 400:
-                st.warning(f"Ticket update returned {upd.status_code}: {upd.text[:300]}")
-
-            resp = glpi_add_solution(token, ticket_id, html_message)
-
-            if resp.status_code == 400 or "already solved" in resp.text.lower():
-                fu = glpi_add_followup(token, ticket_id, html_message)
-                if fu.status_code >= 400:
-                    st.error(f"Follow-up failed ({fu.status_code}): {fu.text[:300]}")
-                else:
-                    st.warning("Ticket already solved — posted as follow-up.")
-            elif resp.status_code >= 400:
-                st.error(f"Solution failed ({resp.status_code}): {resp.text[:300]}")
-            else:
-                st.success("Solution added to GLPI.")
+            for i, tid in enumerate(ticket_ids):
+                status_box.write(f"Processing ticket {tid}  ({i + 1}/{total}) …")
+                res = glpi_send_one(token, tid, html_message, category_id)
+                results.append({"Ticket": tid, "Result": res})
+                progress.progress((i + 1) / total)
         finally:
             glpi_kill_session(token)
+
+        status_box.empty()
+        res_df = pd.DataFrame(results)
+        st.dataframe(res_df, use_container_width=True)
+
+        ok   = sum(1 for r in results if r["Result"].startswith("✅"))
+        warn = sum(1 for r in results if r["Result"].startswith("⚠️"))
+        bad  = sum(1 for r in results if r["Result"].startswith("❌"))
+        if bad == 0:
+            st.success(f"Done — ✅ {ok} solved · ⚠️ {warn} follow-up · ❌ {bad} failed  (of {total}).")
+        else:
+            st.warning(f"Done — ✅ {ok} solved · ⚠️ {warn} follow-up · ❌ {bad} failed  (of {total}). See table above.")
+
+        st.download_button(
+            "⬇️ Download results CSV",
+            res_df.to_csv(index=False).encode("utf-8"),
+            file_name="glpi_bulk_results.csv",
+            mime="text/csv",
+        )
