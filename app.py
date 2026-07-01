@@ -4,7 +4,7 @@
 # + EDITABLE TABLES (st.data_editor)
 # + BULK TICKETS: post the same answer to many tickets at once
 # + BULK EMAIL mode (write your own message, no Excel needed)
-# + AUTO-ASSIGN every ticket to Angelos (GLPI 10 _actors + Ticket_User)
+# + AUTO-ASSIGN every ticket to Angelos (Ticket_User type=2 — keeps requester/observers)
 # + Sidebar GLPI connection tester
 # ==========================================================
 
@@ -261,41 +261,24 @@ def glpi_update_ticket(token, ticket_id, status=5, category_id=None):
 
 
 def glpi_assign_ticket(token, ticket_id, user_id=DEFAULT_USER_ID):
-    """Set the ticket's 'Assigned to' technician. Tries both:
-      1) GLPI 10 `_actors` structure (PUT /Ticket) — what the web form uses.
-      2) Universal Ticket_User type=2 (POST /Ticket_User) — works on 9.x & 10.x.
-    Returns True if either method was accepted (or the actor already exists)."""
-    hdr = {"Session-Token": token, "App-Token": APP_TOKEN}
-    ok = False
+    """Add the user as the 'Assigned to' technician WITHOUT touching the existing
+    requester / observer actors.
 
-    # Method 1 — GLPI 10 _actors (only touches the 'assign' role; requester/observer untouched)
-    try:
-        r1 = requests.put(
-            f"{GLPI_URL}/Ticket/{ticket_id}",
-            json={"input": {"id": int(ticket_id),
-                            "_actors": {"assign": [
-                                {"itemtype": "User", "items_id": int(user_id), "use_notification": 1}
-                            ]}}},
-            headers=hdr, timeout=20,
-        )
-        if r1.status_code < 400:
-            ok = True
-    except Exception:
-        pass
+    Uses ONLY Ticket_User type=2 (POST /Ticket_User) — this INSERTS one assignee
+    row and leaves every other actor alone. We deliberately do NOT use the GLPI 10
+    `_actors` PUT: that replaces the whole actor set and wipes requester/observers.
 
-    # Method 2 — Ticket_User type=2 (additive). 'already exists' (400) still means assigned.
+    Returns True if the assignee was added (or already existed)."""
     try:
-        r2 = requests.post(
+        r = requests.post(
             f"{GLPI_URL}/Ticket_User",
             json={"input": {"tickets_id": int(ticket_id), "users_id": int(user_id), "type": 2}},
-            headers=hdr, timeout=20,
+            headers={"Session-Token": token, "App-Token": APP_TOKEN}, timeout=20,
         )
-        if r2.status_code < 400 or "already" in (r2.text or "").lower():
-            ok = True
+        # 'already exists' (400) still means the user is assigned — treat as success.
+        return (r.status_code < 400) or ("already" in (r.text or "").lower())
     except Exception:
-        pass
-
-    return ok
+        return False
 
 
 def glpi_add_solution(token, ticket_id, html):
